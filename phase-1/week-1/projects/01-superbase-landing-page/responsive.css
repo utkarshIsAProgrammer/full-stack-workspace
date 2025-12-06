@@ -1,0 +1,139 @@
+@media screen and (max-width: 480px) {
+	/* || Navbar */
+	.nav {
+		padding: 20px;
+	}
+
+	.part2,
+	.part3 {
+		display: none;
+	}
+
+	.part-4 {
+		display: block;
+	}
+
+	/* || Main */
+	.main-container {
+		margin: 80px 30px 0 30px;
+	}
+
+	.main-heading {
+		font-size: 35px;
+		line-height: normal;
+	}
+
+	.main-info {
+		font-size: 13px;
+		line-height: 20px;
+	}
+
+	.main-last-para {
+		font-size: 12px;
+	}
+}
+
+@media screen and (max-width: 768px) {
+	/* || Navbar */
+	.nav {
+		padding: 20px;
+	}
+
+	.part2,
+	.part3 {
+		display: none;
+	}
+
+	.part-4 {
+		display: block;
+	}
+
+	/* || Main */
+	.main-container {
+		margin: 80px 30px 0 30px;
+	}
+
+	.main-heading {
+		font-size: 35px;
+		line-height: normal;
+	}
+
+	.main-info {
+		font-size: 13px;
+		line-height: 20px;
+	}
+
+	.main-last-para {
+		font-size: 12px;
+	}
+}
+
+@media screen and (max-width: 1000px) {
+	/* || Navbar */
+	.nav {
+		padding: 20px;
+	}
+
+	.part2,
+	.part3 {
+		display: none;
+	}
+
+	.part-4 {
+		display: block;
+	}
+
+	/* || Main */
+	.main-container {
+		margin: 80px 30px 0 30px;
+	}
+
+	.main-heading {
+		font-size: 35px;
+		line-height: normal;
+	}
+
+	.main-info {
+		font-size: 13px;
+		line-height: 20px;
+	}
+
+	.main-last-para {
+		font-size: 12px;
+	}
+}
+
+@media screen and (max-width: 1024px) {
+	/* || Navbar */
+	.nav {
+		padding: 20px;
+	}
+
+	.part2,
+	.part3 {
+		display: none;
+	}
+
+	.part-4 {
+		display: block;
+	}
+
+	/* || Main */
+	.main-container {
+		margin: 80px 30px 0 30px;
+	}
+
+	.main-heading {
+		font-size: 35px;
+		line-height: normal;
+	}
+
+	.main-info {
+		font-size: 13px;
+		line-height: 20px;
+	}
+
+	.main-last-para {
+		font-size: 12px;
+	}
+}

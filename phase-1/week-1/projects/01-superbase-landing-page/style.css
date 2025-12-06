@@ -1,0 +1,166 @@
+/* || Reset */
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+li {
+	list-style: none;
+}
+
+a {
+	text-decoration: none;
+	color: #fff;
+}
+
+body {
+	font-family: "roboto", sans-serif;
+	letter-spacing: 0.5px;
+	background-color: #121212;
+	color: #fff;
+}
+
+/* || Navbar */
+.nav {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	border-bottom: 1px solid #2c2b2b;
+
+	padding: 20px 80px;
+}
+
+.nav-left {
+	display: flex;
+	align-items: center;
+}
+
+.nav-logo {
+	width: 120px;
+	margin-right: 34px;
+}
+
+.part1 {
+	display: flex;
+	align-items: center;
+}
+
+.part2 .nav-links,
+.part3 {
+	display: flex;
+}
+
+.nav-links {
+	font-size: 14px;
+	font-weight: 600;
+	gap: 20px;
+}
+
+.nav-right {
+	color: #fff;
+	font-size: 12px;
+}
+
+.nav-right i {
+	font-size: 18px;
+}
+
+.part3 {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.nav-github-icon {
+	margin-right: 10px;
+}
+
+.signin-btn {
+	border: 1px solid rgb(46, 44, 44);
+	outline: none;
+	background-color: #242424;
+	color: #fff;
+	padding: 6px 8px;
+	border-radius: 6px;
+	font-size: 12px;
+}
+
+.nav-start-project-btn {
+	border: none;
+	outline: none;
+	background-color: #006239;
+	color: #fff;
+	padding: 6px 12px;
+	border-radius: 6px;
+	font-size: 12px;
+}
+
+.part-4 {
+	display: none;
+}
+
+.hamburger-menu {
+	color: #838181;
+	font-size: 20px;
+}
+
+/* || Main */
+.main-container {
+	display: flex;
+	align-items: center;
+	flex-direction: column;
+	margin-top: 120px;
+}
+
+.main-heading {
+	font-size: 70px;
+	font-weight: 400;
+	text-align: center;
+	line-height: 70px;
+}
+
+.green-heading {
+	color: #3ecf8e;
+}
+
+.main-info {
+	margin-top: 30px;
+	text-align: center;
+	font-size: 18px;
+	line-height: 30px;
+}
+
+.main-btns {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-top: 30px;
+}
+
+.main-start-project-btn {
+	border: none;
+	outline: none;
+	background-color: #006239;
+	color: #fff;
+	padding: 10px 18px;
+	border-radius: 6px;
+	font-size: 14px;
+}
+
+.request-a-demo-btn {
+	border: 1px solid rgb(46, 44, 44);
+	outline: none;
+	background-color: #242424;
+	color: #fff;
+	padding: 10px 18px;
+	border-radius: 6px;
+	font-size: 14px;
+}
+
+.main-last-para {
+	font-size: 14px;
+	color: #838181;
+	/* margin-top: 180px; */
+	margin-top: 40px;
+}
