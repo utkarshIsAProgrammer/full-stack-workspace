@@ -1,0 +1,53 @@
+/* Universal Selector  */
+* {
+	margin: 20px;
+	color: teal;
+}
+
+/* Tag Selector  */
+h1 {
+	background: red;
+}
+
+/* Class Selector  */
+.cls {
+	font-family: sans-serif;
+	color: teal;
+}
+
+.otherClass {
+	background: purple;
+}
+
+/* ID Selector  */
+#id {
+	color: brown;
+}
+
+/* Multiple Selector  */
+h1,
+h2,
+h3 {
+	font-size: 2rem;
+}
+
+/* Nested Selector  */
+/* All p tags beneath a div */
+div p {
+	color: crimson;
+}
+
+/* All p tags immediately beneath a div */
+div > p {
+	color: aqua;
+}
+
+/* All p that are sibling following a div */
+div ~ p {
+	color: red;
+}
+
+/* All p tags that are an immediate sibling following a div */
+div + p {
+	color: brown;
+}
