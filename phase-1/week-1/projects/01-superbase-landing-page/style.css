@@ -60,6 +60,9 @@ body {
 .nav-right {
 	color: #fff;
 	font-size: 12px;
+	display: flex;
+	align-items: center;
+	gap: 60px;
 }
 
 .nav-right i {
@@ -161,6 +164,5 @@ body {
 .main-last-para {
 	font-size: 14px;
 	color: #838181;
-	/* margin-top: 180px; */
 	margin-top: 40px;
 }
