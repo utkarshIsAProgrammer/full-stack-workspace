@@ -1,0 +1,20 @@
+/* background-color */
+/* background-image */
+/* background-repeat */
+/* background-position */
+/* background-attachment */
+
+* {
+	margin: 0;
+}
+
+div {
+	height: 100vh;
+	/* background-color: aqua; */
+	background-image: url("assets/photo.jpg");
+	/* background-repeat: no-repeat; */
+	/* background-size: cover; */
+	/* background-position: center; */
+	/* background-attachment: fixed; */
+	background: url("./assets/photo.jpg") no-repeat center / cover fixed;
+}
