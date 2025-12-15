@@ -13,8 +13,6 @@ app.use("/managers", managers);
 app.use("/students", students);
 app.use("/products", products);
 
-//sending JSON...
-
 // listen to the port...
 app.listen("5000", () => {
 	console.log("Server started on PORT: 5000");
