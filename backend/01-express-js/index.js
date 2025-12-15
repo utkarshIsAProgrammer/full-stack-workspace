@@ -2,6 +2,7 @@ import express from "express";
 import developers from "./routes/developers.js";
 import managers from "./routes/managers.js";
 import students from "./routes/students.js";
+import products from "./routes/products.js";
 
 // express instance...
 const app = express();
@@ -10,6 +11,9 @@ const app = express();
 app.use("/developers", developers);
 app.use("/managers", managers);
 app.use("/students", students);
+app.use("/products", products);
+
+//sending JSON...
 
 // listen to the port...
 app.listen("5000", () => {
