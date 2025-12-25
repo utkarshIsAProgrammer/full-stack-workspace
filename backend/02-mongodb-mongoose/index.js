@@ -6,6 +6,9 @@ import {
 	singleDoc,
 	updateDoc,
 	updateDocs,
+	deleteDoc,
+	deleteByField,
+	deleteManyByField,
 } from "./models/Movies.js";
 
 const app = express(); // initialize express
@@ -18,8 +21,10 @@ connectDB(DATABASE_URL); // connect db
 // allDocs(); // getting all documents
 // singleDoc(); // getting document by id
 // updateDoc("694c640d78c4b5bed16c73c3"); // update document by id
-updateDocs(); // update many documents by id
-
+// updateDocs(); // update many documents by id
+// deleteDoc(); // delete document by id
+// deleteByField(); // delete document by field
+deleteManyByField(); // delete many documents
 // listening to the port
 app.listen(port, () => {
 	console.log(`Server started on PORT: ${port}`);

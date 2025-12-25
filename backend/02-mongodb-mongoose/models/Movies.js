@@ -142,4 +142,42 @@ const updateDocs = async () => {
 	}
 };
 
-export { insertManyDocs, allDocs, singleDoc, updateDoc, updateDocs };
+// delete data
+const deleteDoc = async () => {
+	try {
+		const result = await MovieModel.findByIdAndDelete(
+			"694c640d78c4b5bed16c73c3"
+		); // delete field by id
+	} catch (err) {
+		console.log(err);
+	}
+};
+
+// delete one data
+const deleteByField = async () => {
+	try {
+		const result = await MovieModel.deleteOne({ name: "IT" }); // delete by field
+	} catch (err) {
+		console.log(err);
+	}
+};
+
+// delete many data
+const deleteManyByField = async () => {
+	try {
+		const result = await MovieModel.deleteMany({ ratings: 4.3 }); // delete by field
+	} catch (err) {
+		console.log(err);
+	}
+};
+
+export {
+	insertManyDocs,
+	allDocs,
+	singleDoc,
+	updateDoc,
+	updateDocs,
+	deleteDoc,
+	deleteByField,
+	deleteManyByField,
+};
