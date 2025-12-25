@@ -86,4 +86,60 @@ const insertManyDocs = async () => {
 	}
 };
 
-export { insertManyDocs };
+// retrieving all data
+const allDocs = async () => {
+	try {
+		const result = await MovieModel.find(); // find all data
+
+		// iterate over document
+		result.forEach((movie) => {
+			console.log(movie.name, movie.ratings);
+		});
+	} catch (err) {
+		console.log(err);
+	}
+};
+
+// retrieving data using id
+const singleDoc = async () => {
+	try {
+		// const result = await MovieModel.findById("694c640d78c4b5bed16c73c3"); // find data by id
+		const result = await MovieModel.findById(
+			"694c640d78c4b5bed16c73c3",
+			"name"
+		); // find data field  by id
+
+		console.log(result);
+		// console.log(result.name, result.ratings);
+	} catch (err) {
+		console.log(err);
+	}
+};
+
+// update data
+const updateDoc = async (id) => {
+	try {
+		const result = await MovieModel.updateOne(
+			{ _id: id },
+			{ name: "Attraction" }
+		); // update field by id
+		console.log(result);
+	} catch (err) {
+		console.log(err);
+	}
+};
+
+// update many data
+const updateDocs = async () => {
+	try {
+		const result = await MovieModel.updateMany(
+			{ ratings: 4.5 },
+			{ ratings: 3.2 }
+		); // update field by id
+		console.log(result);
+	} catch (err) {
+		console.log(err);
+	}
+};
+
+export { insertManyDocs, allDocs, singleDoc, updateDoc, updateDocs };
