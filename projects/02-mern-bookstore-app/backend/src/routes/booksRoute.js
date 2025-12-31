@@ -9,6 +9,7 @@ import {
 
 const router = express.Router();
 
+// routes
 router.get("/get-all-books", getAllBooks);
 router.get("/get-book-by-id/:id", getBookById);
 router.post("/add-book", addBook);
