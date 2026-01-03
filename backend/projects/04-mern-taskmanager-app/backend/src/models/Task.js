@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import mongooseDelete from "mongoose-delete";
 
 // schema
 const taskSchema = new mongoose.Schema(
@@ -29,6 +30,11 @@ const taskSchema = new mongoose.Schema(
 	},
 	{ timestamps: true }
 );
+
+taskSchema.plugin(mongooseDelete, {
+	deletedAt: true,
+	overrideMethods: true,
+});
 
 // model
 const TaskModel = mongoose.model("Task", taskSchema);
