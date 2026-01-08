@@ -1,4 +1,4 @@
-import Task from "../models/TaskmgrSchema.js";
+import Task from "../models/Taskmgr.js";
 
 // get all tasks
 export async function getTasks(_, res) {
