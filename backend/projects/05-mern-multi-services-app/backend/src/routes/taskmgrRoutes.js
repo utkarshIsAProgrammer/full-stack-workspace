@@ -4,7 +4,8 @@ import {
 	getTask,
 	addTask,
 	updateTask,
-	deleteTask,
+	adminDeleteTask,
+	adminDeleteTasks,
 } from "../controllers/taskmgrControllers.js";
 
 const router = express.Router();
@@ -16,7 +17,7 @@ router.get("/taskmgr/get-task/:id", getTask);
 router.post("/taskmgr/add-task/", addTask);
 router.put("/taskmgr/update-task/:id", updateTask);
 
-router.delete("/taskmgr/delete-task/:id", deleteTask);
-// router.delete("/taskmgr/delete-all");
+router.delete("/taskmgr/admin-delete/:id", adminDeleteTask);
+router.delete("/taskmgr/admin-delete-all", adminDeleteTasks);
 
 export default router;
