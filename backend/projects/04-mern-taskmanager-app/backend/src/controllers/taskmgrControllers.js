@@ -6,7 +6,7 @@ export async function getTasks(_, res) {
 		const tasks = await Task.find();
 		if (tasks.length === 0) {
 			res.status(200).json({
-				message: "No available tasks!",
+				message: "No available tasks to be displayed!",
 			});
 		} else {
 			res.status(200).json(tasks);
@@ -19,12 +19,12 @@ export async function getTasks(_, res) {
 
 // get task from id
 export async function getTask(req, res) {
+	const id = req.params.id;
+
 	try {
-		const task = await Task.findById(req.params.id);
+		const task = await Task.findById(id);
 		if (!task) {
-			return res
-				.status(404)
-				.json({ message: "Unable to find task as it don't exist!" });
+			return res.status(404).json({ message: "Task don't exist!" });
 		}
 
 		res.status(200).json(task);
@@ -40,8 +40,15 @@ export async function getTask(req, res) {
 
 // add new task
 export async function addTask(req, res) {
+	const { title, description, status, priority, dueDate } = req.body;
 	try {
-		const savedTask = await Task.create(req.body);
+		const savedTask = await Task.create({
+			title,
+			description,
+			status,
+			priority,
+			dueDate,
+		});
 		res.status(201).json(savedTask);
 	} catch (err) {
 		if (err.name === "ValidationError") {
@@ -57,10 +64,19 @@ export async function addTask(req, res) {
 
 // update task
 export async function updateTask(req, res) {
+	const id = req.params.id;
+	const { title, description, status, priority, dueDate } = req.body;
+
 	try {
 		const updatedTask = await Task.findByIdAndUpdate(
-			req.params.id,
-			req.body,
+			id,
+			{
+				title,
+				description,
+				status,
+				priority,
+				dueDate,
+			},
 			{
 				new: true,
 				runValidators: true,
@@ -68,9 +84,9 @@ export async function updateTask(req, res) {
 		);
 
 		if (!updatedTask) {
-			return res
-				.status(404)
-				.json({ message: "Task not found to be updated!" });
+			return res.status(404).json({
+				message: "Unable to find the task with task to be updated!",
+			});
 		}
 
 		res.status(200).json(updatedTask);
@@ -90,12 +106,14 @@ export async function updateTask(req, res) {
 
 // hard delete task from id by admin
 export async function adminDeleteTask(req, res) {
+	const id = req.params.id;
+
 	try {
-		const task = await Task.findByIdAndDelete(req.params.id);
+		const task = await Task.findByIdAndDelete(id);
 		if (!task) {
-			return res
-				.status(404)
-				.json({ message: "ADMIN: Task not found to be deleted!" });
+			return res.status(404).json({
+				message: "ADMIN: Task is already deleted or don't exist!",
+			});
 		}
 
 		res.status(200).json({ message: "Task deleted successfully!" });
@@ -115,7 +133,9 @@ export async function adminDeleteTasks(_, res) {
 				.json({ message: "ADMIN: No tasks to be deleted!" });
 		}
 
-		res.status(200).json({ message: "All tasks deleted successfully!" });
+		res.status(200).json({
+			message: `${tasks.deletedCount} tasks deleted successfully!`,
+		});
 	} catch (err) {
 		console.log("Error in the adminDeleteTasks controller!", err.message);
 		res.status(500).json({ message: "Internal Server error!" });
@@ -124,13 +144,14 @@ export async function adminDeleteTasks(_, res) {
 
 // soft delete task from id by user
 export async function userDeleteTask(req, res) {
+	const id = req.params.id;
 	try {
-		const task = await Task.delete({ _id: req.params.id });
+		const task = await Task.delete({ _id: id });
 
 		if (task.deletedCount === 0) {
-			return res
-				.status(404)
-				.json({ message: "Task cannot be deleted as it don't exist!" });
+			return res.status(404).json({
+				message: "Task don't exist unable to delete the task!",
+			});
 		}
 
 		res.status(200).json({ message: "Task softly deleted!" });
@@ -145,13 +166,15 @@ export async function userDeleteTasks(_, res) {
 	try {
 		const tasks = await Task.delete({});
 
-		if (tasks.deletedCount === 0) {
+		if (tasks.modifiedCount === 0) {
 			return res.status(404).json({
-				message: "Tasks cannot be deleted as they don't exist!",
+				message: "Unable to delete tasks, tasks don't exist!!",
 			});
 		}
 
-		res.status(200).json({ message: "Task softly deleted!" });
+		res.status(200).json({
+			message: `${tasks.modifiedCount} tasks softly deleted!`,
+		});
 	} catch (err) {
 		console.log("Error in the userDelete controller!", err.message);
 		res.status(500).json({ message: "Internal Server error!" });
@@ -166,7 +189,7 @@ export async function viewDeletedTasks(_, res) {
 		if (deletedTasks.length === 0) {
 			return res
 				.status(404)
-				.json({ message: "Bin is empty, no tasks to be displayed!" });
+				.json({ message: "There are no deleted tasks in the trash!" });
 		}
 
 		res.status(200).json(deletedTasks);
@@ -179,12 +202,13 @@ export async function viewDeletedTasks(_, res) {
 // restore task by id
 export async function restoreTask(req, res) {
 	try {
-		const task = await Task.restore({ _id: req.params.id });
+		const id = req.params.id;
+		const task = await Task.restore({ _id: id });
 
-		if (task.nModified === 0) {
+		if (task.modifiedCount === 0) {
 			return res
 				.status(404)
-				.json({ message: "Task not found in the bin!" });
+				.json({ message: "Unable to find the task in the trash!" });
 		}
 
 		res.status(200).json({ message: "Task restored successfully!" });
@@ -199,11 +223,15 @@ export async function restoreTasks(_, res) {
 	try {
 		const tasks = await Task.restore({});
 
-		if (tasks.nModified === 0) {
-			return res.status(404).json({ message: "Bin is empty!" });
+		if (tasks.modifiedCount === 0) {
+			return res
+				.status(404)
+				.json({ message: "No deleted tasks in the trash!" });
 		}
 
-		res.status(200).json({ message: "All tasks restored successfully!" });
+		res.status(200).json({
+			message: `${tasks.modifiedCount} tasks restored successfully!`,
+		});
 	} catch (err) {
 		console.log("Error in the restoreTasks controller!", err.message);
 		res.status(500).json({ message: "Internal Server error!" });
