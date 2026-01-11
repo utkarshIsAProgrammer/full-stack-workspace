@@ -1,7 +1,7 @@
 import express from "express";
 import "dotenv/config";
 import connectDB from "./config/db.js";
-import userRoutes from "./routes/userRegistrationRoute.js";
+import userRoutes from "./routes/userRoutes.js";
 // import blogRoutes from "./routes/blogRoutes.js";
 
 const port = process.env.PORT || 5500;
