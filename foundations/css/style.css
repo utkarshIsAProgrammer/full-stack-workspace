@@ -59,10 +59,10 @@ body ::selection {
 }
 
 .box {
-	border-radius: 20px;
+	border-radius: 15px;
 	background-color: rgb(227, 224, 224);
-	width: 150px;
-	height: 150px;
+	width: 50px;
+	height: 50px;
 	box-shadow: 6px 2px 5px gray;
 	margin: auto;
 	position: sticky;
@@ -224,4 +224,55 @@ ul li::before {
 
 ul li::after {
 	content: "__";
+}
+
+.flex {
+	background-color: burlywood;
+	display: flex;
+
+	/* flex-direction: column; */
+	/* flex-direction: column-reverse; */
+	flex-direction: row-reverse;
+
+	justify-content: space-evenly;
+	height: 90vh;
+
+	flex-wrap: wrap;
+	/* flex-wrap: wrap-reverse; */
+
+	/* align-content: start; */
+	/* align-content: end; */
+	/* align-content: center; */
+	/* align-content: space-between; */
+	/* align-content: space-evenly; */
+
+	column-gap: 1em;
+}
+
+.box-flex {
+	width: 150px;
+	height: 150px;
+	text-align: center;
+	border-radius: 20px;
+}
+
+.dark {
+	background-color: seagreen;
+}
+
+.medium {
+	background-color: mediumseagreen;
+}
+
+.light {
+	background-color: mediumaquamarine;
+}
+
+#A {
+	order: 1;
+}
+
+#C,
+#F {
+	align-self: center;
 }
