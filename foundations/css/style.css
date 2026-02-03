@@ -276,3 +276,42 @@ ul li::after {
 #F {
 	align-self: center;
 }
+
+.foot-box {
+	width: 150px;
+	height: 150px;
+	background-color: rgb(86, 69, 138);
+	border-radius: 30px;
+	/* animation-name: slideLeft; */
+	animation-name: colorChange;
+	animation-duration: 3s;
+}
+
+@keyframes slideLeft {
+	from {
+		transform: translateX(100px);
+		transform: rotate(360deg);
+	}
+}
+
+@keyframes colorChange {
+	0% {
+		background-color: red;
+	}
+
+	25% {
+		background-color: orange;
+	}
+
+	50% {
+		background-color: yellow;
+	}
+
+	75% {
+		background-color: goldenrod;
+	}
+
+	100% {
+		background-color: black;
+	}
+}
