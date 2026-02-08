@@ -7,11 +7,17 @@ let person = {
 	role: "Programmer/Developer",
 	isLearning: true,
 	technologies: ["frontend", "backend"],
+
+	// object method
+	doWork: function () {
+		console.log(this.name + " typed some code...");
+	},
 };
 
 console.log(emptyObj);
 console.log(person);
 console.log(person.technologies.length);
+person.doWork();
 
 // access keys value from objects
 console.log(
