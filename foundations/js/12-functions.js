@@ -27,4 +27,10 @@ function add(a, b) {
 result = calc(5, 7, add);
 console.log(result);
 
+// arrow function
+const greet = (name) => {
+	console.log(`Hello!, ${name}`);
+};
+
+greet("IndieDev");
 // ------------------------------------------------------------------------
