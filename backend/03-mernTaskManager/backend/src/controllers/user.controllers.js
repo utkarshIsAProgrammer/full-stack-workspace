@@ -4,7 +4,9 @@ import jwt from "jsonwebtoken";
 // import "dotenv/config";
 
 export const signup = async (req, res) => {
-	const { name, email, password } = req.body;
+	let { name, email, password } = req.body;
+	email = email.toLowerCase().trim();
+
 	if (!name || !email || !password) {
 		return res.status(400).json({
 			success: false,
@@ -33,6 +35,13 @@ export const signup = async (req, res) => {
 			expiresIn: "7d",
 		});
 
+		res.cookie("token", token, {
+			httpOnly: true,
+			secure: process.env.NODE_ENV === "development",
+			sameSite: "strict",
+			maxAge: 7 * 24 * 60 * 60 * 1000,
+		});
+
 		res.status(201).json({
 			success: true,
 			message: "User created successfully!",
@@ -47,7 +56,8 @@ export const signup = async (req, res) => {
 };
 
 export const login = async (req, res) => {
-	const { email, password } = req.body;
+	let { email, password } = req.body;
+	email = email.toLowerCase().trim();
 
 	try {
 		// finding user

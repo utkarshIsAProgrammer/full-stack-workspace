@@ -5,6 +5,9 @@ const userSchema = new mongoose.Schema(
 		name: {
 			type: String,
 			required: true,
+			minLength: 2,
+			maxLength: 50,
+			trim: true,
 		},
 
 		email: {
@@ -13,11 +16,13 @@ const userSchema = new mongoose.Schema(
 			unique: true,
 			lowercase: true,
 			trim: true,
+			match: [/^\S+@\S+\.\S+$/, "Invalid email format"],
 		},
 
 		password: {
 			type: String,
 			required: true,
+			minLength: 8,
 		},
 	},
 	{ timestamps: true },
