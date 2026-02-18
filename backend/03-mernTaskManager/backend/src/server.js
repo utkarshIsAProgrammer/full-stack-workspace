@@ -5,6 +5,7 @@ import userRoutes from "./routes/user.routes.js";
 import helmet from "helmet";
 import { limiter } from "./middlewares/rateLimit.middleware.js";
 import cookieParser from "cookie-parser";
+import taskRoutes from "./routes/task.routes.js";
 
 const app = express();
 const port = process.env.PORT || 5500;
@@ -14,6 +15,7 @@ app.use(helmet()); // security headers
 app.use(limiter); // rate limiter
 app.use(cookieParser()); // parse cookies
 app.use("/auth", userRoutes);
+app.use("/tasks", taskRoutes);
 
 connectDB().then(() => {
 	app.listen(port, () => {
