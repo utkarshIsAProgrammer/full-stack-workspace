@@ -1,4 +1,4 @@
-const API = "https://event-feedback-system-backend.onrender.com/api";
+const API = "https://event-feedback-system-backend.onrender.com";
 
 // dark mode
 const html = document.documentElement;
