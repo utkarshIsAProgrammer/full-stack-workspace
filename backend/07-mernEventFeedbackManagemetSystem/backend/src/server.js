@@ -9,7 +9,7 @@ const port = process.env.PORT || 5500;
 
 app.use(
 	cors({
-		origin: "https://event-feedback-system-three.vercel.app",
+		origin: "https://event-feedback-system-frontend.vercel.app/",
 	}),
 );
 app.use(express.json());
