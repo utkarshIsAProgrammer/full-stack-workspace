@@ -13,7 +13,7 @@ app.use(
 	}),
 );
 app.use(express.json());
-app.use("/api", feedbackRoutes);
+app.use("/", feedbackRoutes);
 
 connectDB().then(() => {
 	app.listen(port, () => {
