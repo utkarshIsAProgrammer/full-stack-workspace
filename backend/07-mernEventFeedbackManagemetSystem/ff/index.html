@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>EventLens — Feedback Management</title>
+		<script src="https://cdn.tailwindcss.com"></script>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600&display=swap"
+			rel="stylesheet" />
+		<link rel="stylesheet" href="style.css" />
+		<script>
+			// prevent flash of wrong theme
+			(function () {
+				var t = localStorage.getItem("efms-theme");
+				if (
+					t === "dark" ||
+					(!t &&
+						window.matchMedia("(prefers-color-scheme:dark)")
+							.matches)
+				) {
+					document.documentElement.classList.add("dark");
+				}
+			})();
+			tailwind.config = {
+				darkMode: "class",
+				theme: {
+					extend: {
+						fontFamily: {
+							display: ['"Playfair Display"', "Georgia", "serif"],
+							sans: ['"Plus Jakarta Sans"', "sans-serif"],
+						},
+					},
+				},
+			};
+		</script>
+	</head>
+	<body
+		class="font-sans antialiased bg-stone-50 text-stone-800 dark:bg-[#111015] dark:text-stone-100 transition-colors duration-300">
+		<div
+			id="toast"
+			aria-live="polite"
+			class="fixed top-20 right-5 z-[999] pointer-events-none">
+			<div id="toast-box" class="hidden max-w-xs pointer-events-auto">
+				<div
+					id="toast-inner"
+					class="flex items-start gap-3 px-5 py-4 rounded-2xl shadow-2xl border text-sm font-medium">
+					<span
+						id="toast-icon"
+						class="text-base leading-none mt-px shrink-0"></span>
+					<p id="toast-msg" class="leading-snug"></p>
+				</div>
+			</div>
+		</div>
+
+		<header
+			id="navbar"
+			class="fixed top-0 inset-x-0 z-50 transition-all duration-300">
+			<div
+				class="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between gap-6">
+				<a href="#home" class="flex items-center gap-3 group shrink-0">
+					<div class="relative w-8 h-8">
+						<div
+							class="absolute inset-0 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 shadow-lg shadow-indigo-500/30 group-hover:scale-105 transition-transform duration-200"></div>
+						<svg
+							class="absolute inset-1.5 w-5 h-5 text-white"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width="2">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+						</svg>
+					</div>
+					<span
+						class="font-display text-lg font-semibold tracking-tight text-stone-900 dark:text-white"
+						>Event<span class="text-indigo-600">Lens</span></span
+					>
+				</a>
+
+				<nav class="hidden md:flex items-center gap-1">
+					<a href="#home" class="nav-pill">Home</a>
+					<a href="#events" class="nav-pill">Events</a>
+					<a href="#submit" class="nav-pill">Submit Feedback</a>
+					<a href="#feedback-list" class="nav-pill">Feedback List</a>
+				</nav>
+
+				<div class="flex items-center gap-3 shrink-0">
+					<button
+						id="theme-toggle"
+						aria-label="Toggle theme"
+						class="w-11 h-6 rounded-full relative bg-stone-200 dark:bg-indigo-600 transition-colors duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2">
+						<span
+							class="theme-knob absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow flex items-center justify-center transition-transform duration-300">
+							<svg
+								class="sun-ic w-3 h-3 text-amber-500"
+								fill="currentColor"
+								viewBox="0 0 20 20">
+								<path
+									fill-rule="evenodd"
+									d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z"
+									clip-rule="evenodd" />
+							</svg>
+							<svg
+								class="moon-ic hidden w-3 h-3 text-indigo-600"
+								fill="currentColor"
+								viewBox="0 0 20 20">
+								<path
+									d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+							</svg>
+						</span>
+					</button>
+					<button
+						id="hamburger"
+						class="md:hidden p-2 rounded-lg text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors">
+						<svg
+							class="w-5 h-5"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24">
+							<path
+								id="ham-open"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M4 6h16M4 12h16M4 18h16" />
+							<path
+								id="ham-close"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								class="hidden"
+								d="M6 18L18 6M6 6l12 12" />
+						</svg>
+					</button>
+				</div>
+			</div>
+
+			<div
+				id="mobile-nav"
+				class="hidden md:hidden border-t border-stone-200/60 dark:border-stone-800 bg-stone-50/95 dark:bg-[#111015]/95 backdrop-blur-md px-6 py-4 space-y-1">
+				<a href="#home" class="mobile-link">Home</a>
+				<a href="#events" class="mobile-link">Events</a>
+				<a href="#submit" class="mobile-link">Submit Feedback</a>
+				<a href="#feedback-list" class="mobile-link">Feedback List</a>
+			</div>
+		</header>
+
+		<section
+			id="home"
+			class="relative min-h-screen flex items-center overflow-hidden pt-16">
+			<div class="absolute inset-0 pointer-events-none overflow-hidden">
+				<div
+					class="absolute -top-40 -right-40 w-[700px] h-[700px] rounded-full bg-indigo-100 dark:bg-indigo-950/25 blur-[120px] opacity-70"></div>
+				<div
+					class="absolute bottom-0 -left-40 w-[500px] h-[500px] rounded-full bg-violet-100 dark:bg-violet-950/20 blur-[100px] opacity-60"></div>
+				<div
+					class="absolute inset-0"
+					style="
+						background-image: radial-gradient(
+							circle,
+							rgba(99, 102, 241, 0.08) 1px,
+							transparent 1px
+						);
+						background-size: 32px 32px;
+					"></div>
+			</div>
+
+			<div
+				class="relative max-w-7xl mx-auto px-6 lg:px-10 w-full py-24 lg:py-0">
+				<div class="max-w-3xl">
+					<div
+						class="inline-flex items-center gap-2 mb-8 px-4 py-1.5 rounded-full border border-indigo-200 dark:border-indigo-800 bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-medium tracking-wide reveal"
+						style="--d: 0.1s">
+						<span
+							class="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse inline-block"></span>
+						Event Feedback Management System
+					</div>
+					<h1
+						class="font-display text-5xl sm:text-6xl lg:text-7xl font-bold leading-tight text-stone-900 dark:text-white mb-6 reveal"
+						style="--d: 0.2s">
+						Every Voice<br />
+						<em class="not-italic text-indigo-600"
+							>Shapes the<br />Next Event.</em
+						>
+					</h1>
+					<p
+						class="text-lg text-stone-500 dark:text-stone-400 max-w-xl leading-relaxed mb-10 reveal"
+						style="--d: 0.3s">
+						Collect, manage, and act on attendee feedback. We turn
+						honest opinions into extraordinary future experiences.
+					</p>
+					<div class="flex flex-wrap gap-4 reveal" style="--d: 0.4s">
+						<a href="#submit" class="cta-btn">
+							Submit Your Feedback
+							<svg
+								class="w-4 h-4"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M14 5l7 7m0 0l-7 7m7-7H3" />
+							</svg>
+						</a>
+						<a href="#feedback-list" class="ghost-btn"
+							>View All Reviews</a
+						>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<section
+			id="events"
+			class="py-28 px-6 lg:px-10 bg-white dark:bg-[#16141a]">
+			<div class="max-w-7xl mx-auto">
+				<div class="section-header">
+					<span class="section-eyebrow">Browse</span>
+					<h2 class="section-title">Featured Events</h2>
+					<p class="section-sub">
+						Attend, experience, and share your honest feedback with
+						the community.
+					</p>
+				</div>
+
+				<div class="grid md:grid-cols-3 gap-6 mt-14">
+					<article class="event-card group">
+						<div
+							class="h-1.5"
+							style="
+								background: linear-gradient(
+									90deg,
+									#6366f1,
+									#8b5cf6
+								);
+							"></div>
+						<div class="p-7">
+							<div class="flex items-center justify-between mb-5">
+								<span
+									class="badge bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300"
+									>Technology</span
+								>
+								<span
+									class="text-[10px] text-stone-400 font-medium uppercase tracking-widest"
+									>Apr 2026</span
+								>
+							</div>
+							<h3
+								class="font-display text-xl font-semibold text-stone-900 dark:text-white mb-3 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+								Future of AI 2026
+							</h3>
+							<p
+								class="text-sm text-stone-500 dark:text-stone-400 leading-relaxed mb-6">
+								Explore tomorrow's AI landscape with researchers
+								and practitioners reshaping industries
+								worldwide.
+							</p>
+							<div
+								class="space-y-2 text-xs text-stone-400 dark:text-stone-500 mb-6">
+								<div class="flex items-center gap-2">
+									<svg
+										class="w-3.5 h-3.5 text-indigo-400 shrink-0"
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+									</svg>
+									April 18–19, 2026
+								</div>
+								<div class="flex items-center gap-2">
+									<svg
+										class="w-3.5 h-3.5 text-indigo-400 shrink-0"
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+										<circle
+											cx="12"
+											cy="11"
+											r="3"
+											stroke-width="2" />
+									</svg>
+									San Francisco, CA
+								</div>
+							</div>
+							<a href="#submit" class="event-cta"
+								>Leave Feedback →</a
+							>
+						</div>
+					</article>
+
+					<article class="event-card group">
+						<div
+							class="h-1.5"
+							style="
+								background: linear-gradient(
+									90deg,
+									#10b981,
+									#0d9488
+								);
+							"></div>
+						<div class="p-7">
+							<div class="flex items-center justify-between mb-5">
+								<span
+									class="badge bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300"
+									>Design</span
+								>
+								<span
+									class="text-[10px] text-stone-400 font-medium uppercase tracking-widest"
+									>Mar 2026</span
+								>
+							</div>
+							<h3
+								class="font-display text-xl font-semibold text-stone-900 dark:text-white mb-3 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+								Design Systems Workshop
+							</h3>
+							<p
+								class="text-sm text-stone-500 dark:text-stone-400 leading-relaxed mb-6">
+								A hands-on session building scalable,
+								accessible, and beautiful design systems from
+								the ground up.
+							</p>
+							<div
+								class="space-y-2 text-xs text-stone-400 dark:text-stone-500 mb-6">
+								<div class="flex items-center gap-2">
+									<svg
+										class="w-3.5 h-3.5 text-indigo-400 shrink-0"
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+									</svg>
+									March 5, 2026
+								</div>
+								<div class="flex items-center gap-2">
+									<svg
+										class="w-3.5 h-3.5 text-indigo-400 shrink-0"
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+										<circle
+											cx="12"
+											cy="11"
+											r="3"
+											stroke-width="2" />
+									</svg>
+									New York City, NY
+								</div>
+							</div>
+							<a href="#submit" class="event-cta"
+								>Leave Feedback →</a
+							>
+						</div>
+					</article>
+
+					<article class="event-card group">
+						<div
+							class="h-1.5"
+							style="
+								background: linear-gradient(
+									90deg,
+									#f59e0b,
+									#ef4444
+								);
+							"></div>
+						<div class="p-7">
+							<div class="flex items-center justify-between mb-5">
+								<span
+									class="badge bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300"
+									>Startup</span
+								>
+								<span
+									class="text-[10px] text-stone-400 font-medium uppercase tracking-widest"
+									>May 2026</span
+								>
+							</div>
+							<h3
+								class="font-display text-xl font-semibold text-stone-900 dark:text-white mb-3 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+								Startup Founders Meetup
+							</h3>
+							<p
+								class="text-sm text-stone-500 dark:text-stone-400 leading-relaxed mb-6">
+								An intimate gathering of early-stage founders
+								sharing war stories, lessons learned, and
+								connections.
+							</p>
+							<div
+								class="space-y-2 text-xs text-stone-400 dark:text-stone-500 mb-6">
+								<div class="flex items-center gap-2">
+									<svg
+										class="w-3.5 h-3.5 text-indigo-400 shrink-0"
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+									</svg>
+									May 22, 2026
+								</div>
+								<div class="flex items-center gap-2">
+									<svg
+										class="w-3.5 h-3.5 text-indigo-400 shrink-0"
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+										<circle
+											cx="12"
+											cy="11"
+											r="3"
+											stroke-width="2" />
+									</svg>
+									Austin, TX
+								</div>
+							</div>
+							<a href="#submit" class="event-cta"
+								>Leave Feedback →</a
+							>
+						</div>
+					</article>
+				</div>
+			</div>
+		</section>
+
+		<section
+			id="submit"
+			class="py-28 px-6 lg:px-10 bg-stone-50 dark:bg-[#111015]">
+			<div class="max-w-2xl mx-auto">
+				<div class="section-header">
+					<span class="section-eyebrow">Your Opinion</span>
+					<h2 class="section-title">Submit Feedback</h2>
+					<p class="section-sub">
+						Your input directly influences how we design better
+						events.
+					</p>
+				</div>
+
+				<div
+					class="mt-12 bg-white dark:bg-[#16141a] rounded-3xl border border-stone-100 dark:border-stone-800/80 shadow-sm overflow-hidden">
+					<div
+						class="h-1.5 bg-gradient-to-r from-indigo-500 via-violet-500 to-indigo-400"></div>
+					<form id="feedback-form" novalidate class="p-8 sm:p-10">
+						<div class="grid sm:grid-cols-2 gap-5 mb-5">
+							<div class="field-wrap">
+								<label for="f-name" class="field-label"
+									>Full Name</label
+								>
+								<input
+									id="f-name"
+									name="name"
+									type="text"
+									placeholder="Jane Doe"
+									class="field-input" />
+								<p class="field-err hidden"></p>
+							</div>
+							<div class="field-wrap">
+								<label for="f-email" class="field-label"
+									>Email Address</label
+								>
+								<input
+									id="f-email"
+									name="email"
+									type="email"
+									placeholder="jane@example.com"
+									class="field-input" />
+								<p class="field-err hidden"></p>
+							</div>
+						</div>
+
+						<div class="grid sm:grid-cols-2 gap-5 mb-5">
+							<div class="field-wrap">
+								<label for="f-event" class="field-label"
+									>Event</label
+								>
+								<select
+									id="f-event"
+									name="event"
+									class="field-input field-select">
+									<option value="" disabled selected>
+										Choose an event…
+									</option>
+									<option>Future of AI 2026</option>
+									<option>Design Systems Workshop</option>
+									<option>Startup Founders Meetup</option>
+								</select>
+								<p class="field-err hidden"></p>
+							</div>
+							<div class="field-wrap">
+								<label class="field-label">Rating</label>
+								<div
+									id="star-wrap"
+									class="field-input flex items-center gap-1.5 py-2">
+									<input
+										type="hidden"
+										id="f-rating"
+										name="rating"
+										value="0" />
+									<button
+										type="button"
+										data-v="1"
+										class="star text-2xl text-stone-300 dark:text-stone-600 hover:scale-110 transition-transform focus:outline-none">
+										★
+									</button>
+									<button
+										type="button"
+										data-v="2"
+										class="star text-2xl text-stone-300 dark:text-stone-600 hover:scale-110 transition-transform focus:outline-none">
+										★
+									</button>
+									<button
+										type="button"
+										data-v="3"
+										class="star text-2xl text-stone-300 dark:text-stone-600 hover:scale-110 transition-transform focus:outline-none">
+										★
+									</button>
+									<button
+										type="button"
+										data-v="4"
+										class="star text-2xl text-stone-300 dark:text-stone-600 hover:scale-110 transition-transform focus:outline-none">
+										★
+									</button>
+									<button
+										type="button"
+										data-v="5"
+										class="star text-2xl text-stone-300 dark:text-stone-600 hover:scale-110 transition-transform focus:outline-none">
+										★
+									</button>
+									<span
+										id="rating-label"
+										class="ml-1 text-xs text-stone-400 dark:text-stone-500"></span>
+								</div>
+								<p class="field-err hidden" id="rating-err"></p>
+							</div>
+						</div>
+
+						<div class="field-wrap mb-8">
+							<label for="f-comment" class="field-label"
+								>Comment</label
+							>
+							<textarea
+								id="f-comment"
+								name="comment"
+								rows="4"
+								placeholder="Share what stood out — highlights, low points, what you'd change…"
+								class="field-input resize-none"></textarea>
+							<p class="field-err hidden"></p>
+						</div>
+
+						<button
+							type="submit"
+							id="submit-btn"
+							class="w-full flex items-center justify-center gap-2.5 h-12 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-semibold shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/30 transition-all duration-200 hover:-translate-y-0.5 disabled:hover:translate-y-0 disabled:cursor-not-allowed">
+							<svg
+								id="btn-icon"
+								class="w-4 h-4"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+							</svg>
+							<span id="btn-text">Send Feedback</span>
+							<svg
+								id="btn-spinner"
+								class="hidden w-4 h-4 animate-spin"
+								fill="none"
+								viewBox="0 0 24 24">
+								<circle
+									class="opacity-25"
+									cx="12"
+									cy="12"
+									r="10"
+									stroke="currentColor"
+									stroke-width="4" />
+								<path
+									class="opacity-75"
+									fill="currentColor"
+									d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+							</svg>
+						</button>
+					</form>
+				</div>
+			</div>
+		</section>
+
+		<section
+			id="feedback-list"
+			class="py-28 px-6 lg:px-10 bg-white dark:bg-[#16141a]">
+			<div class="max-w-7xl mx-auto">
+				<div class="section-header">
+					<span class="section-eyebrow">Community</span>
+					<h2 class="section-title">Feedback Board</h2>
+					<p class="section-sub">
+						Real reviews from real attendees — sorted by most
+						recent.
+					</p>
+				</div>
+
+				<div class="flex justify-end mt-8">
+					<button
+						id="refresh-btn"
+						class="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 text-sm font-medium hover:border-indigo-300 dark:hover:border-indigo-700 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all duration-200">
+						<svg
+							id="refresh-icon"
+							class="w-3.5 h-3.5"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+						</svg>
+						Refresh
+					</button>
+				</div>
+
+				<div
+					id="fb-skeleton"
+					class="mt-6 grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+					<div class="skeleton h-44 rounded-2xl"></div>
+					<div
+						class="skeleton h-48 rounded-2xl"
+						style="animation-delay: 0.12s"></div>
+					<div
+						class="skeleton h-44 rounded-2xl"
+						style="animation-delay: 0.24s"></div>
+				</div>
+
+				<div
+					id="fb-grid"
+					class="hidden mt-6 grid md:grid-cols-2 lg:grid-cols-3 gap-5"></div>
+
+				<div id="fb-empty" class="hidden mt-20 text-center">
+					<div
+						class="w-14 h-14 mx-auto rounded-2xl bg-stone-100 dark:bg-stone-800 flex items-center justify-center mb-4">
+						<svg
+							class="w-7 h-7 text-stone-400"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="1.5"
+								d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+						</svg>
+					</div>
+					<p
+						class="font-display text-xl font-semibold text-stone-900 dark:text-white">
+						No feedback yet
+					</p>
+					<p class="text-sm text-stone-500 dark:text-stone-400 mt-1">
+						Be the first to share your experience!
+					</p>
+					<a
+						href="#submit"
+						class="inline-flex mt-5 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors"
+						>Submit Feedback</a
+					>
+				</div>
+
+				<div id="fb-error" class="hidden mt-20 text-center">
+					<div
+						class="w-14 h-14 mx-auto rounded-2xl bg-red-50 dark:bg-red-950/30 flex items-center justify-center mb-4">
+						<svg
+							class="w-7 h-7 text-red-400"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="1.5"
+								d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+						</svg>
+					</div>
+					<p
+						class="font-display text-xl font-semibold text-stone-900 dark:text-white">
+						Server unreachable
+					</p>
+					<p class="text-sm text-stone-500 dark:text-stone-400 mt-1">
+						Make sure your backend is running on port 5500
+					</p>
+					<button
+						onclick="loadFeedback()"
+						class="inline-flex mt-5 px-5 py-2.5 rounded-xl bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-300 text-sm font-medium transition-colors">
+						Try Again
+					</button>
+				</div>
+			</div>
+		</section>
+
+		<footer
+			class="border-t border-stone-100 dark:border-stone-800/80 py-10 px-6 lg:px-10">
+			<div
+				class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+				<div class="flex items-center gap-2.5">
+					<div
+						class="w-6 h-6 rounded-md bg-indigo-600 flex items-center justify-center">
+						<svg
+							class="w-3.5 h-3.5 text-white"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+						</svg>
+					</div>
+					<span
+						class="font-display font-semibold text-sm text-stone-700 dark:text-stone-300"
+						>Event<span class="text-indigo-600">Lens</span></span
+					>
+				</div>
+				<p class="text-xs text-stone-400">
+					© 2026 EventLens — Event Feedback Management System. All
+					rights reserved.
+				</p>
+			</div>
+		</footer>
+
+		<script src="script.js"></script>
+	</body>
+</html>

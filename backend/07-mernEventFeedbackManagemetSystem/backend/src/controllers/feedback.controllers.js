@@ -53,7 +53,7 @@ export const submitFeedback = async (req, res) => {
 // display all feedbacks
 export const showAllFeedbacks = async (req, res) => {
 	try {
-		const allFeedbacks = await Feedback.find();
+		const allFeedbacks = await Feedback.find().sort({ createdAt: -1 });
 		if (allFeedbacks.length === 0) {
 			return res
 				.status(200)

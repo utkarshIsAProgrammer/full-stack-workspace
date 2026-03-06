@@ -9,7 +9,6 @@ const router = express.Router();
 
 router.get("/", home);
 router.post("/feedback", submitFeedback);
-// router.post("/feedback", showFeedback);
 router.get("/feedback", showAllFeedbacks);
 
 export { router as feedbackRoutes };
