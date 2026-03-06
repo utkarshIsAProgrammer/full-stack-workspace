@@ -7,7 +7,11 @@ import cors from "cors";
 const app = express();
 const port = process.env.PORT || 5500;
 
-app.use(cors());
+app.use(
+	cors({
+		origin: "https://event-feedback-system-three.vercel.app",
+	}),
+);
 app.use(express.json());
 app.use("/api", feedbackRoutes);
 
