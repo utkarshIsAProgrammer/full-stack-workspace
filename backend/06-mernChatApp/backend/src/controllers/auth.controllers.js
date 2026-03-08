@@ -20,30 +20,36 @@ export const signup = async (req, res) => {
 	}
 
 	try {
+		// check if user exists
 		const user = await User.findOne({ email });
 		if (user) {
-			return res.status(400).json({ message: "User already exists!" });
+			return res.status(400).json({ message: "Email already exists!" });
 		}
 
+		// hashing password
 		const hashedPassword = await bcrypt.hash(password, 10);
 
+		// create new user
 		const newUser = await User.create({
 			fullName,
 			email,
 			password: hashedPassword,
 		});
 
+		// generate token if user created
 		if (newUser) {
 			generateToken(newUser._id, res);
+
+			res.status(201).json({
+				success: true,
+				message: "User created successfully!",
+				newUser,
+			});
+
+			// TODO: SEND A WELCOME EMAIL TO THE USER
 		} else {
 			return res.status(400).json({ message: "Invalid user data!" });
 		}
-
-		res.status(201).json({
-			success: true,
-			message: "User created successfully!",
-			newUser,
-		});
 	} catch (err) {
 		console.log(`Error in the signup controller! ${err.message}`);
 		res.status(500).json({ message: "Internal server error!" });
