@@ -1,6 +1,7 @@
 import User from "../models/user.model.js";
 import bcrypt from "bcryptjs";
 import { generateToken } from "../utils/generateToken.js";
+import cloudinary from "../utils/cloudinary.js";
 
 export const signup = async (req, res) => {
 	const { email, fullName, password } = req.body;
@@ -83,9 +84,43 @@ export const logout = async (_, res) => {
 
 export const updateProfile = async (req, res) => {
 	try {
-		// TODO: CREATE MIDDLEWARE FOR PROTECTING ROUTES (protectRoute.middleware.js)
+		// get profile pic and user id
+		const { profilePic } = req.body;
+		const userId = req.user._id;
+
+		if (!profilePic) {
+			return res
+				.status(400)
+				.json({ message: "Profile pic is required!" });
+		}
+
+		// upload profile pic using cloudinary
+		const uploadResponse = await cloudinary.uploader.upload(profilePic);
+		const updatedUser = await User.findByIdAndUpdate(
+			userId,
+			{
+				// update profile pic using cloudinary
+				profilePic: uploadResponse.secure_url,
+			},
+			{ new: true },
+		);
+
+		res.status(200).json({
+			message: "Profile pic updated successfully!",
+			updatedUser,
+		});
 	} catch (err) {
 		console.log(`Error in the updateProfile controller! ${err.message}`);
+		res.status(500).json({ message: "Internal server error!" });
+	}
+};
+
+export const checkAuth = (req, res) => {
+	try {
+		// send user back to the client
+		res.status(200).json(req.user);
+	} catch (err) {
+		console.log(`Error in the checkAuth controller! ${err.message}`);
 		res.status(500).json({ message: "Internal server error!" });
 	}
 };
