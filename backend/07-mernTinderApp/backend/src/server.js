@@ -10,10 +10,10 @@ const port = process.env.PORT || 5500;
 app.use(express.json());
 app.use(cookieParser());
 app.use("/api/auth", authRoutes);
+app.use("/api/users", userRoutes);
 
 // TODO: CREATE THOSE ROUTES AND CONTROLLERS
 
-// app.use("/api/users", userRoutes);
 // app.use("/api/match", matchRoutes);
 // app.use("/api/messages", messageRoutes);
 
