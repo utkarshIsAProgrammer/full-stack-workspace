@@ -39,8 +39,10 @@ userSchema.pre("save", async function () {
 	}
 });
 
-userSchema.methods.signToken = async function (userId) {
-	jwt.sign(userId, process.env.JWT_SECRET, { expiresIn: "7d" });
+userSchema.methods.signToken = function (userId) {
+	return jwt.sign({ userId: this._id }, process.env.JWT_SECRET, {
+		expiresIn: "7d",
+	});
 };
 
 userSchema.methods.comparePassword = async function (password) {

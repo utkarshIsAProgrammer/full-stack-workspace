@@ -14,9 +14,10 @@ export const signup = async (req, res) => {
 		const emailRegex =
 			/^(?!.*\.\.)(?!.*\.$)[^\W][A-Za-z0-9._%+-]{0,63}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/;
 		if (!emailRegex.test(email)) {
-			return res
-				.status(400)
-				.json({ success: false, message: "Invalid email format!" });
+			return res.status(400).json({
+				success: false,
+				message: "Invalid email format!",
+			});
 		}
 
 		if (password.length < 6) {
@@ -28,19 +29,19 @@ export const signup = async (req, res) => {
 
 		const userExists = await User.findOne({ email });
 		if (userExists) {
-			return res
-				.status(400)
-				.json({ success: false, message: "User already exists!" });
+			return res.status(400).json({
+				success: false,
+				message: "User already exists!",
+			});
 		}
 
 		const user = await User.create({ name, email, password });
-
-		const token = await user.signToken({ userId: user._id });
+		const token = user.signToken();
 
 		res.cookie("jwt", token, {
 			httpOnly: true,
-			sameSite: "strict",
-			secure: process.env.NODE_ENV === "production",
+			sameSite: "lax", // ← changed from "none" to "lax"
+			secure: false,
 			maxAge: 7 * 24 * 60 * 60 * 1000,
 		});
 
@@ -75,23 +76,25 @@ export const login = async (req, res) => {
 
 		const existingUser = await User.findOne({ email });
 		if (!existingUser) {
-			return res
-				.status(404)
-				.json({ success: false, message: "User doesn't exist!" });
+			return res.status(404).json({
+				success: false,
+				message: "User doesn't exist!",
+			});
 		}
 
 		if (!(await existingUser.comparePassword(password))) {
-			return res
-				.status(400)
-				.json({ success: false, message: "Invalid credentials!" });
+			return res.status(400).json({
+				success: false,
+				message: "Invalid credentials!",
+			});
 		}
 
-		const token = existingUser.signToken({ userId: existingUser._id });
+		const token = existingUser.signToken();
 
 		res.cookie("jwt", token, {
 			httpOnly: true,
-			sameSite: "strict",
-			secure: process.env.NODE_ENV === "production",
+			sameSite: "lax", // ← changed from "none" to "lax"
+			secure: false,
 			maxAge: 7 * 24 * 60 * 60 * 1000,
 		});
 
@@ -110,12 +113,20 @@ export const login = async (req, res) => {
 
 export const logout = async (req, res) => {
 	try {
-		await res.clearCookie("jwt");
+		res.clearCookie("jwt", {
+			httpOnly: true,
+			sameSite: "lax", // ← must match how it was set
+			secure: false,
+		});
 		res.status(200).json({
 			success: true,
 			message: "Logged out successfully!",
 		});
 	} catch (err) {
 		console.log(`Error in the logout controller! ${err.message}`);
+		res.status(500).json({
+			success: false,
+			message: "Internal server error!",
+		});
 	}
 };
