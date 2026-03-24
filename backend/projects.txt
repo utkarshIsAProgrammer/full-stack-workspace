@@ -1,0 +1,16 @@
+(done) notes app
+(done) product store
+chat app with image uploads
+chat app without image uploads
+spotify clone
+twitter clone
+e-commerce store with admin dashboard
+advanced auth system
+tinder clone
+netflix clone
+linkedin clone
+github clone
+graphQL course
+react admin dashboard
+
+

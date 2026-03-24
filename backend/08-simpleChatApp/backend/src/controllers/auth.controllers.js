@@ -86,14 +86,19 @@ export const login = async (req, res) => {
 		}
 
 		const existingUser = await User.findOne({ userName });
-		const isPasswordCorrect = await existingUser.comparePassword(password);
-
-		if (!existingUser || !isPasswordCorrect) {
+		if (!existingUser) {
 			return res
-				.status(404)
+				.status(400)
 				.json({ success: false, message: "Invalid credentials!" });
 		}
 
+		const isPasswordCorrect = await existingUser.comparePassword(password);
+
+		if (!isPasswordCorrect) {
+			return res
+				.status(400)
+				.json({ success: false, message: "Invalid credentials!" });
+		}
 		const token = existingUser.signToken();
 		setCookie(res, token);
 
