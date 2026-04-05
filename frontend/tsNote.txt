@@ -1,0 +1,4 @@
+05/10/2026 - Sunday
+
+OOP in TS
+Interface is OOP
