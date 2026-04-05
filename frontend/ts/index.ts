@@ -233,3 +233,52 @@ console.log(myTup[1]);
 const [elem1, elem2] = myTup;
 console.log(elem1, elem2);
 // -------------------------------------------------------------------------------------------------------------------------
+
+// * ENUMS
+// -------------------------------------------------------------------------------------------------------------------------
+enum weatherConditions {
+	sunny = "Sunny",
+	cloudy = "Cloudy",
+	rainy = "Rainy",
+	foggy = "Foggy",
+	snowy = "Snowy",
+}
+
+let currentWeather = weatherConditions.cloudy;
+console.log(currentWeather);
+// -------------------------------------------------------------------------------------------------------------------------
+
+// * INTERFACES
+// -------------------------------------------------------------------------------------------------------------------------
+interface human {
+	firstName: string;
+	lastName: string;
+	age: number;
+	saySomething(): string;
+}
+
+const newHuman: human = {
+	firstName: "Jonathan",
+	lastName: "Buyers",
+	age: 29,
+	saySomething() {
+		return "Hello Geek!";
+	},
+};
+console.log(newHuman);
+console.log(newHuman.saySomething());
+
+interface mathOp {
+	(a: number, b: number): number;
+}
+
+const add: mathOp = (a, b) => {
+	return a + b;
+};
+console.log(add(5, 6));
+// -------------------------------------------------------------------------------------------------------------------------
+
+// * GENERICS
+// -------------------------------------------------------------------------------------------------------------------------
+// TODO: CONTINUE LEARNING WITH GENERICS
+// -------------------------------------------------------------------------------------------------------------------------
