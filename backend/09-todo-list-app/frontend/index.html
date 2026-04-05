@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Taskflow</title>
+		<link
+			href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&display=swap"
+			rel="stylesheet" />
+		<link rel="stylesheet" href="style.css" />
+		<script src="script.js" defer></script>
+	</head>
+	<body>
+		<div class="app">
+			<!-- HEADER -->
+			<header>
+				<div class="brand">
+					<h1>Taskflow</h1>
+					<p>Your personal command centre</p>
+				</div>
+				<div class="header-actions">
+					<button
+						class="theme-btn"
+						id="theme-btn"
+						title="Toggle theme">
+						🌙
+					</button>
+				</div>
+			</header>
+
+			<!-- FORM -->
+			<div class="form-card">
+				<h2 id="form-heading">Add a new task</h2>
+				<div class="form-grid">
+					<label class="full">
+						Title *
+						<input
+							type="text"
+							id="f-title"
+							placeholder="What needs doing?" />
+					</label>
+					<label class="full">
+						Description
+						<textarea
+							id="f-desc"
+							placeholder="Optional details…"></textarea>
+					</label>
+					<label>
+						Due date
+						<input type="date" id="f-due" />
+					</label>
+					<label
+						id="completed-field"
+						style="display: none; justify-content: flex-end">
+						<span style="visibility: hidden">x</span>
+						<span class="checkbox-row">
+							<input type="checkbox" id="f-done" />
+							Mark as completed
+						</span>
+					</label>
+				</div>
+				<div class="form-footer">
+					<button
+						class="btn btn-ghost"
+						id="cancel-btn"
+						style="display: none">
+						Cancel
+					</button>
+					<button class="btn btn-primary" id="submit-btn">
+						Add Task
+					</button>
+				</div>
+			</div>
+
+			<!-- FILTER BAR -->
+			<div class="filter-bar">
+				<input
+					type="text"
+					id="search-input"
+					placeholder="Search tasks…"
+					style="max-width: 240px" />
+			</div>
+
+			<!-- TASK LIST -->
+			<div id="task-list"></div>
+		</div>
+
+		<!-- TOAST CONTAINER -->
+		<div id="toast-container"></div>
+
+		<!-- DELETE MODAL -->
+		<div id="delete-modal" class="modal-overlay" style="display: none">
+			<div class="modal">
+				<h3>Delete task?</h3>
+				<p>
+					This action cannot be undone. The task will be permanently
+					removed.
+				</p>
+				<div class="modal-actions">
+					<button class="btn btn-ghost" id="modal-cancel">
+						Cancel
+					</button>
+					<button class="btn btn-primary" id="modal-confirm">
+						Delete
+					</button>
+				</div>
+			</div>
+		</div>
+	</body>
+</html>
