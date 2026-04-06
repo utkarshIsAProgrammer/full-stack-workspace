@@ -1,4 +1,13 @@
 05/10/2026 - Sunday
 
 OOP in TS
-Interface is OOP
+Interface in OOP
+Generics in OOP
+
+
+{
+	"compilerOptions": {
+		"module": "commonjs",
+		"target": "es6"
+	}
+}
