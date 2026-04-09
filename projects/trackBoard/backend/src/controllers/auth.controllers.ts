@@ -3,16 +3,16 @@ import { registerSchema, loginSchema } from "../validations/auth.validation.ts";
 import User from "../models/user.model.ts";
 
 export const register = async (req: Request, res: Response) => {
-	const validation = registerSchema.safeParse(req.body);
-	if (!validation.success) {
-		return res
-			.status(400)
-			.json({ success: false, errors: validation.error.format() });
-	}
-
-	const { name, email, password } = validation.data;
-
 	try {
+		const validation = registerSchema.safeParse(req.body);
+		if (!validation.success) {
+			return res
+				.status(400)
+				.json({ success: false, errors: validation.error.format() });
+		}
+
+		const { name, email, password } = validation.data;
+
 		const userExists = await User.findOne({ email });
 		if (userExists) {
 			return res
@@ -94,6 +94,7 @@ export const login = async (req: Request, res: Response) => {
 	} catch (err) {
 		const error = err instanceof Error ? err : new Error(String(err));
 		console.log(`Error in the login controller! ${error.message}`);
+		res.status(500).json({ message: "Internal server error!" });
 	}
 };
 
@@ -108,7 +109,6 @@ export const logout = async (req: Request, res: Response) => {
 		const error = err instanceof Error ? err : new Error(String(err));
 		console.log(`Error in the logout controller! ${error.message}`);
 		res.status(500).json({
-			success: false,
 			message: "Internal server error!",
 		});
 	}
