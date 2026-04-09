@@ -1,15 +1,15 @@
 {
 	"name": "backend",
 	"version": "1.0.0",
-	"description": "",
-	"main": "src/server.ts",
+	"description": "trackBoard is a progress/tasks tracking web application made for developers. (typescript/svelte/jod)",
+	"main": "src/server.js",
 	"scripts": {
-		"dev": "tsx watch src/server.ts",
+		"dev": "tsx --watch src/server.js",
 		"build": "tsc",
 		"start": "node dist/server.js"
 	},
 	"keywords": [],
-	"author": "",
+	"author": "IndieDev",
 	"license": "ISC",
 	"type": "module",
 	"dependencies": {
