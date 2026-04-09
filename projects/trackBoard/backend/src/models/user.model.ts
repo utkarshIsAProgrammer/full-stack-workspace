@@ -8,6 +8,7 @@ export interface IUser {
 	email: string;
 	password: string;
 	signToken(): string;
+	comparePassword(password: string): Promise<boolean>;
 }
 
 const userSchema = new mongoose.Schema<IUser>(
@@ -49,6 +50,10 @@ userSchema.methods.signToken = function (this: IUser): string {
 	return jwt.sign({ userId: this._id }, jwtSecret, {
 		expiresIn: "7d",
 	});
+};
+
+userSchema.methods.comparePassword = function (password: string) {
+	return bcrypt.compare(password, this.password);
 };
 
 const User = mongoose.model("User", userSchema);
