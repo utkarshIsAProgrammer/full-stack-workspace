@@ -6,6 +6,11 @@ const port = 3000;
 const router = express.Router();
 
 app.use(express.json());
+app.use((req, res, next) => {
+	const timestamps = new Date().toISOString();
+	console.log(`[${timestamps}] ${req.method} ${req.url}`);
+	next();
+});
 
 let cars = [
 	{
