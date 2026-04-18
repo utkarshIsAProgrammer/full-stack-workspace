@@ -1,17 +1,27 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Car from "./components/Car.jsx";
-import { useEffect, useState } from "react";
 
 const App = () => {
 	const [cars, setCars] = useState([]);
-	useEffect(() => {}, []);
+
+	useEffect(() => {
+		fetch("/api/cars")
+			.then((res) => {
+				if (!res.ok) throw new Error("API failed");
+				return res.json();
+			})
+			.then((data) => setCars(data))
+			.catch((err) => console.error(err));
+	}, []);
 
 	return (
 		<div>
 			<h1>Welcome to the car store!</h1>
 
 			<ul>
-				<Car />
+				{cars.map((car, index) => (
+					<Car key={index} car={car} />
+				))}
 			</ul>
 		</div>
 	);
