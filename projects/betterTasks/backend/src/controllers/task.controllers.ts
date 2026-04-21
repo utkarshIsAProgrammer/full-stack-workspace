@@ -23,11 +23,9 @@ export const addTask = async (req: Request, res: Response) => {
 			message: "Task created successfully!",
 			task,
 		});
-	} catch (err) {
-		const error =
-			err instanceof Error ? err : new Error("Unknown error occurred!");
-		console.log(`Error in the addTask controller! ${error.message}`);
-		res.status(500).json({ message: "Internal server error!", error });
+	} catch (err: any) {
+		console.log(`Error in the signup controller! ${err.message}`);
+		return res.status(500).json({ message: "Internal server error!" });
 	}
 };
 
@@ -63,15 +61,16 @@ export const updateTask = async (req: Request, res: Response) => {
 				updatedTask,
 			});
 		}
-	} catch (err) {
-		const error =
-			err instanceof Error ? err : new Error("Unknown error occurred!");
-		console.log(`Error in the updateTask controller! ${error.message}`);
-		res.status(500).json({ message: "Internal server error!", error });
+	} catch (err: any) {
+		console.log(`Error in the signup controller! ${err.message}`);
+		return res.status(500).json({ message: "Internal server error!" });
 	}
 };
 
-export const softDeleteTask = async (req: Request, res: Response) => {
+export const softDeleteTask = async (
+	req: Request<{ id: string }>,
+	res: Response,
+) => {
 	const { id } = req.params;
 
 	try {
@@ -100,15 +99,16 @@ export const softDeleteTask = async (req: Request, res: Response) => {
 				deletedTask,
 			});
 		}
-	} catch (err) {
-		const error =
-			err instanceof Error ? err : new Error("Unknown error occurred!");
-		console.log(`Error in the softDeleteTask controller! ${error.message}`);
-		res.status(500).json({ message: "Internal server error!", error });
+	} catch (err: any) {
+		console.log(`Error in the signup controller! ${err.message}`);
+		return res.status(500).json({ message: "Internal server error!" });
 	}
 };
 
-export const deleteTask = async (req: Request, res: Response) => {
+export const deleteTask = async (
+	req: Request<{ id: string }>,
+	res: Response,
+) => {
 	const { id } = req.params;
 
 	try {
@@ -131,11 +131,9 @@ export const deleteTask = async (req: Request, res: Response) => {
 				message: "Task deleted successfully!",
 			});
 		}
-	} catch (err) {
-		const error =
-			err instanceof Error ? err : new Error("Unknown error occurred!");
-		console.log(`Error in the deleteTask controller! ${error.message}`);
-		res.status(500).json({ message: "Internal server error!", error });
+	} catch (err: any) {
+		console.log(`Error in the signup controller! ${err.message}`);
+		return res.status(500).json({ message: "Internal server error!" });
 	}
 };
 
@@ -149,10 +147,11 @@ export const getTasks = async (req: Request, res: Response) => {
 			message: "All tasks fetched successfully!",
 			tasks: allTasks,
 		});
-	} catch (err) {
-		const error =
-			err instanceof Error ? err : new Error("Unknown error occurred!");
-		console.log(`Error in the getTasks controller! ${error.message}`);
-		res.status(500).json({ message: "Internal server error!", error });
+	} catch (err: any) {
+		console.log(`Error in the signup controller! ${err.message}`);
+		return res.status(500).json({ message: "Internal server error!" });
 	}
 };
+
+export const restoreTask = async (req: Request, res: Response) => {};
+export const restoreAllTasks = async (req: Request, res: Response) => {};

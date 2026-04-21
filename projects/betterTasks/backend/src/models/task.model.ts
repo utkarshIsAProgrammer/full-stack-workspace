@@ -1,8 +1,7 @@
 import mongoose from "mongoose";
-import { TaskInput } from "../schemas/task.schema";
 import { InferSchemaType } from "mongoose";
 
-const taskSchema = new mongoose.Schema<TaskInput>(
+const taskSchema = new mongoose.Schema(
 	{
 		title: {
 			type: String,
