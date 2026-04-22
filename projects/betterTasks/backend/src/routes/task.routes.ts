@@ -3,7 +3,9 @@ import {
 	addTask,
 	updateTask,
 	softDeleteTask,
+	softDeleteAllTasks,
 	deleteTask,
+	deleteAllTasks,
 	getTasks,
 	restoreTask,
 	restoreAllTasks,
@@ -13,11 +15,17 @@ import { authUser } from "../middlewares/auth.middleware";
 const router = express.Router();
 
 router.post("/", authUser, addTask);
-router.put("/:id", authUser, updateTask);
+
+router.delete("/", authUser, softDeleteAllTasks);
+router.delete("/permanent", authUser, deleteAllTasks);
+
 router.delete("/:id", authUser, softDeleteTask);
 router.delete("/:id/permanent", authUser, deleteTask);
+
+router.put("/:id", authUser, updateTask);
+router.patch("/:id", authUser, restoreTask);
+router.patch("/", authUser, restoreAllTasks);
+
 router.get("/", authUser, getTasks);
-router.post("/", authUser, restoreTask);
-router.post("/", authUser, restoreAllTasks);
 
 export { router as taskRoutes };
