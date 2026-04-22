@@ -4,12 +4,14 @@ import cookieParser from "cookie-parser";
 import { connectDB } from "./db/db";
 import { taskRoutes } from "./routes/task.routes";
 import { authRoutes } from "./routes/auth.routes";
+import { rateLimiter } from "./middlewares/rateLimit.middleware";
 
 const app = express();
 const port = process.env.PORT || 5000;
 
 app.use(express.json());
 app.use(cookieParser());
+app.use(rateLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api/tasks", taskRoutes);
 
@@ -18,5 +20,3 @@ connectDB().then(() => {
 		console.log(`Server is running on PORT: ${port}`);
 	});
 });
-
-// TODO: --- CREATE restoreTask AND restoreAllTasks CONTROLLER ---
