@@ -94,6 +94,19 @@ export const login = async (req: Request, res: Response) => {
 	}
 };
 
+export const me = async (req: Request, res: Response) => {
+	try {
+		const user = (req as any).user;
+		if (!user) {
+			return res.status(401).json({ success: false, message: "Not authenticated!" });
+		}
+		res.status(200).json({ user: { id: user._id, email: user.email } });
+	} catch (err: any) {
+		console.log(`Error in the me controller! ${err.message}`);
+		res.status(500).json({ message: "Internal server error!" });
+	}
+};
+
 export const logout = async (req: Request, res: Response) => {
 	try {
 		res.clearCookie("jwt", {
