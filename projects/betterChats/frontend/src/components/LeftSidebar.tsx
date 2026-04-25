@@ -68,7 +68,7 @@ const LeftSidebar = ({ selectedUser, setSelectedUser }) => {
 							)}
 						</div>
 						{index > 2 && (
-							<p className="absolute top-5 right-4 text-xs h-5 w-5 flex justify-center items-center rounded-full bg-violet-500">
+							<p className="absolute top-5 right-4 text-xs h-5 w-5 flex justify-center items-center rounded-full bg-violet-500/30 ">
 								{index}
 							</p>
 						)}
