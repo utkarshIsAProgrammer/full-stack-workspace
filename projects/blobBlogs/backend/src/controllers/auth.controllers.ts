@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { User } from "../models/user.model";
 import { signupSchema, loginSchema } from "../schemas/user.schema";
+import { sendMail } from "../configs/nodeMailer";
 
 export const signup = async (req: Request, res: Response) => {
 	const result = signupSchema.safeParse(req.body);
@@ -42,6 +43,8 @@ export const signup = async (req: Request, res: Response) => {
 			message: "User created successfully!",
 			user,
 		});
+
+		sendMail(req);
 	} catch (err: any) {
 		console.log(`Error in the signup controller! ${err.message}`);
 		res.status(500).json({ message: "Internal server error!" });
