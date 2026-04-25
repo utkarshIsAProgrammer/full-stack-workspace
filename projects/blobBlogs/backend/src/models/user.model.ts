@@ -56,7 +56,7 @@ userSchema.methods.comparePassword = function (password: string) {
 
 type UserDocument = InferSchemaType<typeof userSchema> & {
 	signToken: () => string;
-	comparePassword: () => Promise<boolean>;
+	comparePassword: (password: string) => Promise<boolean>;
 };
 
 export const User = mongoose.model<UserDocument>("User", userSchema);
