@@ -14,3 +14,5 @@ connectDB().then(() => {
 		console.log(`Server is running on PORT: ${port}`);
 	});
 });
+
+// TODO: I'VE ALREADY CREATED THE USER AUTH, CONTINUE FROM HERE.
