@@ -27,6 +27,16 @@ const userSchema = new mongoose.Schema(
 			required: [true, "Password is required!"],
 			min: [8, "Password must be at least 8 characters long!"],
 		},
+
+		otp: {
+			type: String,
+			default: null,
+		},
+
+		otpExpiry: {
+			type: Date,
+			default: null,
+		},
 	},
 
 	{ timestamps: true },
@@ -55,6 +65,8 @@ userSchema.methods.comparePassword = function (password: string) {
 };
 
 type UserDocument = InferSchemaType<typeof userSchema> & {
+	otp?: string | null;
+	otpExpiry?: Date | null;
 	signToken: () => string;
 	comparePassword: (password: string) => Promise<boolean>;
 };
