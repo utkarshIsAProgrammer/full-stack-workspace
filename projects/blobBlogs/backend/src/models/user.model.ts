@@ -64,7 +64,7 @@ userSchema.methods.comparePassword = function (password: string) {
 	return bcrypt.compare(password, this.password);
 };
 
-type UserDocument = InferSchemaType<typeof userSchema> & {
+export type UserDocument = InferSchemaType<typeof userSchema> & {
 	otp?: string | null;
 	otpExpiry?: Date | null;
 	signToken: () => string;
