@@ -174,6 +174,17 @@ export const updatePassword = async (req: Request, res: Response) => {
 				.json({ success: false, message: "Incorrect Password!" });
 		}
 
+		const isSamePassword = await bcrypt.compare(
+			result.data.newPassword,
+			user.password,
+		);
+		if (isSamePassword) {
+			return res.status(400).json({
+				success: false,
+				message: "Current password and new password can't be same!",
+			});
+		}
+
 		user.password = result.data.newPassword;
 		await user.save();
 
@@ -262,6 +273,16 @@ export const verifyOtpAndResetPassword = async (
 			return res.status(400).json({ message: "Invalid OTP!" });
 		}
 
+		const isSamePassword = await bcrypt.compare(
+			result.data.newPassword,
+			user.password,
+		);
+		if (isSamePassword) {
+			return res.status(400).json({
+				success: false,
+				message: "Current password and new password can't be same!",
+			});
+		}
 		user.password = newPassword;
 
 		user.otp = null;
