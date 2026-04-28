@@ -72,3 +72,18 @@ export const sendForgotPasswordMail = async (user: MailUser) => {
 		console.error("Failed to send email:", err.message);
 	}
 };
+
+export const sendDeletionMail = async (user: MailUser) => {
+	try {
+		await transporter.sendMail({
+			from: '"blobBlogs" <inevitablestrangeutkarsh@gmail.com>',
+			to: user.email,
+			subject: "Account deletion!",
+			text: `Hi ${user.username}! sorry to see you go, your account is deleted successfully.`,
+			html: `Hi ${user.username}! sorry to see you go, your account is deleted successfully.`,
+		});
+		console.log("Otp email sent!");
+	} catch (err: any) {
+		console.error("Failed to send email:", err.message);
+	}
+};

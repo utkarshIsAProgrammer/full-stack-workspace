@@ -64,8 +64,11 @@ export const verifyOtpSchema = z
 		path: ["confirmPassword"],
 	});
 
+export const deleteAccountSchema = loginSchema;
+
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type updatePasswordInput = z.infer<typeof updatePasswordSchema>;
 export type forgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type verifyOtpInput = z.infer<typeof verifyOtpSchema>;
+export type deleteAccountInput = z.infer<typeof deleteAccountSchema>;
