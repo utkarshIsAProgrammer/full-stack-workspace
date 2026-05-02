@@ -1,5 +1,4 @@
 import type { Request, Response } from "express";
-import mongoose from "mongoose";
 import { User } from "../models/user.model";
 import { deleteAccountSchema } from "../schemas/user.schema";
 import { sendDeletionMail } from "../configs/nodeMailer";
@@ -9,10 +8,6 @@ export const deleteAccount = async (req: Request, res: Response) => {
 	const result = deleteAccountSchema.safeParse(req.body);
 
 	try {
-		if (typeof id !== "string" || !mongoose.Types.ObjectId.isValid(id)) {
-			throw new Error("Invalid id format!");
-		}
-
 		if (!result.success) {
 			return res.status(400).json({
 				success: false,

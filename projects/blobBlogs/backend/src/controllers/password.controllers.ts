@@ -25,7 +25,6 @@ export const updatePassword = async (req: Request, res: Response) => {
 			});
 		}
 
-		// const user = await User.findOne({ email: result.data.email });
 		const user = await User.findById(req.user?._id);
 		if (!user) {
 			return res.status(404).json({

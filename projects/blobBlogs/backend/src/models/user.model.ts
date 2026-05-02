@@ -62,7 +62,6 @@ userSchema.methods.comparePassword = function (password: string) {
 	return bcrypt.compare(password, this.password);
 };
 
-// ! USED HYDRATED_DOCUMENT FOR USING _ID
 type UserType = InferSchemaType<typeof userSchema>;
 export type UserDocument = HydratedDocument<UserType> & {
 	otp?: string | null;

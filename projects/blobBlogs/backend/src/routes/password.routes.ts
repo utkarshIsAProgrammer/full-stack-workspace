@@ -10,7 +10,6 @@ const router = express.Router();
 
 router.post("/update-password", protect, updatePassword);
 
-// ! REMOVED (protect) middleware
 router.post("/request-password-reset", requestPasswordReset);
 router.post("/verify-otp", verifyOtpAndResetPassword);
 
