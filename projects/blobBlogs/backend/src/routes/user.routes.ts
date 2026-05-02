@@ -3,6 +3,8 @@ import { deleteAccount } from "../controllers/user.controllers";
 import { protect } from "../middlewares/auth.middleware";
 
 const router = express.Router();
-router.post("/delete-account/:id", protect, deleteAccount);
+
+// ! REMOVED USER ID (:id)
+router.post("/delete-account/", protect, deleteAccount);
 
 export { router as userRoutes };

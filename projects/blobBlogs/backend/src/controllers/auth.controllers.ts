@@ -8,7 +8,7 @@ export const getAll = async (req: Request, res: Response) => {
 		const users = await User.find();
 		return res.status(200).json({
 			success: true,
-			mesage: "All users fetched successfully!",
+			message: "All users fetched successfully!",
 			users,
 		});
 	} catch (err: any) {

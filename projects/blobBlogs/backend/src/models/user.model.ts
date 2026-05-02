@@ -1,5 +1,4 @@
-import mongoose from "mongoose";
-import { InferSchemaType } from "mongoose";
+import mongoose, { InferSchemaType, HydratedDocument } from "mongoose";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
@@ -51,20 +50,21 @@ userSchema.pre("save", async function () {
 });
 
 userSchema.methods.signToken = function () {
-	return jwt.sign(
-		{ userId: this._id },
-		process.env.JWT_SECRET || "jwtSecret",
-		{
-			expiresIn: "7d",
-		},
-	);
+	if (!process.env.JWT_SECRET) {
+		throw new Error("JWT_SECRET not defined");
+	}
+	return jwt.sign({ userId: this._id }, process.env.JWT_SECRET, {
+		expiresIn: "7d",
+	});
 };
 
 userSchema.methods.comparePassword = function (password: string) {
 	return bcrypt.compare(password, this.password);
 };
 
-export type UserDocument = InferSchemaType<typeof userSchema> & {
+// ! USED HYDRATED_DOCUMENT FOR USING _ID
+type UserType = InferSchemaType<typeof userSchema>;
+export type UserDocument = HydratedDocument<UserType> & {
 	otp?: string | null;
 	otpExpiry?: Date | null;
 	signToken: () => string;

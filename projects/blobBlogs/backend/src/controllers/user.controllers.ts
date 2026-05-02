@@ -36,7 +36,8 @@ export const deleteAccount = async (req: Request, res: Response) => {
 			});
 		}
 
-		await User.findByIdAndDelete(id);
+		const userId = req.user?._id;
+		await User.findByIdAndDelete(userId);
 		sendDeletionMail({
 			email: user.email,
 			username: user.username,

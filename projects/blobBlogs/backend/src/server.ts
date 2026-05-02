@@ -7,7 +7,7 @@ import { passwordRoutes } from "./routes/password.routes";
 import { userRoutes } from "./routes/user.routes";
 
 const app = express();
-const port = process.env.PORT || 5500;
+const port = process.env.PORT || 5000;
 
 app.use(express.json());
 app.use(cookieParser());
