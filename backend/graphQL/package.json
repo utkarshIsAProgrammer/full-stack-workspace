@@ -1,0 +1,23 @@
+{
+	"name": "graphql",
+	"version": "1.0.0",
+	"description": "",
+	"main": "dist/server.js",
+	"scripts": {
+		"dev": "tsx --watch server.ts",
+		"build": "tsc",
+		"start": "node dist/server.js"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"type": "commonjs",
+	"dependencies": {
+		"@apollo/server": "^5.5.0",
+		"graphql": "^16.13.2"
+	},
+	"devDependencies": {
+		"tsx": "^4.21.0",
+		"typescript": "^6.0.3"
+	}
+}
