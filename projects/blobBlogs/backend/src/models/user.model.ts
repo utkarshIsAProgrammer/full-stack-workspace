@@ -1,7 +1,15 @@
+/**
+ * @file user.model.ts
+ * @description Mongoose model for User, including schema definitions, hooks, and instance methods.
+ */
+
 import mongoose, { InferSchemaType, HydratedDocument } from "mongoose";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
+/**
+ * User schema definition with validation and timestamps.
+ */
 const userSchema = new mongoose.Schema(
 	{
 		username: {
@@ -41,7 +49,11 @@ const userSchema = new mongoose.Schema(
 	{ timestamps: true },
 );
 
+/**
+ * Pre-save hook to hash the password before saving it to the database.
+ */
 userSchema.pre("save", async function () {
+	// Only hash the password if it has been modified (or is new)
 	if (!this.isModified("password")) {
 		return;
 	}
@@ -49,6 +61,12 @@ userSchema.pre("save", async function () {
 	this.password = await bcrypt.hash(this.password, 10);
 });
 
+/**
+ * Generates a JWT for the user instance.
+ * @method signToken
+ * @returns {string} The signed JWT.
+ * @throws Will throw an error if JWT_SECRET is not defined.
+ */
 userSchema.methods.signToken = function () {
 	if (!process.env.JWT_SECRET) {
 		throw new Error("JWT_SECRET not defined");
@@ -58,10 +76,18 @@ userSchema.methods.signToken = function () {
 	});
 };
 
+/**
+ * Compares a plain text password with the hashed password in the database.
+ * @async
+ * @method comparePassword
+ * @param {string} password - The plain text password to compare.
+ * @returns {Promise<boolean>} True if passwords match, false otherwise.
+ */
 userSchema.methods.comparePassword = function (password: string) {
 	return bcrypt.compare(password, this.password);
 };
 
+// Define type for User instance with custom methods
 type UserType = InferSchemaType<typeof userSchema>;
 export type UserDocument = HydratedDocument<UserType> & {
 	otp?: string | null;
@@ -70,4 +96,7 @@ export type UserDocument = HydratedDocument<UserType> & {
 	comparePassword: (password: string) => Promise<boolean>;
 };
 
+/**
+ * Mongoose Model for User.
+ */
 export const User = mongoose.model<UserDocument>("User", userSchema);

@@ -1,18 +1,36 @@
+/**
+ * @file nodeMailer.ts
+ * @description Configuration for Nodemailer and functions to send various types of emails.
+ */
+
 import nodemailer from "nodemailer";
 import "dotenv/config";
 
+/**
+ * Represents a user to whom an email will be sent.
+ * @typedef {Object} MailUser
+ * @property {string} email - The user's email address.
+ * @property {string} username - The user's username.
+ */
 type MailUser = {
 	email: string;
 	username: string;
 };
 
+// Create a transporter object using SMTP configuration from environment variables
 const transporter = nodemailer.createTransport({
 	host: process.env.SMTP_HOST,
 	port: 587,
-	secure: false, // true for port 465
+	secure: false, // true for port 465, false for other ports
 	auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
 });
 
+/**
+ * Sends a welcome email to a newly signed-up user.
+ * @async
+ * @function sendWelcomeMail
+ * @param {MailUser} user - The user object containing email and username.
+ */
 export const sendWelcomeMail = async (user: MailUser) => {
 	try {
 		await transporter.sendMail({
@@ -28,6 +46,12 @@ export const sendWelcomeMail = async (user: MailUser) => {
 	}
 };
 
+/**
+ * Sends an email notification when a user's password is successfully updated.
+ * @async
+ * @function sendPasswordUpdateMail
+ * @param {MailUser} user - The user object containing email and username.
+ */
 export const sendPasswordUpdateMail = async (user: MailUser) => {
 	try {
 		await transporter.sendMail({
@@ -43,6 +67,13 @@ export const sendPasswordUpdateMail = async (user: MailUser) => {
 	}
 };
 
+/**
+ * Sends an OTP email for verification purposes.
+ * @async
+ * @function sendOtpMail
+ * @param {MailUser} user - The user object containing email and username.
+ * @param {string} otp - The one-time password to be sent.
+ */
 export const sendOtpMail = async (user: MailUser, otp: string) => {
 	try {
 		await transporter.sendMail({
@@ -58,6 +89,12 @@ export const sendOtpMail = async (user: MailUser, otp: string) => {
 	}
 };
 
+/**
+ * Sends a confirmation email after a user has successfully reset their forgotten password.
+ * @async
+ * @function sendForgotPasswordMail
+ * @param {MailUser} user - The user object containing email and username.
+ */
 export const sendForgotPasswordMail = async (user: MailUser) => {
 	try {
 		await transporter.sendMail({
@@ -73,6 +110,12 @@ export const sendForgotPasswordMail = async (user: MailUser) => {
 	}
 };
 
+/**
+ * Sends a notification email when a user's account is deleted.
+ * @async
+ * @function sendDeletionMail
+ * @param {MailUser} user - The user object containing email and username.
+ */
 export const sendDeletionMail = async (user: MailUser) => {
 	try {
 		await transporter.sendMail({

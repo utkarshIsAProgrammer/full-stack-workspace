@@ -1,5 +1,13 @@
+/**
+ * @file user.schema.ts
+ * @description Zod validation schemas for user-related inputs.
+ */
+
 import { z } from "zod";
 
+/**
+ * Base user schema for common fields.
+ */
 const userSchema = z.object({
 	username: z
 		.string()
@@ -18,12 +26,16 @@ const userSchema = z.object({
 		.regex(/[^A-Za-z0-9]/, "Must include special character!"),
 });
 
+/** Schema for user signup */
 export const signupSchema = userSchema;
+
+/** Schema for user login */
 export const loginSchema = z.object({
 	email: z.string().email("Invalid email format!").trim().lowercase(),
 	password: z.string().min(1, "Password is required!"),
 });
 
+/** Schema for updating password while logged in */
 export const updatePasswordSchema = z
 	.object({
 		email: z.string().email("Invalid email format!").trim().lowercase(),
@@ -42,10 +54,12 @@ export const updatePasswordSchema = z
 		path: ["confirmPassword"],
 	});
 
+/** Schema for requesting password reset via email */
 export const forgotPasswordSchema = z.object({
 	email: z.string().email("Invalid email format!").trim().lowercase(),
 });
 
+/** Schema for verifying OTP and resetting password */
 export const verifyOtpSchema = z
 	.object({
 		email: z.string().email("Invalid email format!").trim().lowercase(),
@@ -64,8 +78,10 @@ export const verifyOtpSchema = z
 		path: ["confirmPassword"],
 	});
 
+/** Schema for account deletion */
 export const deleteAccountSchema = loginSchema;
 
+// Type definitions derived from Zod schemas
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type updatePasswordInput = z.infer<typeof updatePasswordSchema>;
