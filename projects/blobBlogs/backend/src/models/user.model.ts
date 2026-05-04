@@ -27,12 +27,13 @@ const userSchema = new mongoose.Schema(
 			trim: true,
 			lowercase: true,
 			unique: true,
+			index: true,
 		},
 
 		password: {
 			type: String,
 			required: [true, "Password is required!"],
-			min: [8, "Password must be at least 8 characters long!"],
+			minlength: [8, "Password must be at least 8 characters long!"],
 		},
 
 		otp: {
@@ -43,6 +44,7 @@ const userSchema = new mongoose.Schema(
 		otpExpiry: {
 			type: Date,
 			default: null,
+			index: { expires: 0 },
 		},
 	},
 
