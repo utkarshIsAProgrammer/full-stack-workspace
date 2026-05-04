@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import type { Request, Response } from "express";
 import Post from "../models/post.model";
-import { postSchema } from "../schemas/post.schema";
+import { createPostSchema, updatePostSchema } from "../schemas/post.schema";
 
 type Params = {
 	id: string;
@@ -63,7 +63,7 @@ export const getAllPosts = async (req: Request, res: Response) => {
 };
 
 export const createPost = async (req: Request, res: Response) => {
-	const result = postSchema.safeParse(req.body);
+	const result = createPostSchema.safeParse(req.body);
 
 	try {
 		if (!result.success) {
@@ -102,6 +102,63 @@ export const createPost = async (req: Request, res: Response) => {
 	}
 };
 
-export const updatePost = async (req: Request, res: Response) => {};
+export const updatePost = async (req: Request<Params>, res: Response) => {
+	const { id } = req.params;
+	const result = updatePostSchema.safeParse(req.body);
+	const userId = (req as any).user?._id;
+
+	try {
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res.status(400).json({
+				success: false,
+				message: "Invalid ID!",
+			});
+		}
+
+		if (!result.success) {
+			return res.status(400).json({
+				success: false,
+				message: "Invalid input!",
+				error: result.error.issues,
+			});
+		}
+
+		const post = await Post.findById(id);
+		if (!post) {
+			return res.status(404).json({
+				success: false,
+				message: "Post not found!",
+			});
+		}
+
+		if (!userId) {
+			return res.status(401).json({
+				success: false,
+				message: "Unauthorized!",
+			});
+		}
+
+		if (post.author.toString() !== userId.toString()) {
+			return res.status(403).json({
+				success: false,
+				message: "Forbidden!",
+			});
+		}
+
+		const { title, content } = result.data;
+		if (title !== undefined) post.title = title;
+		if (content !== undefined) post.content = content;
+		await post.save();
+
+		res.status(200).json({
+			success: true,
+			message: "Post updated successfully!",
+			post,
+		});
+	} catch (err: any) {
+		console.log(`Error in the updatePost controller!`);
+		res.status(500).json({ message: "Internal server error!" });
+	}
+};
 
 export const deletePost = async (req: Request, res: Response) => {};

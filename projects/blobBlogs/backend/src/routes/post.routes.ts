@@ -13,7 +13,7 @@ const router = express.Router();
 router.get("/:id", protect, getPost);
 router.get("/", protect, getAllPosts);
 router.post("/", protect, createPost);
-router.post("/:id", protect, updatePost);
-router.post("/:id", protect, deletePost);
+router.put("/:id", protect, updatePost);
+router.delete("/:id", protect, deletePost);
 
 export { router as postRoutes };
