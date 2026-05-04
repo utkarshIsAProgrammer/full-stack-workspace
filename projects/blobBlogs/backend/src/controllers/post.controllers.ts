@@ -18,7 +18,7 @@ export const getPost = async (req: Request<Params>, res: Response) => {
 			});
 		}
 
-		const post = await Post.findOne({ _id: id, published: true }).populate(
+		const post = await Post.findOne({ _id: id }).populate(
 			"author",
 			"username email",
 		);
@@ -41,7 +41,7 @@ export const getPost = async (req: Request<Params>, res: Response) => {
 
 export const getAllPosts = async (req: Request, res: Response) => {
 	try {
-		const posts = await Post.find({ published: true })
+		const posts = await Post.find()
 			.sort({ createdAt: -1 })
 			.populate("author", "username email");
 		if (posts.length === 0) {
@@ -123,18 +123,18 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
 			});
 		}
 
+		if (!userId) {
+			return res.status(401).json({
+				success: false,
+				message: "Unauthorized!",
+			});
+		}
+
 		const post = await Post.findById(id);
 		if (!post) {
 			return res.status(404).json({
 				success: false,
 				message: "Post not found!",
-			});
-		}
-
-		if (!userId) {
-			return res.status(401).json({
-				success: false,
-				message: "Unauthorized!",
 			});
 		}
 
@@ -161,4 +161,48 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
 	}
 };
 
-export const deletePost = async (req: Request, res: Response) => {};
+export const deletePost = async (req: Request<Params>, res: Response) => {
+	const { id } = req.params;
+	const userId = (req as any).user?._id;
+
+	try {
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res.status(400).json({
+				success: false,
+				message: "Invalid ID!",
+			});
+		}
+
+		if (!userId) {
+			return res.status(401).json({
+				success: false,
+				message: "Unauthorized!",
+			});
+		}
+
+		const post = await Post.findById(id);
+		if (!post) {
+			return res.status(404).json({
+				success: false,
+				message: "Post not found!",
+			});
+		}
+
+		if (post.author.toString() !== userId.toString()) {
+			return res.status(403).json({
+				success: false,
+				message: "Forbidden!",
+			});
+		}
+
+		await post.deleteOne();
+
+		res.status(200).json({
+			success: true,
+			message: "Post deleted successfully!",
+		});
+	} catch (err: any) {
+		console.log(`Error in the deletePost controller!`);
+		res.status(500).json({ message: "Internal server error!" });
+	}
+};

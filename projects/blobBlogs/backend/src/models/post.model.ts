@@ -31,11 +31,6 @@ const postSchema = new mongoose.Schema(
 			required: true,
 			index: true,
 		},
-
-		published: {
-			type: Boolean,
-			default: false,
-		},
 	},
 
 	{ timestamps: true },
@@ -44,7 +39,8 @@ const postSchema = new mongoose.Schema(
 postSchema.index({ author: 1, published: 1, createdAt: -1 });
 
 postSchema.pre("validate", async function () {
-	if (this.slug) return; // already set
+	// if (this.slug) return; // already set
+	if (!this.isModified("title")) return;
 
 	const baseSlug = slugify(this.title, { lower: true, strict: true });
 	let slug = baseSlug;
