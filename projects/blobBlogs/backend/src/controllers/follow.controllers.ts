@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import mongoose from "mongoose";
 import { User } from "../models/user.model";
 import Follow from "../models/follow.model";
 
@@ -7,7 +8,7 @@ type Params = {
 	following: string;
 };
 
-export const toggleFollowPost = async (req: Request<Params>, res: Response) => {
+export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
 	const follower = req.user?._id;
 	const { userId } = req.params;
 
@@ -16,6 +17,13 @@ export const toggleFollowPost = async (req: Request<Params>, res: Response) => {
 			return res
 				.status(401)
 				.json({ success: false, message: "Unauthorized access!" });
+		}
+
+		if (!mongoose.Types.ObjectId.isValid(userId)) {
+			return res.status(400).json({
+				success: false,
+				message: "Invalid user ID!",
+			});
 		}
 
 		if (follower.toString() === userId) {
@@ -58,7 +66,7 @@ export const toggleFollowPost = async (req: Request<Params>, res: Response) => {
 			following: false,
 		});
 	} catch (err: any) {
-		console.log(`Error in the toggleFollowPost controller! ${err.message}`);
+		console.log(`Error in the toggleFollowUser controller! ${err.message}`);
 		res.status(500).json({ message: "Internal Server Error" });
 	}
 };
@@ -71,9 +79,13 @@ export const getFollowers = async (req: Request<Params>, res: Response) => {
 			following: userId,
 		}).populate("follower", "username email");
 
+		const followersCount = await Follow.countDocuments({
+			following: userId,
+		});
+
 		res.json({
 			success: true,
-			count: followers.length,
+			followersCount,
 			followers,
 		});
 	} catch (err: any) {
@@ -90,9 +102,13 @@ export const getFollowing = async (req: Request<Params>, res: Response) => {
 			follower: userId,
 		}).populate("following", "username email");
 
+		const followingCount = await Follow.countDocuments({
+			follower: userId,
+		});
+
 		res.json({
 			success: true,
-			count: following.length,
+			followingCount,
 			following,
 		});
 	} catch (err: any) {
