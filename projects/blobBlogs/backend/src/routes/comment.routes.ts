@@ -9,9 +9,9 @@ import { protect } from "../middlewares/auth.middleware";
 
 const router = express.Router();
 
-router.get("/:id", protect, getComment);
+router.get("/:postId", protect, getComment);
 router.post("/:postId", protect, addComment);
-router.put("/:id", protect, updateComment);
-router.delete("/:id", protect, deleteComment);
+router.put("/:commentId", protect, updateComment);
+router.delete("/:commentId", protect, deleteComment);
 
 export { router as commentRoutes };

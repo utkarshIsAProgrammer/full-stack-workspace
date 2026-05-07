@@ -7,4 +7,7 @@ export const addCommentSchema = z.object({
 		.max(1000, "Comment must be less than 1000 characters!"),
 });
 
+export const updateCommentSchema = addCommentSchema;
+
 type AddCommentInput = z.infer<typeof addCommentSchema>;
+type updateCommentInput = z.infer<typeof updateCommentSchema>;
