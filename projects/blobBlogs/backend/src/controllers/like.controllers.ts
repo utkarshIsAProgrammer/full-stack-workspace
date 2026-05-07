@@ -120,7 +120,9 @@ export const toggleCommentLikes = async (
 			});
 		}
 	} catch (err: any) {
-		console.log(`Error in the togglePostLikes controller! ${err.message}`);
+		console.log(
+			`Error in the toggleCommentLikes controller! ${err.message}`,
+		);
 		res.status(500).json({ message: "Internal server error!" });
 	}
 };
