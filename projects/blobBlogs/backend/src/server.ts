@@ -13,6 +13,7 @@ import { passwordRoutes } from "./routes/password.routes";
 import { userRoutes } from "./routes/user.routes";
 import { postRoutes } from "./routes/post.routes";
 import { commentRoutes } from "./routes/comment.routes";
+import { likeRoutes } from "./routes/like.routes";
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -26,6 +27,7 @@ app.use("/api/password", passwordRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/post", postRoutes);
 app.use("/api/comment", commentRoutes);
+app.use("/api/like", likeRoutes);
 
 // Initialize database connection before starting the server
 connectDB().then(() => {

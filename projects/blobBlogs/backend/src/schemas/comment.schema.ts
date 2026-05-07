@@ -5,6 +5,8 @@ export const addCommentSchema = z.object({
 		.string()
 		.min(1, "Comment must be at least 1 character long!")
 		.max(1000, "Comment must be less than 1000 characters!"),
+
+	parent: z.string().optional(),
 });
 
 export const updateCommentSchema = addCommentSchema;

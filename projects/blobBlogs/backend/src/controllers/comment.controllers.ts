@@ -54,6 +54,18 @@ export const addComment = async (req: Request, res: Response) => {
 				.json({ success: false, message: "Unauthorized access!" });
 		}
 
+		const parent = result.data.parent;
+		if (parent) {
+			const parentComment = await Comment.findById(parent);
+
+			if (!parentComment) {
+				return res.status(404).json({
+					success: false,
+					message: "Parent comment not found!",
+				});
+			}
+		}
+
 		if (!postId)
 			return res
 				.status(400)
