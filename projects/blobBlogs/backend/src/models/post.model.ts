@@ -6,8 +6,8 @@ const postSchema = new mongoose.Schema(
 		title: {
 			type: String,
 			required: [true, "title is required!"],
-			minlength: [5, "title must be at least 5 characters long!"],
-			maxlength: [300, "title must be at most 300 characters long!"],
+			minlength: [5, "Title must be at least 5 characters long!"],
+			maxlength: [500, "Title must be less than 500 characters!"],
 		},
 
 		slug: {
@@ -21,8 +21,8 @@ const postSchema = new mongoose.Schema(
 		content: {
 			type: String,
 			required: true,
-			minlength: 5,
-			maxlength: 1000,
+			minlength: [5, "Content must be at least 5 characters long!"],
+			maxlength: [5000, "Content must be less than 5000 characters!"],
 		},
 
 		author: {
@@ -39,7 +39,6 @@ const postSchema = new mongoose.Schema(
 postSchema.index({ author: 1, published: 1, createdAt: -1 });
 
 postSchema.pre("validate", async function () {
-	// if (this.slug) return; // already set
 	if (!this.isModified("title")) return;
 
 	const baseSlug = slugify(this.title, { lower: true, strict: true });
