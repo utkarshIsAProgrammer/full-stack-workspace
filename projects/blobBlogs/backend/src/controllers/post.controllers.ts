@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import type { Request, Response } from "express";
 import Post from "../models/post.model";
 import { createPostSchema, updatePostSchema } from "../schemas/post.schema";
+import cloudinary from "../configs/cloudinary";
 
 type Params = {
   id: string;
@@ -12,7 +13,7 @@ export const getPost = async (req: Request<Params>, res: Response) => {
   const { id } = req.params;
 
   try {
-    // check post id
+    // validate id
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
@@ -25,10 +26,13 @@ export const getPost = async (req: Request<Params>, res: Response) => {
       "author",
       "username email",
     );
+
+    // check existence
     if (!post) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Post not found!" });
+      return res.status(404).json({
+        success: false,
+        message: "Post not found!",
+      });
     }
 
     res.status(200).json({
@@ -45,22 +49,24 @@ export const getPost = async (req: Request<Params>, res: Response) => {
 // get all posts
 export const getAllPosts = async (req: Request, res: Response) => {
   try {
-    // fetch posts
+    // fetch all posts
     const posts = await Post.find()
       .sort({ createdAt: -1 })
       .populate("author", "username email");
+
+    // check empty list (post)
     if (posts.length === 0) {
       return res.status(200).json({
         success: true,
         message: "No posts yet!",
       });
-    } else {
-      return res.status(200).json({
-        success: true,
-        message: "All posts fetched successfully!",
-        posts,
-      });
     }
+
+    return res.status(200).json({
+      success: true,
+      message: "All posts fetched successfully!",
+      posts,
+    });
   } catch (err: any) {
     console.log(`Error in the getAllPosts controller! ${err.message}`);
     res.status(500).json({ message: "Internal server error!" });
@@ -69,10 +75,10 @@ export const getAllPosts = async (req: Request, res: Response) => {
 
 // create new post
 export const createPost = async (req: Request, res: Response) => {
-  // validate input
   const result = createPostSchema.safeParse(req.body);
 
   try {
+    // check validation
     if (!result.success) {
       return res.status(400).json({
         success: false,
@@ -84,13 +90,23 @@ export const createPost = async (req: Request, res: Response) => {
     // check user auth
     const author = (req as any).user?._id;
     if (!author) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized access!" });
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized access!",
+      });
     }
 
+    // create post object
+    const post = new Post({
+      ...result.data,
+      author,
+      image: {
+        url: req.file?.path || "",
+        public_id: req.file?.filename || "",
+      },
+    });
+
     // save post
-    const post = new Post({ ...result.data, author });
     await post.save();
 
     return res.status(201).json({
@@ -114,13 +130,10 @@ export const createPost = async (req: Request, res: Response) => {
 // update existing post
 export const updatePost = async (req: Request<Params>, res: Response) => {
   const { id } = req.params;
-
-  // validate input
-  const result = updatePostSchema.safeParse(req.body);
   const userId = (req as any).user?._id;
 
   try {
-    // check post id
+    // validate id
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
@@ -128,15 +141,7 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    if (!result.success) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid input!",
-        error: result.error.issues,
-      });
-    }
-
-    // check user auth
+    // auth check
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -153,7 +158,7 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // verify ownership
+    // ownership check
     if (post.author.toString() !== userId.toString()) {
       return res.status(403).json({
         success: false,
@@ -161,30 +166,62 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // save updates
-    const { title, content } = result.data;
-    if (title !== undefined) post.title = title;
-    if (content !== undefined) post.content = content;
+    // normalize form-data values
+    const title = req.body.title?.trim();
+    const content = req.body.content?.trim();
+    const file = req.file;
+
+    // ensure at least one update exists
+    const hasText =
+      (title && title.length > 0) || (content && content.length > 0);
+    const hasImage = !!file;
+
+    if (!hasText && !hasImage) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one of title, content, or image must be provided!",
+      });
+    }
+
+    // update text fields
+    if (title) post.title = title;
+    if (content) post.content = content;
+
+    // update image if provided
+    if (file) {
+      // delete old image from cloudinary
+      if (post.image?.public_id) {
+        await cloudinary.uploader.destroy(post.image.public_id);
+      }
+
+      post.image = {
+        url: file.path,
+        public_id: (file as any).filename,
+      };
+    }
+
     await post.save();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Post updated successfully!",
       post,
     });
   } catch (err: any) {
-    console.log(`Error in the updatePost controller!`);
-    res.status(500).json({ message: "Internal server error!" });
+    console.log(`Error in updatePost controller! ${err.message}`);
+    return res.status(500).json({
+      message: "Internal server error!",
+    });
   }
 };
 
-// delete a post
+// delete post
 export const deletePost = async (req: Request<Params>, res: Response) => {
   const { id } = req.params;
   const userId = (req as any).user?._id;
 
   try {
-    // check post id
+    // validate id
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
@@ -216,6 +253,13 @@ export const deletePost = async (req: Request<Params>, res: Response) => {
         message: "Forbidden!",
       });
     }
+
+    // delete cloudinary image
+    if (post.image?.public_id) {
+      await cloudinary.uploader.destroy(post.image.public_id);
+    }
+
+    console.log("PUBLIC_ID:", post.image?.public_id);
 
     // delete post
     await post.deleteOne();
@@ -225,7 +269,7 @@ export const deletePost = async (req: Request<Params>, res: Response) => {
       message: "Post deleted successfully!",
     });
   } catch (err: any) {
-    console.log(`Error in the deletePost controller!`);
+    console.log(`Error in the deletePost controller! ${err.message}`);
     res.status(500).json({ message: "Internal server error!" });
   }
 };

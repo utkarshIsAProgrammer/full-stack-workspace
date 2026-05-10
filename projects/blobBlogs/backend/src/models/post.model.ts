@@ -29,6 +29,12 @@ const postSchema = new mongoose.Schema(
       maxlength: [5000, "Content must be less than 5000 characters!"],
     },
 
+    // post image
+    image: {
+      url: { type: String, default: "" },
+      public_id: { type: String, default: "" },
+    },
+
     // post author
     author: {
       type: mongoose.Schema.Types.ObjectId,
@@ -42,7 +48,7 @@ const postSchema = new mongoose.Schema(
 );
 
 // combined index
-postSchema.index({ author: 1, published: 1, createdAt: -1 });
+postSchema.index({ author: 1, createdAt: -1 });
 
 // slug generation
 postSchema.pre("validate", async function () {

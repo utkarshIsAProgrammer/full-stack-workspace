@@ -16,7 +16,7 @@ const port = process.env.PORT || 5000;
 app.use(express.json());
 app.use(cookieParser());
 
-// Define API routes
+// api routes
 app.use("/api/auth", authRoutes);
 app.use("/api/password", passwordRoutes);
 app.use("/api/user", userRoutes);
@@ -31,4 +31,4 @@ connectDB().then(() => {
   });
 });
 
-// ? BUILD LIKE, COMMENT AND FOLLOW FEATURE ALONG WITH COMPLETE POST ROUTES
+// ! BUILD IMAGE UPLOAD, IMAGE UPDATE, DELETE IMAGE WITH POST
