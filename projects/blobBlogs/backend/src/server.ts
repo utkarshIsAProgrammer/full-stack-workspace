@@ -1,9 +1,3 @@
-/**
- * @file server.ts
- * @description Entry point for the blobBlogs backend application. Sets up Express server,
- * middlewares, routes, and connects to the database.
- */
-
 import express from "express";
 import "dotenv/config";
 import cookieParser from "cookie-parser";
@@ -31,9 +25,10 @@ app.use("/api/comment", commentRoutes);
 app.use("/api/like", likeRoutes);
 app.use("/api/follow", followRoutes);
 
-// Initialize database connection before starting the server
 connectDB().then(() => {
-	app.listen(port, () => {
-		console.log(`Server is running on PORT: ${port}`);
-	});
+  app.listen(port, () => {
+    console.log(`Server is running on PORT: ${port}`);
+  });
 });
+
+// ? BUILD LIKE, COMMENT AND FOLLOW FEATURE ALONG WITH COMPLETE POST ROUTES
