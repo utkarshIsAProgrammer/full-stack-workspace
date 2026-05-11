@@ -9,6 +9,7 @@ import { postRoutes } from "./routes/post.routes";
 import { commentRoutes } from "./routes/comment.routes";
 import { likeRoutes } from "./routes/like.routes";
 import { followRoutes } from "./routes/follow.routes";
+import { saveRoutes } from "./routes/saves.routes";
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -24,6 +25,7 @@ app.use("/api/post", postRoutes);
 app.use("/api/comment", commentRoutes);
 app.use("/api/like", likeRoutes);
 app.use("/api/follow", followRoutes);
+app.use("/api/saves", saveRoutes);
 
 connectDB().then(() => {
   app.listen(port, () => {
@@ -31,4 +33,5 @@ connectDB().then(() => {
   });
 });
 
-// ! BUILD IMAGE UPLOAD, IMAGE UPDATE, DELETE IMAGE WITH POST
+// ! NEON IS LOGGED IN
+// ! BUILD SAVES FEATURE
