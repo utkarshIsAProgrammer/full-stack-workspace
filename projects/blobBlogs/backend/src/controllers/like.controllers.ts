@@ -53,38 +53,43 @@ export const togglePostLikes = async (req: Request<Params>, res: Response) => {
 
     if (!existingLike) {
       // like post
-      const like = await Like.create({
+      await Like.create({
         author,
         post: postId,
       });
 
-      // count likes
-      const likesCount = await Like.countDocuments({
-        post: postId,
-      });
+      // increment likes count
+      const updatedPost = await Post.findByIdAndUpdate(
+        postId,
+        { $inc: { likesCount: 1 } },
+        { new: true },
+      );
 
       return res.status(201).json({
         success: true,
         message: "Post liked successfully!",
         liked: true,
-        likesCount,
-        like,
+        likesCount: updatedPost?.likesCount,
+        post: updatedPost,
       });
     }
 
     // unlike post
     await existingLike.deleteOne();
 
-    // count likes
-    const likesCount = await Like.countDocuments({
-      post: postId,
-    });
+    // decrement likes count
+    const updatedPost = await Post.findByIdAndUpdate(
+      postId,
+      { $inc: { likesCount: -1 } },
+      { new: true },
+    );
 
     return res.status(200).json({
       success: true,
       message: "Post disliked successfully!",
       liked: false,
-      likesCount,
+      likesCount: updatedPost?.likesCount,
+      post: updatedPost,
     });
   } catch (err: any) {
     console.log(`Error in togglePostLikes controller! ${err.message}`);
@@ -138,36 +143,41 @@ export const toggleCommentLikes = async (
 
     if (!existingLike) {
       // like comment
-      const like = await Like.create({
+      await Like.create({
         author,
         comment: commentId,
       });
 
-      // count likes
-      const likesCount = await Like.countDocuments({
-        comment: commentId,
-      });
+      // increment likes count
+      const updatedComment = await Comment.findByIdAndUpdate(
+        commentId,
+        { $inc: { likesCount: 1 } },
+        { new: true },
+      );
 
       return res.status(201).json({
         success: true,
         message: "Comment liked successfully!",
         liked: true,
-        likesCount,
-        like,
+        likesCount: updatedComment?.likesCount,
+        comment: updatedComment,
       });
     }
 
     await existingLike.deleteOne();
 
-    const likesCount = await Like.countDocuments({
-      comment: commentId,
-    });
+    const updatedComment = await Comment.findByIdAndUpdate(
+      commentId,
+      { $inc: { likesCount: -1 } },
+      { new: true },
+    );
 
     return res.status(200).json({
       success: true,
       message: "Comment disliked successfully!",
       liked: false,
-      likesCount,
+      likesCount: updatedComment?.likesCount,
+      comment: updatedComment,
     });
   } catch (err: any) {
     console.log(`Error in toggleCommentLikes controller! ${err.message}`);

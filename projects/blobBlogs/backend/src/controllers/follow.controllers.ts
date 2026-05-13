@@ -5,23 +5,23 @@ import Follow from "../models/follow.model";
 
 type Params = {
   userId: string;
-  following: string;
 };
 
-// toggle follow status for a user
+// toggle follow/unfollow user
 export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
   const follower = req.user?._id;
   const { userId } = req.params;
 
   try {
-    // check user auth
+    // auth check
     if (!follower) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized access!" });
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized access!",
+      });
     }
 
-    // check user id
+    // validate user id
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       return res.status(400).json({
         success: false,
@@ -29,7 +29,7 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // self follow check
+    // prevent self follow
     if (follower.toString() === userId) {
       return res.status(400).json({
         success: false,
@@ -37,96 +37,159 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // find user
-    const user = await User.findById(userId);
-    if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found!" });
+    // check target user exists
+    const targetUser = await User.findById(userId);
+
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found!",
+      });
     }
 
-    // follow check
+    // check existing follow
     const existingFollow = await Follow.findOne({
       follower,
       following: userId,
     });
+
+    // follow
     if (!existingFollow) {
-      // follow user
+      // create follow relation
       const follow = await Follow.create({
         follower,
         following: userId,
+      });
+
+      // increment counts
+      const updatedTargetUser = await User.findByIdAndUpdate(
+        userId,
+        {
+          $inc: { followersCount: 1 },
+        },
+        { new: true },
+      );
+
+      await User.findByIdAndUpdate(follower, {
+        $inc: { followingCount: 1 },
       });
 
       return res.status(201).json({
         success: true,
         message: "User followed successfully!",
         following: true,
+        followersCount: updatedTargetUser?.followersCount,
         follow,
       });
     }
 
     // unfollow
-    await Follow.findByIdAndDelete(existingFollow._id);
+    await existingFollow.deleteOne();
+
+    const updatedTargetUser = await User.findByIdAndUpdate(
+      userId,
+      {
+        $inc: { followersCount: -1 },
+      },
+      { new: true },
+    );
+
+    await User.findByIdAndUpdate(follower, {
+      $inc: { followingCount: -1 },
+    });
 
     return res.status(200).json({
       success: true,
       message: "User unfollowed successfully!",
       following: false,
+      followersCount: updatedTargetUser?.followersCount,
     });
   } catch (err: any) {
     console.log(`Error in the toggleFollowUser controller! ${err.message}`);
-    res.status(500).json({ message: "Internal Server Error" });
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error!",
+    });
   }
 };
 
-// get followers list for a user
+// get followers list
 export const getFollowers = async (req: Request<Params>, res: Response) => {
   const { userId } = req.params;
 
   try {
-    // find followers
+    // validate user id
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID!",
+      });
+    }
+
+    // followers list
     const followers = await Follow.find({
       following: userId,
-    }).populate("follower", "username email");
+    })
+      .sort({ createdAt: -1 })
+      .populate("follower", "username email followersCount followingCount");
 
-    // count followers
+    // followers count
     const followersCount = await Follow.countDocuments({
       following: userId,
     });
 
-    res.json({
+    return res.status(200).json({
       success: true,
       followersCount,
       followers,
     });
   } catch (err: any) {
-    console.log(`Error in the getFollowers controller! ${err.message}`);
-    res.status(500).json({ message: "Internal Server Error" });
+    console.log(`Error in getFollowers controller! ${err.message}`);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error!",
+    });
   }
 };
 
-// get following list for a user
+// get following list
 export const getFollowing = async (req: Request<Params>, res: Response) => {
   const { userId } = req.params;
 
   try {
-    // find following
+    // validate user id
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID!",
+      });
+    }
+
+    // following list
     const following = await Follow.find({
       follower: userId,
-    }).populate("following", "username email");
+    })
+      .sort({ createdAt: -1 })
+      .populate("following", "username email followersCount followingCount");
 
-    // count following
+    // following count
     const followingCount = await Follow.countDocuments({
       follower: userId,
     });
 
-    res.json({
+    return res.status(200).json({
       success: true,
       followingCount,
       following,
     });
   } catch (err: any) {
-    console.log(`Error in the getFollowing controller! ${err.message}`);
-    res.status(500).json({ message: "Internal Server Error" });
+    console.log(`Error in getFollowing controller! ${err.message}`);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error!",
+    });
   }
 };

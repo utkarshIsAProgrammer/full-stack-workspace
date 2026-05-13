@@ -35,6 +35,29 @@ const postSchema = new mongoose.Schema(
       public_id: { type: String, default: "" },
     },
 
+    // repost count
+    repostsCount: {
+      type: Number,
+      default: 0,
+    },
+
+    // post saves
+    savesCount: {
+      type: Number,
+      default: 0,
+    },
+
+    // post likes
+    likesCount: {
+      type: Number,
+      default: 0,
+    },
+
+    commentsCount: {
+      type: Number,
+      default: 0,
+    },
+
     // post author
     author: {
       type: mongoose.Schema.Types.ObjectId,

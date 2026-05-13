@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import Comment from "../models/comment.model";
+import Post from "../models/post.model";
 import {
   addCommentSchema,
   updateCommentSchema,
@@ -81,6 +82,11 @@ export const addComment = async (req: Request, res: Response) => {
     // save comment
     const comment = new Comment({ ...result.data, author, post: postId });
     await comment.save();
+
+    // increment comments count
+    await Post.findByIdAndUpdate(postId, {
+      $inc: { commentsCount: 1 },
+    });
 
     res.status(201).json({
       success: true,
@@ -187,8 +193,14 @@ export const deleteComment = async (
       });
     }
 
+    // decrement comments count
+    await Post.findByIdAndUpdate(comment.post, {
+      $inc: { commentsCount: -1 },
+    });
+
     // delete comment
     await comment.deleteOne();
+
     res.status(200).json({
       success: true,
       message: "Comment deleted successfully!",

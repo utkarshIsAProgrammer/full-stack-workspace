@@ -32,6 +32,18 @@ const userSchema = new mongoose.Schema(
       minlength: [8, "Password must be at least 8 characters long!"],
     },
 
+    // user followers
+    followersCount: {
+      type: Number,
+      default: 0,
+    },
+
+    // user following
+    followingCount: {
+      type: Number,
+      default: 0,
+    },
+
     // verification otp
     otp: {
       type: String,

@@ -39,25 +39,46 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
       user: userId,
       post: postId,
     });
+
+    // unsave post
     if (alreadySaved) {
       await Save.findByIdAndDelete(alreadySaved._id);
+
+      // decrement saves count
+      const updatedPost = await Post.findByIdAndUpdate(
+        postId,
+        { $inc: { savesCount: -1 } },
+        { new: true },
+      );
 
       return res.status(200).json({
         success: true,
         message: "Post unsaved!",
+        saved: false,
+        savesCount: updatedPost?.savesCount,
+        post: updatedPost,
       });
     }
 
     // save post
-    const savedPost = await Save.create({
+    await Save.create({
       user: userId,
       post: postId,
     });
 
+    // increment saves count
+    const updatedPost = await Post.findByIdAndUpdate(
+      postId,
+      { $inc: { savesCount: 1 } },
+      { new: true },
+    );
+
     res.status(201).json({
       success: true,
       message: "Post saved!",
-      savedPost,
+      saved: true,
+      savesCount: updatedPost?.savesCount,
+      post: updatedPost,
     });
   } catch (err: any) {
     console.log(`Error in the toggleSavePost controller! ${err.message}`);
@@ -82,15 +103,11 @@ export const getSavedPosts = async (req: Request, res: Response) => {
       .sort({ createdAt: -1 })
       .populate({
         path: "post",
-        select: "title slug featuredImg owner author",
+        select: "title slug image author savesCount repostsCount",
         populate: [
           {
-            path: "owner",
-            select: "username fullName",
-          },
-          {
             path: "author",
-            select: "username fullName",
+            select: "username fullName email",
           },
         ],
       });
@@ -100,6 +117,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
       return res.status(200).json({
         success: true,
         message: "No saved posts!",
+        saved: true,
       });
     }
 

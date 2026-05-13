@@ -1,15 +1,15 @@
 import express from "express";
 import {
   updatePassword,
-  requestPasswordReset,
-  verifyOtpAndResetPassword,
+  requestOtpForForgotPassword,
+  verifyOtpAndForgotPassword,
 } from "../controllers/password.controllers";
 import { protect } from "../middlewares/auth.middleware";
 
 const router = express.Router();
 
+router.post("/request-otp", requestOtpForForgotPassword);
+router.post("/verify-and-forgot-password", verifyOtpAndForgotPassword);
 router.post("/update-password", protect, updatePassword);
-router.post("/request-password-reset", requestPasswordReset);
-router.post("/verify-otp", verifyOtpAndResetPassword);
 
 export { router as passwordRoutes };

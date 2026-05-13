@@ -10,6 +10,7 @@ import { commentRoutes } from "./routes/comment.routes";
 import { likeRoutes } from "./routes/like.routes";
 import { followRoutes } from "./routes/follow.routes";
 import { saveRoutes } from "./routes/saves.routes";
+import { repostRoutes } from "./routes/repost.routes";
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -25,7 +26,8 @@ app.use("/api/post", postRoutes);
 app.use("/api/comment", commentRoutes);
 app.use("/api/like", likeRoutes);
 app.use("/api/follow", followRoutes);
-app.use("/api/saves", saveRoutes);
+app.use("/api/save", saveRoutes);
+app.use("/api/repost", repostRoutes);
 
 connectDB().then(() => {
   app.listen(port, () => {
