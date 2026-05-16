@@ -7,4 +7,10 @@ func main() {
 	arrays()
 	slices()
 	operators()
+	conditionalStatements()
+	switchStatement()
+	loops()
+	functions()
+	structures()
+	maps()
 }
