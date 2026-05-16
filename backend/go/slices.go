@@ -24,5 +24,21 @@ func slices() {
 	fmt.Println(makeSlice, len(makeSlice), cap(makeSlice))
 	fmt.Println(newMakeSlice, len(newMakeSlice), cap(newMakeSlice))
 
+	// access elements
+	fmt.Println(slice[3])
+
+	// change element
+	slice[2] = 22
+	fmt.Println(slice[2])
+
+	// append element
+	// SYNTAX = append(sliceName, elem1, elem2 ...... )
+	fmt.Println(append(newMakeSlice, 50, 55))
+
+	// append slices together
+	// SYNTAX = append(slice1, slice2 .....)
+	fmt.Println(makeSlice, newMakeSlice)
+
 	fmt.Println("--- SLICES END ---")
+	fmt.Println()
 }

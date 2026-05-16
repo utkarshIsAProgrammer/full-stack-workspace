@@ -6,5 +6,5 @@ func main() {
 	dataTypes()
 	arrays()
 	slices()
-
+	operators()
 }
