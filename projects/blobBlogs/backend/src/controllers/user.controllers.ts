@@ -117,3 +117,57 @@ export const shareProfile = async (req: Request<Params>, res: Response) => {
     });
   }
 };
+
+export const viewsCount = async (req: Request<Params>, res: Response) => {
+  const { userId } = req.params;
+  const currentUser = (req as any).user?._id;
+
+  try {
+    // validate post
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user Id!",
+      });
+    }
+
+    // check post exists
+    const profile = await User.findById(userId);
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        message: "Profile not found!",
+      });
+    }
+
+    // check self view
+    if (currentUser && profile._id.toString() === currentUser.toString()) {
+      return res.status(200).json({
+        success: true,
+        message: "Own profile view ignored!",
+        views: profile.viewsCount,
+      });
+    }
+
+    // increment profile views count
+    const updatedProfile = await User.findByIdAndUpdate(
+      userId,
+      {
+        $inc: { viewsCount: 1 },
+      },
+      { new: true },
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "View counted successfully!",
+      views: updatedProfile?.viewsCount,
+    });
+  } catch (err: any) {
+    console.log(`Error in the viewsCount controller! ${err.message}`);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error!",
+    });
+  }
+};

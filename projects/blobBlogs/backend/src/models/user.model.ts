@@ -50,6 +50,12 @@ const userSchema = new mongoose.Schema(
       default: 0,
     },
 
+    // views count
+    viewsCount: {
+      type: Number,
+      default: 0,
+    },
+
     // verification otp
     otp: {
       type: String,
