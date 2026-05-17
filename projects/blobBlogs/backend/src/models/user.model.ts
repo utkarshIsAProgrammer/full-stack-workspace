@@ -44,6 +44,12 @@ const userSchema = new mongoose.Schema(
       default: 0,
     },
 
+    // share count
+    sharesCount: {
+      type: Number,
+      default: 0,
+    },
+
     // verification otp
     otp: {
       type: String,

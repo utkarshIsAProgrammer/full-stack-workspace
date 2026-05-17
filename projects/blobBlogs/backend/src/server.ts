@@ -21,13 +21,13 @@ app.use(cookieParser());
 // api routes
 app.use("/api/auth", authRoutes);
 app.use("/api/password", passwordRoutes);
-app.use("/api/user", userRoutes);
-app.use("/api/post", postRoutes);
-app.use("/api/comment", commentRoutes);
-app.use("/api/like", likeRoutes);
-app.use("/api/follow", followRoutes);
-app.use("/api/save", saveRoutes);
-app.use("/api/repost", repostRoutes);
+app.use("/api/users", userRoutes);
+app.use("/api/posts", postRoutes);
+app.use("/api/comments", commentRoutes);
+app.use("/api/likes", likeRoutes);
+app.use("/api/follows", followRoutes);
+app.use("/api/saves", saveRoutes);
+app.use("/api/reposts", repostRoutes);
 
 connectDB().then(() => {
   app.listen(port, () => {
@@ -38,13 +38,9 @@ connectDB().then(() => {
 // ! NEON IS LOGGED IN
 
 /* 
-! --- FIXED ---:
-! AUTH SECURITY: LOGIN MISUSE AND API ABUSE
-! RESET AND FORGOT PASSWORD: USER STILL LOGGED IN WHEN DOING THIS 
-! FOLLOWERS BUG: NEGATIVE FOLLOWERS
-! COMMENTS BUG: ASSIGNING WRONG PARAMETERS TO THE API
-! LIKES BUG: LIKES FOR COMMENTS AND POSTS ARE DUPLICATED
+! --- FIX ---
+! REPLACE getAll CONTROLLER TO THE user.controllers.ts
 
-! --- ADD ---:
-! COUNTS FOR LIKE, COMMENT, FOLLOW, SAVE AND REPOST
+! --- ADD ---
+! SHARE PROFILE / POST
  */

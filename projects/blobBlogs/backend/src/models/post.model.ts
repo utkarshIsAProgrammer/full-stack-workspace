@@ -53,7 +53,14 @@ const postSchema = new mongoose.Schema(
       default: 0,
     },
 
+    // comment count
     commentsCount: {
+      type: Number,
+      default: 0,
+    },
+
+    // share count
+    sharesCount: {
       type: Number,
       default: 0,
     },

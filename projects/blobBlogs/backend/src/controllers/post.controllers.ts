@@ -5,16 +5,16 @@ import { createPostSchema, updatePostSchema } from "../schemas/post.schema";
 import cloudinary from "../configs/cloudinary";
 
 type Params = {
-  id: string;
+  postId: string;
 };
 
 // get single post by id
 export const getPost = async (req: Request<Params>, res: Response) => {
-  const { id } = req.params;
+  const { postId } = req.params;
 
   try {
     // validate id
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
       return res.status(400).json({
         success: false,
         message: "Invalid ID!",
@@ -22,7 +22,7 @@ export const getPost = async (req: Request<Params>, res: Response) => {
     }
 
     // fetch post
-    const post = await Post.findOne({ _id: id }).populate(
+    const post = await Post.findOne({ _id: postId }).populate(
       "author",
       "username email",
     );
@@ -129,12 +129,12 @@ export const createPost = async (req: Request, res: Response) => {
 
 // update existing post
 export const updatePost = async (req: Request<Params>, res: Response) => {
-  const { id } = req.params;
+  const { postId } = req.params;
   const userId = (req as any).user?._id;
 
   try {
     // validate id
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
       return res.status(400).json({
         success: false,
         message: "Invalid ID!",
@@ -150,7 +150,7 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
     }
 
     // find post
-    const post = await Post.findById(id);
+    const post = await Post.findById(postId);
     if (!post) {
       return res.status(404).json({
         success: false,
@@ -217,12 +217,12 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
 
 // delete post
 export const deletePost = async (req: Request<Params>, res: Response) => {
-  const { id } = req.params;
+  const { postId } = req.params;
   const userId = (req as any).user?._id;
 
   try {
     // validate id
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
       return res.status(400).json({
         success: false,
         message: "Invalid ID!",
@@ -238,7 +238,7 @@ export const deletePost = async (req: Request<Params>, res: Response) => {
     }
 
     // find post
-    const post = await Post.findById(id);
+    const post = await Post.findById(postId);
     if (!post) {
       return res.status(404).json({
         success: false,
@@ -270,6 +270,50 @@ export const deletePost = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     console.log(`Error in the deletePost controller! ${err.message}`);
+    res.status(500).json({ message: "Internal server error!" });
+  }
+};
+
+// share post
+export const sharePost = async (req: Request<Params>, res: Response) => {
+  const { postId } = req.params;
+
+  try {
+    // validate id
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid post Id!",
+      });
+    }
+
+    // increment share count
+    const post = await Post.findByIdAndUpdate(
+      postId,
+      {
+        $inc: { sharesCount: 1 },
+      },
+
+      { new: true },
+    );
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: "Post not found!",
+      });
+    }
+
+    // generate url
+    const shareUrl = `${process.env.CLIENT_URL}/post/${post.slug}`;
+
+    res.status(200).json({
+      success: true,
+      message: "Post shared successfully!",
+      shares: post.sharesCount,
+      shareUrl,
+    });
+  } catch (err: any) {
+    console.log(`Error in the share post controller! ${err.message}`);
     res.status(500).json({ message: "Internal server error!" });
   }
 };

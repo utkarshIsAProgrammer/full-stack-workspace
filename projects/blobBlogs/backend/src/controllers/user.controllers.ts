@@ -1,7 +1,27 @@
 import type { Request, Response } from "express";
+import mongoose from "mongoose";
 import { User } from "../models/user.model";
 import { deleteAccountSchema } from "../schemas/user.schema";
 import { sendDeletionMail } from "../configs/nodeMailer";
+
+type Params = {
+  userId: string;
+};
+
+// get all users
+export const getAll = async (req: Request, res: Response) => {
+  try {
+    const users = await User.find();
+    return res.status(200).json({
+      success: true,
+      message: "All users fetched successfully!",
+      users,
+    });
+  } catch (err: any) {
+    console.log(`Error in the getAll users controller! ${err.message}`);
+    res.status(500).json({ message: "Internal server error!" });
+  }
+};
 
 // delete account
 export const deleteAccount = async (req: Request, res: Response) => {
@@ -49,5 +69,51 @@ export const deleteAccount = async (req: Request, res: Response) => {
   } catch (err: any) {
     console.log(`Error in the deleteAccount controller! ${err.message}`);
     res.status(500).json({ message: "Internal server error!" });
+  }
+};
+
+// share profile
+export const shareProfile = async (req: Request<Params>, res: Response) => {
+  const { userId } = req.params;
+
+  try {
+    // validate id
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user id!",
+      });
+    }
+
+    // increment share count
+    const user = await User.findByIdAndUpdate(
+      userId,
+      {
+        $inc: { sharesCount: 1 },
+      },
+      { new: true },
+    );
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "User not found!",
+      });
+    }
+
+    // generate url
+    const shareUrl = `${process.env.CLIENT_URL}/user/${user.username}`;
+
+    res.status(200).json({
+      success: true,
+      message: "Profile shared successfully!",
+      shares: user.sharesCount,
+      shareUrl,
+    });
+  } catch (err: any) {
+    console.log(`Error in the shareProfile controller! ${err.message}`);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error!",
+    });
   }
 };

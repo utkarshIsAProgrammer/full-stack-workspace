@@ -4,21 +4,6 @@ import { signupSchema, loginSchema } from "../schemas/user.schema";
 import { sendWelcomeMail } from "../configs/nodeMailer";
 import jwt from "jsonwebtoken";
 
-// get all users
-export const getAll = async (req: Request, res: Response) => {
-  try {
-    const users = await User.find();
-    return res.status(200).json({
-      success: true,
-      message: "All users fetched successfully!",
-      users,
-    });
-  } catch (err: any) {
-    console.log(`Error in the getAll users controller! ${err.message}`);
-    res.status(500).json({ message: "Internal server error!" });
-  }
-};
-
 // signup
 export const signup = async (req: Request, res: Response) => {
   const result = signupSchema.safeParse(req.body);
