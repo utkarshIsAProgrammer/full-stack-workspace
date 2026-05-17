@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sharePost = exports.deletePost = exports.updatePost = exports.createPost = exports.getAllPosts = exports.getPost = void 0;
+exports.viewsCount = exports.sharePost = exports.deletePost = exports.updatePost = exports.createPost = exports.getAllPosts = exports.getPost = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const post_model_1 = __importDefault(require("../models/post.model"));
 const post_schema_1 = require("../schemas/post.schema");
@@ -273,7 +273,6 @@ const sharePost = async (req, res) => {
             message: "Post shared successfully!",
             shares: post.sharesCount,
             shareUrl,
-            post,
         });
     }
     catch (err) {
@@ -282,4 +281,50 @@ const sharePost = async (req, res) => {
     }
 };
 exports.sharePost = sharePost;
+// view post
+const viewsCount = async (req, res) => {
+    const { postId } = req.params;
+    const currentUser = req.user?._id;
+    try {
+        // validate post
+        if (!mongoose_1.default.Types.ObjectId.isValid(postId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid post Id!",
+            });
+        }
+        // check post exists
+        const post = await post_model_1.default.findById(postId);
+        if (!post) {
+            return res.status(404).json({
+                success: false,
+                message: "Post not found!",
+            });
+        }
+        // prevent self views count
+        if (currentUser && post.author.toString() === currentUser.toString()) {
+            return res.status(200).json({
+                success: true,
+                message: "Own post view ignored!",
+                views: post.viewsCount,
+            });
+        }
+        // increment views count
+        const updatedPost = await post_model_1.default.findByIdAndUpdate(postId, {
+            $inc: { viewsCount: 1 },
+        }, { new: true });
+        res.status(200).json({
+            success: true,
+            message: "View counted successfully!",
+            views: updatedPost?.viewsCount,
+        });
+    }
+    catch (err) {
+        console.log(`Error in the viewsCount controller! ${err.message}`);
+        res.status(500).json({
+            message: "Internal server error!",
+        });
+    }
+};
+exports.viewsCount = viewsCount;
 //# sourceMappingURL=post.controllers.js.map

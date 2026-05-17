@@ -8,5 +8,6 @@ export declare const createPost: (req: Request, res: Response) => Promise<Respon
 export declare const updatePost: (req: Request<Params>, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const deletePost: (req: Request<Params>, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const sharePost: (req: Request<Params>, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
+export declare const viewsCount: (req: Request<Params>, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export {};
 //# sourceMappingURL=post.controllers.d.ts.map

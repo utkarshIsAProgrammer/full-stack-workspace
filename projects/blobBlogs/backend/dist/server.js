@@ -23,13 +23,13 @@ app.use((0, cookie_parser_1.default)());
 // api routes
 app.use("/api/auth", auth_routes_1.authRoutes);
 app.use("/api/password", password_routes_1.passwordRoutes);
-app.use("/api/user", user_routes_1.userRoutes);
-app.use("/api/post", post_routes_1.postRoutes);
-app.use("/api/comment", comment_routes_1.commentRoutes);
-app.use("/api/like", like_routes_1.likeRoutes);
-app.use("/api/follow", follow_routes_1.followRoutes);
-app.use("/api/save", saves_routes_1.saveRoutes);
-app.use("/api/repost", repost_routes_1.repostRoutes);
+app.use("/api/users", user_routes_1.userRoutes);
+app.use("/api/posts", post_routes_1.postRoutes);
+app.use("/api/comments", comment_routes_1.commentRoutes);
+app.use("/api/likes", like_routes_1.likeRoutes);
+app.use("/api/follows", follow_routes_1.followRoutes);
+app.use("/api/saves", saves_routes_1.saveRoutes);
+app.use("/api/reposts", repost_routes_1.repostRoutes);
 (0, db_1.connectDB)().then(() => {
     app.listen(port, () => {
         console.log(`Server is running on PORT: ${port}`);
@@ -37,14 +37,10 @@ app.use("/api/repost", repost_routes_1.repostRoutes);
 });
 // ! NEON IS LOGGED IN
 /*
-! --- FIXED ---:
-! AUTH SECURITY: LOGIN MISUSE AND API ABUSE
-! RESET AND FORGOT PASSWORD: USER STILL LOGGED IN WHEN DOING THIS
-! FOLLOWERS BUG: NEGATIVE FOLLOWERS
-! COMMENTS BUG: ASSIGNING WRONG PARAMETERS TO THE API
-! LIKES BUG: LIKES FOR COMMENTS AND POSTS ARE DUPLICATED
+! --- FIX ---
+! REPLACE getAll CONTROLLER TO THE user.controllers.ts
 
-! --- ADD ---:
-! COUNTS FOR LIKE, COMMENT, FOLLOW, SAVE AND REPOST
+! --- ADD ---
+! SHARE PROFILE / POST
  */
 //# sourceMappingURL=server.js.map

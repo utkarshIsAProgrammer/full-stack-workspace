@@ -317,3 +317,57 @@ export const sharePost = async (req: Request<Params>, res: Response) => {
     res.status(500).json({ message: "Internal server error!" });
   }
 };
+
+// view post count
+export const viewsCount = async (req: Request<Params>, res: Response) => {
+  const { postId } = req.params;
+  const currentUser = (req as any).user?._id;
+
+  try {
+    // validate post
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid post Id!",
+      });
+    }
+
+    // check post exists
+    const post = await Post.findById(postId);
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: "Post not found!",
+      });
+    }
+
+    // prevent self views count
+    if (currentUser && post.author.toString() === currentUser.toString()) {
+      return res.status(200).json({
+        success: true,
+        message: "Own post view ignored!",
+        views: post.viewsCount,
+      });
+    }
+
+    // increment views count
+    const updatedPost = await Post.findByIdAndUpdate(
+      postId,
+      {
+        $inc: { viewsCount: 1 },
+      },
+      { new: true },
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "View counted successfully!",
+      views: updatedPost?.viewsCount,
+    });
+  } catch (err: any) {
+    console.log(`Error in the viewsCount controller! ${err.message}`);
+    res.status(500).json({
+      message: "Internal server error!",
+    });
+  }
+};

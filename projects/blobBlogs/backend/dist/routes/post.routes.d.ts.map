@@ -1,1 +1,1 @@
-{"version":3,"file":"post.routes.d.ts","sourceRoot":"","sources":["../../src/routes/post.routes.ts"],"names":[],"mappings":"AAYA,QAAA,MAAM,MAAM,4CAAmB,CAAC;AAUhC,OAAO,EAAE,MAAM,IAAI,UAAU,EAAE,CAAC"}
+{"version":3,"file":"post.routes.d.ts","sourceRoot":"","sources":["../../src/routes/post.routes.ts"],"names":[],"mappings":"AAcA,QAAA,MAAM,MAAM,4CAAmB,CAAC;AAWhC,OAAO,EAAE,MAAM,IAAI,UAAU,EAAE,CAAC"}

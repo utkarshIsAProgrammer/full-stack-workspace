@@ -3,27 +3,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.logout = exports.login = exports.signup = exports.getAll = void 0;
+exports.logout = exports.login = exports.signup = void 0;
 const user_model_1 = require("../models/user.model");
 const user_schema_1 = require("../schemas/user.schema");
 const nodeMailer_1 = require("../configs/nodeMailer");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-// get all users
-const getAll = async (req, res) => {
-    try {
-        const users = await user_model_1.User.find();
-        return res.status(200).json({
-            success: true,
-            message: "All users fetched successfully!",
-            users,
-        });
-    }
-    catch (err) {
-        console.log(`Error in the getAll users controller! ${err.message}`);
-        res.status(500).json({ message: "Internal server error!" });
-    }
-};
-exports.getAll = getAll;
 // signup
 const signup = async (req, res) => {
     const result = user_schema_1.signupSchema.safeParse(req.body);

@@ -59,8 +59,14 @@ const postSchema = new mongoose.Schema(
       default: 0,
     },
 
-    // share count
+    // shares count
     sharesCount: {
+      type: Number,
+      default: 0,
+    },
+
+    // views count
+    viewsCount: {
       type: Number,
       default: 0,
     },
