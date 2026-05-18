@@ -46,7 +46,8 @@ export const getComment = async (req: Request<Params>, res: Response) => {
     const comments = await Comment.find(query)
       .sort({ _id: -1 })
       .limit(limit + 1)
-      .populate("author", "username");
+      .populate("author", "username email")
+      .lean();
 
     // check more comments exists
     const hasMore = comments.length > limit;
@@ -100,7 +101,7 @@ export const addComment = async (req: Request, res: Response) => {
     // check for parent comment (is reply)
     const parent = result.data.parent;
     if (parent) {
-      const parentComment = await Comment.findById(parent);
+      const parentComment = await Comment.findById(parent).select("_id").lean();
 
       if (!parentComment) {
         return res.status(404).json({
@@ -163,7 +164,7 @@ export const updateComment = async (
     }
 
     // find comment (exists)
-    const comment = await Comment.findById(commentId);
+    const comment = await Comment.findById(commentId).select("_id author").lean();
     if (!comment) {
       return res.status(404).json({
         success: false,

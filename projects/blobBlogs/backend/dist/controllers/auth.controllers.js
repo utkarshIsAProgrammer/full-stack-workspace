@@ -8,6 +8,7 @@ const user_model_1 = require("../models/user.model");
 const user_schema_1 = require("../schemas/user.schema");
 const nodeMailer_1 = require("../configs/nodeMailer");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const cookie_1 = require("../configs/cookie");
 // signup
 const signup = async (req, res) => {
     const result = user_schema_1.signupSchema.safeParse(req.body);
@@ -35,21 +36,19 @@ const signup = async (req, res) => {
         // generate jwt and set cookie
         const token = user?.signToken();
         res.cookie("jwt", token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: "strict",
+            ...cookie_1.cookieOptions,
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-        });
-        // send welcome email
-        (0, nodeMailer_1.sendWelcomeMail)({
-            email: user.email,
-            username: user.username,
         });
         res.status(201).json({
             success: true,
             message: "User created successfully!",
             ...user.toObject(),
             password: undefined, // remove password from response
+        });
+        // send welcome email
+        (0, nodeMailer_1.sendWelcomeMail)({
+            email: user.email,
+            username: user.username,
         });
     }
     catch (err) {
@@ -73,11 +72,20 @@ const login = async (req, res) => {
         // check existing jwt cookie
         const existingToken = req.cookies?.jwt;
         if (existingToken) {
-            jsonwebtoken_1.default.verify(existingToken, process.env.JWT_SECRET);
-            return res.status(400).json({
-                success: false,
-                message: "You are already logged in!",
-            });
+            try {
+                jsonwebtoken_1.default.verify(existingToken, process.env.JWT_SECRET);
+                return res.status(400).json({
+                    success: false,
+                    message: "You are already logged in!",
+                });
+            }
+            catch (err) {
+                console.log(`Invalid/expired token! ${err.message}`);
+                res.status(401).json({
+                    success: false,
+                    message: "Invalid/expired token!",
+                });
+            }
         }
         // find user
         const user = await user_model_1.User.findOne({
@@ -101,9 +109,7 @@ const login = async (req, res) => {
         const token = user.signToken();
         // set cookie
         res.cookie("jwt", token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: "strict",
+            ...cookie_1.cookieOptions,
             maxAge: 7 * 24 * 60 * 60 * 1000,
         });
         // response
@@ -134,11 +140,7 @@ exports.login = login;
 const logout = async (req, res) => {
     try {
         // clear cookie
-        res.clearCookie("jwt", {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: "strict",
-        });
+        res.clearCookie("jwt", cookie_1.cookieOptions);
         res.status(200).json({
             success: true,
             message: "User logged out successfully!",

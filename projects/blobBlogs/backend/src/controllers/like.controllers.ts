@@ -36,7 +36,7 @@ export const togglePostLikes = async (req: Request<Params>, res: Response) => {
     }
 
     // find post
-    const post = await Post.findById(postId);
+    const post = await Post.findById(postId).select("_id").lean();
 
     if (!post) {
       return res.status(404).json({
@@ -126,7 +126,7 @@ export const toggleCommentLikes = async (
     }
 
     // find comment
-    const comment = await Comment.findById(commentId);
+    const comment = await Comment.findById(commentId).select("_id").lean();
 
     if (!comment) {
       return res.status(404).json({

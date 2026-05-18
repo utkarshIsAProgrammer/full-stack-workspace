@@ -26,11 +26,18 @@ const toggleRepost = async (req, res) => {
             });
         }
         // find post
-        const post = await post_model_1.default.findById(postId);
+        const post = await post_model_1.default.findById(postId).select("_id author").lean();
         if (!post) {
             return res.status(404).json({
                 success: false,
                 message: "Post not found!",
+            });
+        }
+        // prevent self repost
+        if (post.author.toString() === userId.toString()) {
+            return res.status(400).json({
+                success: false,
+                message: "You cannot repost your own post!",
             });
         }
         // check existing repost
@@ -44,7 +51,7 @@ const toggleRepost = async (req, res) => {
             const updatedPost = await post_model_1.default.findByIdAndUpdate(postId, { $inc: { repostsCount: -1 } }, { new: true });
             return res.status(200).json({
                 success: true,
-                message: "Post un-reposted!",
+                message: "Repost removed!",
                 reposted: false,
                 repostsCount: updatedPost?.repostsCount,
                 post: updatedPost,
@@ -59,7 +66,7 @@ const toggleRepost = async (req, res) => {
         const updatedPost = await post_model_1.default.findByIdAndUpdate(postId, { $inc: { repostsCount: 1 } }, { new: true });
         return res.status(201).json({
             success: true,
-            message: "Post reposted!",
+            message: "Repost created!",
             reposted: true,
             repostsCount: updatedPost?.repostsCount,
             post: updatedPost,

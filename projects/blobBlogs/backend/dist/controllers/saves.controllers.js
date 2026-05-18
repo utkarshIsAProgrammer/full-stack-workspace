@@ -23,7 +23,7 @@ const toggleSavePost = async (req, res) => {
             });
         }
         // check post exists
-        const post = await post_model_1.default.findById(postId);
+        const post = await post_model_1.default.findById(postId).select("_id").lean();
         if (!post) {
             return res.status(404).json({
                 success: false,
@@ -37,7 +37,7 @@ const toggleSavePost = async (req, res) => {
         });
         // unsave post
         if (alreadySaved) {
-            await saves_model_1.default.findByIdAndDelete(alreadySaved._id);
+            await alreadySaved.deleteOne();
             // decrement saves count
             const updatedPost = await post_model_1.default.findByIdAndUpdate(postId, { $inc: { savesCount: -1 } }, { new: true });
             return res.status(200).json({
@@ -79,19 +79,34 @@ const getSavedPosts = async (req, res) => {
                 message: "Unauthorized!",
             });
         }
+        // pagination
+        const limit = Math.min(Number(req.query.limit) || 10, 50);
+        const cursor = req.query.cursor;
+        // query
+        const query = {
+            user: userId,
+        };
+        // if cursor exists fetch older saves
+        if (cursor) {
+            query._id = {
+                $lt: cursor,
+            };
+        }
         // find saved posts
-        const savedPosts = await saves_model_1.default.find({ user: userId })
-            .sort({ createdAt: -1 })
+        const savedPosts = await saves_model_1.default.find(query)
+            .sort({ _id: -1 })
+            .limit(limit + 1)
             .populate({
             path: "post",
-            select: "title slug image author savesCount repostsCount",
+            select: "title slug image author savesCount repostsCount  likesCount commentsCount",
             populate: [
                 {
                     path: "author",
                     select: "username fullName email",
                 },
             ],
-        });
+        })
+            .lean();
         // no posts saved
         if (savedPosts.length === 0) {
             return res.status(200).json({
@@ -100,16 +115,26 @@ const getSavedPosts = async (req, res) => {
                 saved: true,
             });
         }
+        // check has more
+        const hasMore = savedPosts.length > limit;
+        // remove extra item
+        if (hasMore) {
+            savedPosts.pop();
+        }
+        // next cursor
+        const nextCursor = savedPosts[savedPosts.length - 1]?._id || null;
         res.status(200).json({
             success: true,
             message: "Saved posts fetched successfully!",
             count: savedPosts.length,
             savedPosts,
+            nextCursor,
+            hasMore,
         });
     }
     catch (err) {
         console.log(`Error in the getSavedPosts controller! ${err.message}`);
-        res.status(500).json({ success: true, message: "Internal server error!" });
+        res.status(500).json({ success: false, message: "Internal server error!" });
     }
 };
 exports.getSavedPosts = getSavedPosts;

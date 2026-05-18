@@ -27,8 +27,10 @@ export const getAll = async (req: Request, res: Response) => {
 
     // fetch all users
     const users = await User.find(query)
+      .select("-password -otp -otpExpiry")
       .sort({ _id: -1 })
-      .limit(limit + 1);
+      .limit(limit + 1)
+      .lean();
     // .populate("author", "username email");
 
     // check more user exits
@@ -172,7 +174,9 @@ export const viewsCount = async (req: Request<Params>, res: Response) => {
     }
 
     // check post exists
-    const profile = await User.findById(userId);
+    const profile = await User.findById(userId)
+      .select("_id viewsCount")
+      .lean();
     if (!profile) {
       return res.status(404).json({
         success: false,

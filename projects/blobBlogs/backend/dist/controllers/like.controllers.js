@@ -28,7 +28,7 @@ const togglePostLikes = async (req, res) => {
             });
         }
         // find post
-        const post = await post_model_1.default.findById(postId);
+        const post = await post_model_1.default.findById(postId).select("_id").lean();
         if (!post) {
             return res.status(404).json({
                 success: false,
@@ -96,7 +96,7 @@ const toggleCommentLikes = async (req, res) => {
             });
         }
         // find comment
-        const comment = await comment_model_1.default.findById(commentId);
+        const comment = await comment_model_1.default.findById(commentId).select("_id").lean();
         if (!comment) {
             return res.status(404).json({
                 success: false,

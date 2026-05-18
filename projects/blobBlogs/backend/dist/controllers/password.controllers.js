@@ -3,18 +3,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.verifyOtpAndForgotPassword = exports.requestOtpForForgotPassword = exports.updatePassword = exports.cookieOptions = void 0;
+exports.verifyOtpAndForgotPassword = exports.requestOtpForForgotPassword = exports.updatePassword = void 0;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const user_model_1 = require("../models/user.model");
 const user_schema_1 = require("../schemas/user.schema");
 const nodeMailer_1 = require("../configs/nodeMailer");
 const generateOtp_1 = require("../configs/generateOtp");
-// cookie options
-exports.cookieOptions = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-};
+const cookie_1 = require("../configs/cookie");
 // update password
 const updatePassword = async (req, res) => {
     const result = user_schema_1.updatePasswordSchema.safeParse(req.body);
@@ -53,15 +48,15 @@ const updatePassword = async (req, res) => {
         user.password = result.data.newPassword;
         await user.save();
         // clear cookie
-        res.clearCookie("jwt", exports.cookieOptions);
+        res.clearCookie("jwt", cookie_1.cookieOptions);
+        res.status(200).json({
+            success: true,
+            message: "Password updated successfully!",
+        });
         // notify via email
         await (0, nodeMailer_1.sendPasswordUpdateMail)({
             email: user.email,
             username: user.username,
-        });
-        res.status(200).json({
-            success: true,
-            message: "Password updated successfully!",
         });
     }
     catch (err) {
@@ -95,13 +90,13 @@ const requestOtpForForgotPassword = async (req, res) => {
         user.otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // Expires in 10 minutes
         await user.save();
         // clear cookie
-        res.clearCookie("jwt", exports.cookieOptions);
-        // send raw otp via email
-        await (0, nodeMailer_1.sendOtpMail)({ email: user.email, username: user.username }, otp);
+        res.clearCookie("jwt", cookie_1.cookieOptions);
         res.status(200).json({
             success: true,
             message: "OTP sent successfully!",
         });
+        // send raw otp via email
+        await (0, nodeMailer_1.sendOtpMail)({ email: user.email, username: user.username }, otp);
     }
     catch (err) {
         console.log(`Error in the requestPasswordReset controller! ${err.message}`);
@@ -145,15 +140,15 @@ const verifyOtpAndForgotPassword = async (req, res) => {
         user.otpExpiry = null;
         await user.save();
         // clear cookie
-        res.clearCookie("jwt", exports.cookieOptions);
+        res.clearCookie("jwt", cookie_1.cookieOptions);
+        res.status(200).json({
+            success: true,
+            message: "Password reset successfully!",
+        });
         // notify via email
         await (0, nodeMailer_1.sendForgotPasswordMail)({
             email: user.email,
             username: user.username,
-        });
-        res.status(200).json({
-            success: true,
-            message: "Password reset successfully!",
         });
     }
     catch (err) {

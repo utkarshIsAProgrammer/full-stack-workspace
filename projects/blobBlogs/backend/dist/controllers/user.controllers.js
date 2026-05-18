@@ -12,7 +12,7 @@ const nodeMailer_1 = require("../configs/nodeMailer");
 const getAll = async (req, res) => {
     try {
         // pagination
-        const limit = Number(req.query.limit) || 10;
+        const limit = Math.min(Number(req.query.limit) || 10, 20);
         const cursor = req.query.cursor;
         // query
         const query = {};
@@ -24,8 +24,10 @@ const getAll = async (req, res) => {
         }
         // fetch all users
         const users = await user_model_1.User.find(query)
+            .select("-password -otp -otpExpiry")
             .sort({ _id: -1 })
-            .limit(limit + 1);
+            .limit(limit + 1)
+            .lean();
         // .populate("author", "username email");
         // check more user exits
         const hasMore = users.length > limit;
@@ -151,7 +153,9 @@ const viewsCount = async (req, res) => {
             });
         }
         // check post exists
-        const profile = await user_model_1.User.findById(userId);
+        const profile = await user_model_1.User.findById(userId)
+            .select("_id viewsCount")
+            .lean();
         if (!profile) {
             return res.status(404).json({
                 success: false,

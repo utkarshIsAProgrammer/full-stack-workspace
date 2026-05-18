@@ -29,7 +29,7 @@ export const toggleRepost = async (req: Request<Params>, res: Response) => {
     }
 
     // find post
-    const post = await Post.findById(postId);
+    const post = await Post.findById(postId).select("_id author").lean();
 
     if (!post) {
       return res.status(404).json({

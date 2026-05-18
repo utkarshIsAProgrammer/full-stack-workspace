@@ -26,7 +26,7 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
     }
 
     // check post exists
-    const post = await Post.findById(postId);
+    const post = await Post.findById(postId).select("_id").lean();
     if (!post) {
       return res.status(404).json({
         success: false,
@@ -115,7 +115,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
     }
 
     // find saved posts
-    const savedPosts = await Save.find({ query })
+    const savedPosts = await Save.find(query)
       .sort({ _id: -1 })
       .limit(limit + 1)
       .populate({
@@ -128,7 +128,8 @@ export const getSavedPosts = async (req: Request, res: Response) => {
             select: "username fullName email",
           },
         ],
-      });
+      })
+      .lean();
 
     // no posts saved
     if (savedPosts.length === 0) {

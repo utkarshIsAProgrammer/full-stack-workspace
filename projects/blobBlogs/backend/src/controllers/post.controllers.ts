@@ -22,10 +22,9 @@ export const getPost = async (req: Request<Params>, res: Response) => {
     }
 
     // fetch post
-    const post = await Post.findOne({ _id: postId }).populate(
-      "author",
-      "username email",
-    );
+    const post = await Post.findOne({ _id: postId })
+      .populate("author", "username email")
+      .lean();
 
     // check existence
     if (!post) {
@@ -66,7 +65,8 @@ export const getAllPosts = async (req: Request, res: Response) => {
     const posts = await Post.find(query)
       .sort({ _id: -1 }) /// newest first
       .limit(limit + 1) // an extra post for "hasMore"
-      .populate("author", "username email");
+      .populate("author", "username email")
+      .lean();
 
     // check more post exists
     const hasMore = posts.length > limit;
@@ -360,7 +360,9 @@ export const viewsCount = async (req: Request<Params>, res: Response) => {
     }
 
     // check post exists
-    const post = await Post.findById(postId);
+    const post = await Post.findById(postId)
+      .select("_id author viewsCount")
+      .lean();
     if (!post) {
       return res.status(404).json({
         success: false,

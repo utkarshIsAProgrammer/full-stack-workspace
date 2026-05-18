@@ -37,10 +37,7 @@ app.use("/api/reposts", repost_routes_1.repostRoutes);
 });
 // ! BEN IS LOGGED IN
 /*
-! --- FIX ---
-! REPLACE getAll CONTROLLER TO THE user.controllers.ts
-
 ! --- ADD ---
-! SHARE PROFILE / POST
+! CURSOR PAGING
  */
 //# sourceMappingURL=server.js.map

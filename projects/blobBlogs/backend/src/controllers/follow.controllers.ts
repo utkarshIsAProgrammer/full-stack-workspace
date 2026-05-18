@@ -38,7 +38,7 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
     }
 
     // check target user exists
-    const targetUser = await User.findById(userId);
+    const targetUser = await User.findById(userId).select("_id").lean();
 
     if (!targetUser) {
       return res.status(404).json({
@@ -147,7 +147,8 @@ export const getFollowers = async (req: Request<Params>, res: Response) => {
     })
       .sort({ createdAt: -1 })
       .limit(limit + 1)
-      .populate("follower", "username email followersCount followingCount");
+      .populate("follower", "username email followersCount followingCount")
+      .lean();
 
     // check more exists
     const hasMore = followers.length > limit;
@@ -216,7 +217,8 @@ export const getFollowing = async (req: Request<Params>, res: Response) => {
     })
       .sort({ createdAt: -1 })
       .limit(limit + 1)
-      .populate("following", "username email followersCount followingCount");
+      .populate("following", "username email followersCount followingCount")
+      .lean();
 
     // check more exists
     const hasMore = following.length > limit;

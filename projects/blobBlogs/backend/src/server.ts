@@ -38,9 +38,10 @@ connectDB().then(() => {
 // ! BEN IS LOGGED IN
 
 /* 
-! --- FIX ---
-! REPLACE getAll CONTROLLER TO THE user.controllers.ts
-
 ! --- ADD ---
-! SHARE PROFILE / POST
+! CURSOR PAGING
+! PERFORMANCE OPTIMIZATIONS
+
+! --- FIX ---
+! PROBLEMS IN EACH CONTROLLERS THAT MIGHT BREAK IN SOME CASES
  */

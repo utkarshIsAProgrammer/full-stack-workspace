@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteComment = exports.updateComment = exports.addComment = exports.getComment = void 0;
+const mongoose_1 = __importDefault(require("mongoose"));
 const comment_model_1 = __importDefault(require("../models/comment.model"));
 const post_model_1 = __importDefault(require("../models/post.model"));
 const comment_schema_1 = require("../schemas/comment.schema");
@@ -11,13 +12,44 @@ const comment_schema_1 = require("../schemas/comment.schema");
 const getComment = async (req, res) => {
     const { postId } = req.params;
     try {
+        // validate id
+        if (!mongoose_1.default.Types.ObjectId.isValid(postId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid post ID!",
+            });
+        }
+        // pagination
+        const limit = Math.min(Number(req.query.limit) || 10, 50);
+        const cursor = req.query.cursor;
+        // query
+        const query = {
+            post: postId,
+            parent: null,
+        };
+        // if cursor exists fetch older comments
+        if (cursor) {
+            query._id = { $lt: cursor };
+        }
         // fetch comments with author info
-        const comments = await comment_model_1.default.find({ post: postId })
-            .sort({ createdAt: -1 })
-            .populate("author", "username");
+        const comments = await comment_model_1.default.find(query)
+            .sort({ _id: -1 })
+            .limit(limit + 1)
+            .populate("author", "username email")
+            .lean();
+        // check more comments exists
+        const hasMore = comments.length > limit;
+        // remove extra comments
+        if (hasMore) {
+            comments.pop();
+        }
+        // next cursor
+        const nextCursor = comments[comments.length - 1]?._id || null;
         return res.status(200).json({
             success: true,
             comments,
+            nextCursor,
+            hasMore,
         });
     }
     catch (err) {
@@ -51,7 +83,7 @@ const addComment = async (req, res) => {
         // check for parent comment (is reply)
         const parent = result.data.parent;
         if (parent) {
-            const parentComment = await comment_model_1.default.findById(parent);
+            const parentComment = await comment_model_1.default.findById(parent).select("_id").lean();
             if (!parentComment) {
                 return res.status(404).json({
                     success: false,
@@ -104,7 +136,7 @@ const updateComment = async (req, res) => {
                 .json({ success: false, message: "Unauthorized access!" });
         }
         // find comment (exists)
-        const comment = await comment_model_1.default.findById(commentId);
+        const comment = await comment_model_1.default.findById(commentId).select("_id author").lean();
         if (!comment) {
             return res.status(404).json({
                 success: false,

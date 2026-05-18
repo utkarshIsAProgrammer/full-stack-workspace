@@ -20,7 +20,9 @@ const getPost = async (req, res) => {
             });
         }
         // fetch post
-        const post = await post_model_1.default.findOne({ _id: postId }).populate("author", "username email");
+        const post = await post_model_1.default.findOne({ _id: postId })
+            .populate("author", "username email")
+            .lean();
         // check existence
         if (!post) {
             return res.status(404).json({
@@ -44,7 +46,7 @@ exports.getPost = getPost;
 const getAllPosts = async (req, res) => {
     try {
         // pagination
-        const limit = Number(req.query.limit) || 10;
+        const limit = Math.min(Number(req.query.limit) || 10, 20);
         const cursor = req.query.cursor;
         const query = {};
         // if cursor exists fetch older posts
@@ -57,7 +59,8 @@ const getAllPosts = async (req, res) => {
         const posts = await post_model_1.default.find(query)
             .sort({ _id: -1 }) /// newest first
             .limit(limit + 1) // an extra post for "hasMore"
-            .populate("author", "username email");
+            .populate("author", "username email")
+            .lean();
         // check more post exists
         const hasMore = posts.length > limit;
         // remove extra post
@@ -315,7 +318,9 @@ const viewsCount = async (req, res) => {
             });
         }
         // check post exists
-        const post = await post_model_1.default.findById(postId);
+        const post = await post_model_1.default.findById(postId)
+            .select("_id author viewsCount")
+            .lean();
         if (!post) {
             return res.status(404).json({
                 success: false,

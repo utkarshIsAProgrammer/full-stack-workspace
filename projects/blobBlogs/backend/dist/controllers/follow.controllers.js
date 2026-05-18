@@ -34,7 +34,7 @@ const toggleFollowUser = async (req, res) => {
             });
         }
         // check target user exists
-        const targetUser = await user_model_1.User.findById(userId);
+        const targetUser = await user_model_1.User.findById(userId).select("_id").lean();
         if (!targetUser) {
             return res.status(404).json({
                 success: false,
@@ -103,12 +103,34 @@ const getFollowers = async (req, res) => {
                 message: "Invalid user ID!",
             });
         }
+        // pagination
+        const limit = Math.min(Number(req.query.limit) || 10, 50);
+        const cursor = req.query.cursor;
+        // query
+        const query = {};
+        // if cursor exist fetch older data
+        if (cursor) {
+            query._id = {
+                $lt: cursor,
+            };
+        }
         // followers list
         const followers = await follow_model_1.default.find({
             following: userId,
+            ...query,
         })
             .sort({ createdAt: -1 })
-            .populate("follower", "username email followersCount followingCount");
+            .limit(limit + 1)
+            .populate("follower", "username email followersCount followingCount")
+            .lean();
+        // check more exists
+        const hasMore = followers.length > limit;
+        // remove extra data
+        if (hasMore) {
+            followers.pop();
+        }
+        // next cursor
+        const nextCursor = followers[followers.length - 1]?._id || null;
         // followers count
         const followersCount = await follow_model_1.default.countDocuments({
             following: userId,
@@ -117,6 +139,8 @@ const getFollowers = async (req, res) => {
             success: true,
             followersCount,
             followers,
+            nextCursor,
+            hasMore,
         });
     }
     catch (err) {
@@ -139,20 +163,44 @@ const getFollowing = async (req, res) => {
                 message: "Invalid user ID!",
             });
         }
+        // pagination
+        const limit = Math.min(Number(req.query.limit) || 10, 50);
+        const cursor = req.query.cursor;
+        // query
+        const query = {};
+        // if cursor exists fetch old data
+        if (cursor) {
+            query._id = {
+                $lt: cursor,
+            };
+        }
         // following list
         const following = await follow_model_1.default.find({
             follower: userId,
+            ...query,
         })
             .sort({ createdAt: -1 })
-            .populate("following", "username email followersCount followingCount");
+            .limit(limit + 1)
+            .populate("following", "username email followersCount followingCount")
+            .lean();
+        // check more exists
+        const hasMore = following.length > limit;
+        // remove extra data
+        if (hasMore) {
+            following.pop();
+        }
         // following count
         const followingCount = await follow_model_1.default.countDocuments({
             follower: userId,
         });
+        // next cursor
+        const nextCursor = following[following.length - 1]?._id || null;
         return res.status(200).json({
             success: true,
             followingCount,
             following,
+            nextCursor,
+            hasMore,
         });
     }
     catch (err) {
