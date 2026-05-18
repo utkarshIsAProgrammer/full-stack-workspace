@@ -38,6 +38,14 @@ export const toggleRepost = async (req: Request<Params>, res: Response) => {
       });
     }
 
+    // prevent self repost
+    if (post.author.toString() === userId.toString()) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot repost your own post!",
+      });
+    }
+
     // check existing repost
     const existingRepost = await Repost.findOne({
       user: userId,
@@ -56,7 +64,7 @@ export const toggleRepost = async (req: Request<Params>, res: Response) => {
 
       return res.status(200).json({
         success: true,
-        message: "Post un-reposted!",
+        message: "Repost removed!",
         reposted: false,
         repostsCount: updatedPost?.repostsCount,
         post: updatedPost,
@@ -78,7 +86,7 @@ export const toggleRepost = async (req: Request<Params>, res: Response) => {
 
     return res.status(201).json({
       success: true,
-      message: "Post reposted!",
+      message: "Repost created!",
       reposted: true,
       repostsCount: updatedPost?.repostsCount,
       post: updatedPost,

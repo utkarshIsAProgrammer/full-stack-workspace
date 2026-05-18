@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import mongoose from "mongoose";
 import Comment from "../models/comment.model";
 import Post from "../models/post.model";
 import {
@@ -19,14 +20,50 @@ export const getComment = async (req: Request<Params>, res: Response) => {
   const { postId } = req.params;
 
   try {
+    // validate id
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid post ID!",
+      });
+    }
+    // pagination
+    const limit = Math.min(Number(req.query.limit) || 10, 50);
+    const cursor = req.query.cursor as string;
+
+    // query
+    const query: any = {
+      post: postId,
+      parent: null,
+    };
+
+    // if cursor exists fetch older comments
+    if (cursor) {
+      query._id = { $lt: cursor };
+    }
+
     // fetch comments with author info
-    const comments = await Comment.find({ post: postId })
-      .sort({ createdAt: -1 })
+    const comments = await Comment.find(query)
+      .sort({ _id: -1 })
+      .limit(limit + 1)
       .populate("author", "username");
+
+    // check more comments exists
+    const hasMore = comments.length > limit;
+
+    // remove extra comments
+    if (hasMore) {
+      comments.pop();
+    }
+
+    // next cursor
+    const nextCursor = comments[comments.length - 1]?._id || null;
 
     return res.status(200).json({
       success: true,
       comments,
+      nextCursor,
+      hasMore,
     });
   } catch (err: any) {
     console.log(`Error in getComment: ${err.message}`);

@@ -49,10 +49,32 @@ export const getPost = async (req: Request<Params>, res: Response) => {
 // get all posts
 export const getAllPosts = async (req: Request, res: Response) => {
   try {
+    // pagination
+    const limit = Math.min(Number(req.query.limit) || 10, 20);
+    const cursor = req.query.cursor as string;
+
+    const query: any = {};
+
+    // if cursor exists fetch older posts
+    if (cursor) {
+      query._id = {
+        $lt: cursor,
+      };
+    }
+
     // fetch all posts
-    const posts = await Post.find()
-      .sort({ createdAt: -1 })
+    const posts = await Post.find(query)
+      .sort({ _id: -1 }) /// newest first
+      .limit(limit + 1) // an extra post for "hasMore"
       .populate("author", "username email");
+
+    // check more post exists
+    const hasMore = posts.length > limit;
+
+    // remove extra post
+    if (hasMore) {
+      posts.pop();
+    }
 
     // check empty list (post)
     if (posts.length === 0) {
@@ -62,10 +84,15 @@ export const getAllPosts = async (req: Request, res: Response) => {
       });
     }
 
+    // next cursor
+    const nextCursor = posts[posts.length - 1]?._id || null;
+
     return res.status(200).json({
       success: true,
       message: "All posts fetched successfully!",
       posts,
+      nextCursor,
+      hasMore,
     });
   } catch (err: any) {
     console.log(`Error in the getAllPosts controller! ${err.message}`);

@@ -1,4 +1,4 @@
-import type { Request, Response } from "express";
+import type { Request, Response, CookieOptions } from "express";
 import bcrypt from "bcryptjs";
 import { User } from "../models/user.model";
 import {
@@ -12,6 +12,7 @@ import {
   sendOtpMail,
 } from "../configs/nodeMailer";
 import { generateOTP } from "../configs/generateOtp";
+import { cookieOptions } from "../configs/cookie";
 
 // update password
 export const updatePassword = async (req: Request, res: Response) => {
@@ -59,22 +60,18 @@ export const updatePassword = async (req: Request, res: Response) => {
     user.password = result.data.newPassword;
     await user.save();
 
-    // notify via email
-    sendPasswordUpdateMail({
-      email: user.email,
-      username: user.username,
-    });
-
     // clear cookie
-    res.clearCookie("jwt", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    });
+    res.clearCookie("jwt", cookieOptions);
 
     res.status(200).json({
       success: true,
       message: "Password updated successfully!",
+    });
+
+    // notify via email
+    await sendPasswordUpdateMail({
+      email: user.email,
+      username: user.username,
     });
   } catch (err: any) {
     console.log(`Error in the updatePassword controller! ${err.message}`);
@@ -114,20 +111,16 @@ export const requestOtpForForgotPassword = async (
 
     await user.save();
 
-    // send raw otp via email
-    await sendOtpMail({ email: user.email, username: user.username }, otp);
-
     // clear cookie
-    res.clearCookie("jwt", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    });
+    res.clearCookie("jwt", cookieOptions);
 
     res.status(200).json({
       success: true,
       message: "OTP sent successfully!",
     });
+
+    // send raw otp via email
+    await sendOtpMail({ email: user.email, username: user.username }, otp);
   } catch (err: any) {
     console.log(`Error in the requestPasswordReset controller! ${err.message}`);
     res.status(500).json({ message: "Internal server error!" });
@@ -181,22 +174,18 @@ export const verifyOtpAndForgotPassword = async (
 
     await user.save();
 
-    // notify via email
-    await sendForgotPasswordMail({
-      email: user.email,
-      username: user.username,
-    });
-
     // clear cookie
-    res.clearCookie("jwt", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    });
+    res.clearCookie("jwt", cookieOptions);
 
     res.status(200).json({
       success: true,
       message: "Password reset successfully!",
+    });
+
+    // notify via email
+    await sendForgotPasswordMail({
+      email: user.email,
+      username: user.username,
     });
   } catch (err: any) {
     console.log(

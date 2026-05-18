@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 declare const Post: mongoose.Model<{
     sharesCount: number;
+    viewsCount: number;
     title: string;
     slug: string;
     content: string;
@@ -8,7 +9,6 @@ declare const Post: mongoose.Model<{
     savesCount: number;
     likesCount: number;
     commentsCount: number;
-    viewsCount: number;
     author: mongoose.Types.ObjectId;
     image?: {
         url: string;
@@ -18,6 +18,7 @@ declare const Post: mongoose.Model<{
     id: string;
 }, mongoose.Document<unknown, {}, {
     sharesCount: number;
+    viewsCount: number;
     title: string;
     slug: string;
     content: string;
@@ -25,7 +26,6 @@ declare const Post: mongoose.Model<{
     savesCount: number;
     likesCount: number;
     commentsCount: number;
-    viewsCount: number;
     author: mongoose.Types.ObjectId;
     image?: {
         url: string;
@@ -37,6 +37,7 @@ declare const Post: mongoose.Model<{
     timestamps: true;
 }> & Omit<{
     sharesCount: number;
+    viewsCount: number;
     title: string;
     slug: string;
     content: string;
@@ -44,7 +45,6 @@ declare const Post: mongoose.Model<{
     savesCount: number;
     likesCount: number;
     commentsCount: number;
-    viewsCount: number;
     author: mongoose.Types.ObjectId;
     image?: {
         url: string;
@@ -60,6 +60,7 @@ declare const Post: mongoose.Model<{
     timestamps: true;
 }, {
     sharesCount: number;
+    viewsCount: number;
     title: string;
     slug: string;
     content: string;
@@ -67,7 +68,6 @@ declare const Post: mongoose.Model<{
     savesCount: number;
     likesCount: number;
     commentsCount: number;
-    viewsCount: number;
     author: mongoose.Types.ObjectId;
     image?: {
         url: string;
@@ -75,6 +75,7 @@ declare const Post: mongoose.Model<{
     } | null;
 } & mongoose.DefaultTimestampProps, mongoose.Document<unknown, {}, {
     sharesCount: number;
+    viewsCount: number;
     title: string;
     slug: string;
     content: string;
@@ -82,7 +83,6 @@ declare const Post: mongoose.Model<{
     savesCount: number;
     likesCount: number;
     commentsCount: number;
-    viewsCount: number;
     author: mongoose.Types.ObjectId;
     image?: {
         url: string;
@@ -94,6 +94,7 @@ declare const Post: mongoose.Model<{
     timestamps: true;
 }> & Omit<{
     sharesCount: number;
+    viewsCount: number;
     title: string;
     slug: string;
     content: string;
@@ -101,7 +102,6 @@ declare const Post: mongoose.Model<{
     savesCount: number;
     likesCount: number;
     commentsCount: number;
-    viewsCount: number;
     author: mongoose.Types.ObjectId;
     image?: {
         url: string;
@@ -115,6 +115,7 @@ declare const Post: mongoose.Model<{
     id: string;
 }, unknown, {
     sharesCount: number;
+    viewsCount: number;
     title: string;
     slug: string;
     content: string;
@@ -122,7 +123,6 @@ declare const Post: mongoose.Model<{
     savesCount: number;
     likesCount: number;
     commentsCount: number;
-    viewsCount: number;
     author: mongoose.Types.ObjectId;
     image?: {
         url: string;
@@ -136,6 +136,7 @@ declare const Post: mongoose.Model<{
     __v: number;
 }>, {
     sharesCount: number;
+    viewsCount: number;
     title: string;
     slug: string;
     content: string;
@@ -143,7 +144,6 @@ declare const Post: mongoose.Model<{
     savesCount: number;
     likesCount: number;
     commentsCount: number;
-    viewsCount: number;
     author: mongoose.Types.ObjectId;
     image?: {
         url: string;

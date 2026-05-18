@@ -3,6 +3,7 @@ import { User } from "../models/user.model";
 import { signupSchema, loginSchema } from "../schemas/user.schema";
 import { sendWelcomeMail } from "../configs/nodeMailer";
 import jwt from "jsonwebtoken";
+import { cookieOptions } from "../configs/cookie";
 
 // signup
 export const signup = async (req: Request, res: Response) => {
@@ -36,16 +37,8 @@ export const signup = async (req: Request, res: Response) => {
     // generate jwt and set cookie
     const token = user?.signToken();
     res.cookie("jwt", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      ...cookieOptions,
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
-
-    // send welcome email
-    sendWelcomeMail({
-      email: user.email,
-      username: user.username,
     });
 
     res.status(201).json({
@@ -53,6 +46,12 @@ export const signup = async (req: Request, res: Response) => {
       message: "User created successfully!",
       ...user.toObject(),
       password: undefined, // remove password from response
+    });
+
+    // send welcome email
+    sendWelcomeMail({
+      email: user.email,
+      username: user.username,
     });
   } catch (err: any) {
     console.log(`Error in the signup controller! ${err.message}`);
@@ -78,12 +77,20 @@ export const login = async (req: Request, res: Response) => {
     const existingToken = req.cookies?.jwt;
 
     if (existingToken) {
-      jwt.verify(existingToken, process.env.JWT_SECRET!);
+      try {
+        jwt.verify(existingToken, process.env.JWT_SECRET!);
 
-      return res.status(400).json({
-        success: false,
-        message: "You are already logged in!",
-      });
+        return res.status(400).json({
+          success: false,
+          message: "You are already logged in!",
+        });
+      } catch (err: any) {
+        console.log(`Invalid/expired token! ${err.message}`);
+        res.status(401).json({
+          success: false,
+          message: "Invalid/expired token!",
+        });
+      }
     }
 
     // find user
@@ -113,9 +120,7 @@ export const login = async (req: Request, res: Response) => {
 
     // set cookie
     res.cookie("jwt", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      ...cookieOptions,
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
@@ -147,11 +152,7 @@ export const login = async (req: Request, res: Response) => {
 export const logout = async (req: Request, res: Response) => {
   try {
     // clear cookie
-    res.clearCookie("jwt", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    });
+    res.clearCookie("jwt", cookieOptions);
     res.status(200).json({
       success: true,
       message: "User logged out successfully!",

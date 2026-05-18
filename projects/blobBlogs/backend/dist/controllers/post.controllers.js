@@ -43,10 +43,27 @@ exports.getPost = getPost;
 // get all posts
 const getAllPosts = async (req, res) => {
     try {
+        // pagination
+        const limit = Number(req.query.limit) || 10;
+        const cursor = req.query.cursor;
+        const query = {};
+        // if cursor exists fetch older posts
+        if (cursor) {
+            query._id = {
+                $lt: cursor,
+            };
+        }
         // fetch all posts
-        const posts = await post_model_1.default.find()
-            .sort({ createdAt: -1 })
+        const posts = await post_model_1.default.find(query)
+            .sort({ _id: -1 }) /// newest first
+            .limit(limit + 1) // an extra post for "hasMore"
             .populate("author", "username email");
+        // check more post exists
+        const hasMore = posts.length > limit;
+        // remove extra post
+        if (hasMore) {
+            posts.pop();
+        }
         // check empty list (post)
         if (posts.length === 0) {
             return res.status(200).json({
@@ -54,10 +71,14 @@ const getAllPosts = async (req, res) => {
                 message: "No posts yet!",
             });
         }
+        // next cursor
+        const nextCursor = posts[posts.length - 1]?._id || null;
         return res.status(200).json({
             success: true,
             message: "All posts fetched successfully!",
             posts,
+            nextCursor,
+            hasMore,
         });
     }
     catch (err) {
@@ -281,7 +302,7 @@ const sharePost = async (req, res) => {
     }
 };
 exports.sharePost = sharePost;
-// view post
+// view post count
 const viewsCount = async (req, res) => {
     const { postId } = req.params;
     const currentUser = req.user?._id;

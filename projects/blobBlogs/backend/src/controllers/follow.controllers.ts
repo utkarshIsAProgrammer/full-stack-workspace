@@ -127,12 +127,38 @@ export const getFollowers = async (req: Request<Params>, res: Response) => {
       });
     }
 
+    // pagination
+    const limit = Math.min(Number(req.query.limit) || 10, 50);
+    const cursor = req.query.cursor as string;
+
+    // query
+    const query: any = {};
+
+    // if cursor exist fetch older data
+    if (cursor) {
+      query._id = {
+        $lt: cursor,
+      };
+    }
     // followers list
     const followers = await Follow.find({
       following: userId,
+      ...query,
     })
       .sort({ createdAt: -1 })
+      .limit(limit + 1)
       .populate("follower", "username email followersCount followingCount");
+
+    // check more exists
+    const hasMore = followers.length > limit;
+
+    // remove extra data
+    if (hasMore) {
+      followers.pop();
+    }
+
+    // next cursor
+    const nextCursor = followers[followers.length - 1]?._id || null;
 
     // followers count
     const followersCount = await Follow.countDocuments({
@@ -143,6 +169,8 @@ export const getFollowers = async (req: Request<Params>, res: Response) => {
       success: true,
       followersCount,
       followers,
+      nextCursor,
+      hasMore,
     });
   } catch (err: any) {
     console.log(`Error in getFollowers controller! ${err.message}`);
@@ -167,22 +195,51 @@ export const getFollowing = async (req: Request<Params>, res: Response) => {
       });
     }
 
+    // pagination
+    const limit = Math.min(Number(req.query.limit) || 10, 50);
+    const cursor = req.query.cursor as string;
+
+    // query
+    const query: any = {};
+
+    // if cursor exists fetch old data
+    if (cursor) {
+      query._id = {
+        $lt: cursor,
+      };
+    }
+
     // following list
     const following = await Follow.find({
       follower: userId,
+      ...query,
     })
       .sort({ createdAt: -1 })
+      .limit(limit + 1)
       .populate("following", "username email followersCount followingCount");
+
+    // check more exists
+    const hasMore = following.length > limit;
+
+    // remove extra data
+    if (hasMore) {
+      following.pop();
+    }
 
     // following count
     const followingCount = await Follow.countDocuments({
       follower: userId,
     });
 
+    // next cursor
+    const nextCursor = following[following.length - 1]?._id || null;
+
     return res.status(200).json({
       success: true,
       followingCount,
       following,
+      nextCursor,
+      hasMore,
     });
   } catch (err: any) {
     console.log(`Error in getFollowing controller! ${err.message}`);

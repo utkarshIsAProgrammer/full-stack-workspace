@@ -42,7 +42,7 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
 
     // unsave post
     if (alreadySaved) {
-      await Save.findByIdAndDelete(alreadySaved._id);
+      await alreadySaved.deleteOne();
 
       // decrement saves count
       const updatedPost = await Post.findByIdAndUpdate(
@@ -98,12 +98,30 @@ export const getSavedPosts = async (req: Request, res: Response) => {
       });
     }
 
+    // pagination
+    const limit = Math.min(Number(req.query.limit) || 10, 50);
+    const cursor = req.query.cursor as string;
+
+    // query
+    const query: any = {
+      user: userId,
+    };
+
+    // if cursor exists fetch older saves
+    if (cursor) {
+      query._id = {
+        $lt: cursor,
+      };
+    }
+
     // find saved posts
-    const savedPosts = await Save.find({ user: userId })
-      .sort({ createdAt: -1 })
+    const savedPosts = await Save.find({ query })
+      .sort({ _id: -1 })
+      .limit(limit + 1)
       .populate({
         path: "post",
-        select: "title slug image author savesCount repostsCount",
+        select:
+          "title slug image author savesCount repostsCount  likesCount commentsCount",
         populate: [
           {
             path: "author",
@@ -121,14 +139,27 @@ export const getSavedPosts = async (req: Request, res: Response) => {
       });
     }
 
+    // check has more
+    const hasMore = savedPosts.length > limit;
+
+    // remove extra item
+    if (hasMore) {
+      savedPosts.pop();
+    }
+
+    // next cursor
+    const nextCursor = savedPosts[savedPosts.length - 1]?._id || null;
+
     res.status(200).json({
       success: true,
       message: "Saved posts fetched successfully!",
       count: savedPosts.length,
       savedPosts,
+      nextCursor,
+      hasMore,
     });
   } catch (err: any) {
     console.log(`Error in the getSavedPosts controller! ${err.message}`);
-    res.status(500).json({ success: true, message: "Internal server error!" });
+    res.status(500).json({ success: false, message: "Internal server error!" });
   }
 };

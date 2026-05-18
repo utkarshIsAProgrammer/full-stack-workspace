@@ -11,11 +11,51 @@ type Params = {
 // get all users
 export const getAll = async (req: Request, res: Response) => {
   try {
-    const users = await User.find();
+    // pagination
+    const limit = Math.min(Number(req.query.limit) || 10, 20);
+    const cursor = req.query.cursor as string;
+
+    // query
+    const query: any = {};
+
+    // if cursor exists fetch older user
+    if (cursor) {
+      query_id: {
+        $lt: cursor;
+      }
+    }
+
+    // fetch all users
+    const users = await User.find(query)
+      .sort({ _id: -1 })
+      .limit(limit + 1);
+    // .populate("author", "username email");
+
+    // check more user exits
+    const hasMore = users.length > limit;
+
+    // remove extra users
+    if (hasMore) {
+      users.pop();
+    }
+
+    // check empty list (user)
+    if (users.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No users found!",
+      });
+    }
+
+    // next cursor
+    const nextCursor = users[users.length - 1]?._id || null;
+
     return res.status(200).json({
       success: true,
       message: "All users fetched successfully!",
       users,
+      nextCursor,
+      hasMore,
     });
   } catch (err: any) {
     console.log(`Error in the getAll users controller! ${err.message}`);

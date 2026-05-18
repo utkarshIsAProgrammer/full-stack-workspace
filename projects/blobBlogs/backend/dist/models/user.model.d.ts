@@ -8,6 +8,7 @@ declare const userSchema: mongoose.Schema<any, mongoose.Model<any, any, any, any
     followersCount: number;
     followingCount: number;
     sharesCount: number;
+    viewsCount: number;
     otp?: string | null;
     otpExpiry?: NativeDate | null;
 } & mongoose.DefaultTimestampProps, mongoose.Document<unknown, {}, {
@@ -17,6 +18,7 @@ declare const userSchema: mongoose.Schema<any, mongoose.Model<any, any, any, any
     followersCount: number;
     followingCount: number;
     sharesCount: number;
+    viewsCount: number;
     otp?: string | null;
     otpExpiry?: NativeDate | null;
 } & mongoose.DefaultTimestampProps, {
@@ -30,6 +32,7 @@ declare const userSchema: mongoose.Schema<any, mongoose.Model<any, any, any, any
     followersCount: number;
     followingCount: number;
     sharesCount: number;
+    viewsCount: number;
     otp?: string | null;
     otpExpiry?: NativeDate | null;
 } & mongoose.DefaultTimestampProps & {
@@ -45,6 +48,7 @@ declare const userSchema: mongoose.Schema<any, mongoose.Model<any, any, any, any
     followersCount: number;
     followingCount: number;
     sharesCount: number;
+    viewsCount: number;
     otp?: string | null;
     otpExpiry?: NativeDate | null;
     createdAt: NativeDate;
@@ -68,6 +72,7 @@ export declare const User: mongoose.Model<UserDocument, {}, {}, {}, mongoose.Doc
     followersCount: number;
     followingCount: number;
     sharesCount: number;
+    viewsCount: number;
     otp?: string | null;
     otpExpiry?: NativeDate | null;
 } & mongoose.DefaultTimestampProps, {}, mongoose.DefaultSchemaOptions> & {
@@ -77,6 +82,7 @@ export declare const User: mongoose.Model<UserDocument, {}, {}, {}, mongoose.Doc
     followersCount: number;
     followingCount: number;
     sharesCount: number;
+    viewsCount: number;
     otp?: string | null;
     otpExpiry?: NativeDate | null;
 } & mongoose.DefaultTimestampProps & {
