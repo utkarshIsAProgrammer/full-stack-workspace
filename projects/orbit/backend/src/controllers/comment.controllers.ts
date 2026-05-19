@@ -6,6 +6,7 @@ import {
   addCommentSchema,
   updateCommentSchema,
 } from "../schemas/comment.schema";
+import { getCache, setCache, clearCommentsCache } from "../configs/cache";
 
 type Params = {
   postId: string;
@@ -42,6 +43,17 @@ export const getComment = async (req: Request<Params>, res: Response) => {
       query._id = { $lt: cursor };
     }
 
+    // cache key
+    const cacheKey = `comments:${postId}:${cursor || "first"}:${limit}`;
+
+    // get from cache
+    try {
+      const cachedComments = await getCache(cacheKey);
+      if (cachedComments) return res.status(200).json(cachedComments);
+    } catch (err: any) {
+      console.log(`Cache error in getComment! ${err.message}`);
+    }
+
     // fetch comments with author info
     const comments = await Comment.find(query)
       .sort({ _id: -1 })
@@ -60,12 +72,21 @@ export const getComment = async (req: Request<Params>, res: Response) => {
     // next cursor
     const nextCursor = comments[comments.length - 1]?._id || null;
 
-    return res.status(200).json({
+    const responseData = {
       success: true,
       comments,
       nextCursor,
       hasMore,
-    });
+    };
+
+    // set cache
+    try {
+      await setCache(cacheKey, responseData, 60);
+    } catch (err: any) {
+      console.log(`Cache set error in getComment! ${err.message}`);
+    }
+
+    return res.status(200).json(responseData);
   } catch (err: any) {
     console.log(`Error in getComment: ${err.message}`);
 
@@ -76,7 +97,7 @@ export const getComment = async (req: Request<Params>, res: Response) => {
 };
 
 // create a new comment or reply
-export const addComment = async (req: Request, res: Response) => {
+export const addComment = async (req: Request<Params>, res: Response) => {
   const result = addCommentSchema.safeParse(req.body);
   const postId = req.params.postId;
   const author = req.user?._id;
@@ -126,6 +147,9 @@ export const addComment = async (req: Request, res: Response) => {
       $inc: { commentsCount: 1 },
     });
 
+    // clear cache
+    await clearCommentsCache(postId);
+
     res.status(201).json({
       success: true,
       message: "Comment added successfully!",
@@ -164,7 +188,9 @@ export const updateComment = async (
     }
 
     // find comment (exists)
-    const comment = await Comment.findById(commentId).select("_id author").lean();
+    const comment = await Comment.findById(commentId)
+      .select("_id author post")
+      .lean();
     if (!comment) {
       return res.status(404).json({
         success: false,
@@ -186,6 +212,9 @@ export const updateComment = async (
       { content: result.data.content },
       { new: true, runValidators: true },
     );
+
+    // clear cache
+    if (comment.post) await clearCommentsCache(comment.post.toString());
 
     res.status(200).json({
       success: true,
@@ -238,6 +267,9 @@ export const deleteComment = async (
 
     // delete comment
     await comment.deleteOne();
+
+    // clear cache
+    if (comment.post) await clearCommentsCache(comment.post.toString());
 
     res.status(200).json({
       success: true,

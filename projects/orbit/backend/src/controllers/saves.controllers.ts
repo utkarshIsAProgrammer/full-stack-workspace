@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import Post from "../models/post.model";
 import Save from "../models/saves.model";
+import { getCache, setCache, clearSavesCache } from "../configs/cache";
 
 type Params = {
   postId: string;
@@ -51,6 +52,9 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
         { new: true },
       );
 
+      // clear cache
+      await clearSavesCache(userId);
+
       return res.status(200).json({
         success: true,
         message: "Post unsaved!",
@@ -72,6 +76,9 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
       { $inc: { savesCount: 1 } },
       { new: true },
     );
+
+    // clear cache
+    await clearSavesCache(userId);
 
     res.status(201).json({
       success: true,
@@ -109,9 +116,18 @@ export const getSavedPosts = async (req: Request, res: Response) => {
 
     // if cursor exists fetch older saves
     if (cursor) {
-      query._id = {
-        $lt: cursor,
-      };
+      query._id = { $lt: cursor };
+    }
+
+    // cache key
+    const cacheKey = `saves:${userId}:${cursor || "first"}:${limit}`;
+
+    // get from cache
+    try {
+      const cachedSaves = await getCache(cacheKey);
+      if (cachedSaves) return res.status(200).json(cachedSaves);
+    } catch (err: any) {
+      console.log(`Cache error in getSavedPosts! ${err.message}`);
     }
 
     // find saved posts
@@ -151,14 +167,23 @@ export const getSavedPosts = async (req: Request, res: Response) => {
     // next cursor
     const nextCursor = savedPosts[savedPosts.length - 1]?._id || null;
 
-    res.status(200).json({
+    const responseData = {
       success: true,
       message: "Saved posts fetched successfully!",
       count: savedPosts.length,
       savedPosts,
       nextCursor,
       hasMore,
-    });
+    };
+
+    // set cache
+    try {
+      await setCache(cacheKey, responseData, 60);
+    } catch (err: any) {
+      console.log(`Cache set error in getSavedPosts! ${err.message}`);
+    }
+
+    res.status(200).json(responseData);
   } catch (err: any) {
     console.log(`Error in the getSavedPosts controller! ${err.message}`);
     res.status(500).json({ success: false, message: "Internal server error!" });

@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { User } from "../models/user.model";
 import Follow from "../models/follow.model";
+import { getCache, setCache, clearFollowCache } from "../configs/cache";
 
 type Params = {
   userId: string;
@@ -74,6 +75,9 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
         $inc: { followingCount: 1 },
       });
 
+      // clear cache
+      await clearFollowCache(userId, follower.toString());
+
       return res.status(201).json({
         success: true,
         message: "User followed successfully!",
@@ -97,6 +101,9 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
     await User.findByIdAndUpdate(follower, {
       $inc: { followingCount: -1 },
     });
+
+    // clear cache
+    await clearFollowCache(userId, follower.toString());
 
     return res.status(200).json({
       success: true,
@@ -136,9 +143,18 @@ export const getFollowers = async (req: Request<Params>, res: Response) => {
 
     // if cursor exist fetch older data
     if (cursor) {
-      query._id = {
-        $lt: cursor,
-      };
+      query._id = { $lt: cursor };
+    }
+
+    // cache key
+    const cacheKey = `followers:${userId}:${cursor || "first"}:${limit}`;
+
+    // get from cache
+    try {
+      const cachedFollowers = await getCache(cacheKey);
+      if (cachedFollowers) return res.status(200).json(cachedFollowers);
+    } catch (err: any) {
+      console.log(`Cache error in getFollowers! ${err.message}`);
     }
     // followers list
     const followers = await Follow.find({
@@ -166,13 +182,22 @@ export const getFollowers = async (req: Request<Params>, res: Response) => {
       following: userId,
     });
 
-    return res.status(200).json({
+    const responseData = {
       success: true,
       followersCount,
       followers,
       nextCursor,
       hasMore,
-    });
+    };
+
+    // set cache
+    try {
+      await setCache(cacheKey, responseData, 60);
+    } catch (err: any) {
+      console.log(`Cache set error in getFollowers! ${err.message}`);
+    }
+
+    return res.status(200).json(responseData);
   } catch (err: any) {
     console.log(`Error in getFollowers controller! ${err.message}`);
 
@@ -205,9 +230,18 @@ export const getFollowing = async (req: Request<Params>, res: Response) => {
 
     // if cursor exists fetch old data
     if (cursor) {
-      query._id = {
-        $lt: cursor,
-      };
+      query._id = { $lt: cursor };
+    }
+
+    // cache key
+    const cacheKey = `following:${userId}:${cursor || "first"}:${limit}`;
+
+    // get from cache
+    try {
+      const cachedFollowing = await getCache(cacheKey);
+      if (cachedFollowing) return res.status(200).json(cachedFollowing);
+    } catch (err: any) {
+      console.log(`Cache error in getFollowing! ${err.message}`);
     }
 
     // following list
@@ -236,13 +270,22 @@ export const getFollowing = async (req: Request<Params>, res: Response) => {
     // next cursor
     const nextCursor = following[following.length - 1]?._id || null;
 
-    return res.status(200).json({
+    const responseData = {
       success: true,
       followingCount,
       following,
       nextCursor,
       hasMore,
-    });
+    };
+
+    // set cache
+    try {
+      await setCache(cacheKey, responseData, 60);
+    } catch (err: any) {
+      console.log(`Cache set error in getFollowing! ${err.message}`);
+    }
+
+    return res.status(200).json(responseData);
   } catch (err: any) {
     console.log(`Error in getFollowing controller! ${err.message}`);
 

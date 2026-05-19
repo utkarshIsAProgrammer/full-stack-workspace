@@ -15,6 +15,8 @@ import { repostRoutes } from "./routes/repost.routes";
 const app = express();
 const port = process.env.PORT || 5000;
 
+app.set("trust proxy", 1);
+
 app.use(express.json());
 app.use(cookieParser());
 
@@ -39,9 +41,17 @@ connectDB().then(() => {
 
 /* 
 ! --- ADD ---
-! CURSOR PAGING
-! PERFORMANCE OPTIMIZATIONS
+! RATELIMITING USING EXPRESS-RATE-LIMIT (KEEPING IT SIMPLE)
+! REDIS CACHING FOR ALL GET REQUESTS
+* NOTE: CACHING NOTE VERY CLEAR YET, BUT CAN BE IMPLEMENTED WITH SOME STRUGGLE AND AI HELP 
 
 ! --- FIX ---
 ! PROBLEMS IN EACH CONTROLLERS THAT MIGHT BREAK IN SOME CASES
+! "blobBlogs" IS NOW "Orbit"
+ */
+
+/* 
+TODO: 
+* 1. image optimization
+* 2. search (user/post)
  */

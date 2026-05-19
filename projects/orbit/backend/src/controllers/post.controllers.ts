@@ -1,8 +1,9 @@
 import mongoose from "mongoose";
 import type { Request, Response } from "express";
 import Post from "../models/post.model";
-import { createPostSchema, updatePostSchema } from "../schemas/post.schema";
+import { createPostSchema } from "../schemas/post.schema";
 import cloudinary from "../configs/cloudinary";
+import { getCache, setCache, deleteCache, clearFeedCache } from "../configs/cache";
 
 type Params = {
   postId: string;
@@ -21,8 +22,22 @@ export const getPost = async (req: Request<Params>, res: Response) => {
       });
     }
 
+    // cache key
+    const cacheKey = `post:${postId}`;
+
+    // get cached post
+    try {
+      const cachedPost = await getCache(cacheKey);
+
+      if (cachedPost) {
+        return res.status(200).json(cachedPost);
+      }
+    } catch (cacheError: any) {
+      console.log(`Cache error in getPost controller! ${cacheError.message}`);
+    }
+
     // fetch post
-    const post = await Post.findOne({ _id: postId })
+    const post = await Post.findById(postId)
       .populate("author", "username email")
       .lean();
 
@@ -34,14 +49,30 @@ export const getPost = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    res.status(200).json({
+    // response data
+    const responseData = {
       success: true,
       message: "Post fetched successfully!",
       post,
-    });
+    };
+
+    // cache post
+    try {
+      await setCache(cacheKey, responseData, 60 * 5);
+    } catch (cacheError: any) {
+      console.log(
+        `Cache set error in getPost controller! ${cacheError.message}`,
+      );
+    }
+
+    return res.status(200).json(responseData);
   } catch (err: any) {
-    console.log(`Error in the getPost controller! ${err.message}`);
-    res.status(500).json({ message: "Internal server error!" });
+    console.log(`Error in getPost controller! ${err.message}`);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error!",
+    });
   }
 };
 
@@ -50,25 +81,43 @@ export const getAllPosts = async (req: Request, res: Response) => {
   try {
     // pagination
     const limit = Math.min(Number(req.query.limit) || 10, 20);
+
     const cursor = req.query.cursor as string;
 
+    // query
     const query: any = {};
 
-    // if cursor exists fetch older posts
+    // cursor pagination
     if (cursor) {
       query._id = {
         $lt: cursor,
       };
     }
 
-    // fetch all posts
+    // cache key
+    const cacheKey = `posts:${cursor || "first"}:${limit}`;
+
+    // get cached posts
+    try {
+      const cachedPosts = await getCache(cacheKey);
+
+      if (cachedPosts) {
+        return res.status(200).json(cachedPosts);
+      }
+    } catch (cacheError: any) {
+      console.log(
+        `Cache error in getAllPosts controller! ${cacheError.message}`,
+      );
+    }
+
+    // fetch posts
     const posts = await Post.find(query)
-      .sort({ _id: -1 }) /// newest first
-      .limit(limit + 1) // an extra post for "hasMore"
+      .sort({ _id: -1 })
+      .limit(limit + 1)
       .populate("author", "username email")
       .lean();
 
-    // check more post exists
+    // check more posts
     const hasMore = posts.length > limit;
 
     // remove extra post
@@ -76,27 +125,37 @@ export const getAllPosts = async (req: Request, res: Response) => {
       posts.pop();
     }
 
-    // check empty list (post)
-    if (posts.length === 0) {
-      return res.status(200).json({
-        success: true,
-        message: "No posts yet!",
-      });
-    }
-
     // next cursor
     const nextCursor = posts[posts.length - 1]?._id || null;
 
-    return res.status(200).json({
+    // response data
+    const responseData = {
       success: true,
-      message: "All posts fetched successfully!",
+      message: posts.length
+        ? "All posts fetched successfully!"
+        : "No posts yet!",
       posts,
       nextCursor,
       hasMore,
-    });
+    };
+
+    // cache posts
+    try {
+      await setCache(cacheKey, responseData, 60);
+    } catch (cacheError: any) {
+      console.log(
+        `Cache set error in getAllPosts controller! ${cacheError.message}`,
+      );
+    }
+
+    return res.status(200).json(responseData);
   } catch (err: any) {
-    console.log(`Error in the getAllPosts controller! ${err.message}`);
-    res.status(500).json({ message: "Internal server error!" });
+    console.log(`Error in getAllPosts controller! ${err.message}`);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error!",
+    });
   }
 };
 
@@ -105,7 +164,7 @@ export const createPost = async (req: Request, res: Response) => {
   const result = createPostSchema.safeParse(req.body);
 
   try {
-    // check validation
+    // validate input
     if (!result.success) {
       return res.status(400).json({
         success: false,
@@ -114,8 +173,9 @@ export const createPost = async (req: Request, res: Response) => {
       });
     }
 
-    // check user auth
+    // auth check
     const author = (req as any).user?._id;
+
     if (!author) {
       return res.status(401).json({
         success: false,
@@ -123,18 +183,24 @@ export const createPost = async (req: Request, res: Response) => {
       });
     }
 
-    // create post object
+    // create post
     const post = new Post({
       ...result.data,
       author,
-      image: {
-        url: req.file?.path || "",
-        public_id: req.file?.filename || "",
-      },
+
+      image: req.file
+        ? {
+            url: req.file.path,
+            public_id: (req.file as any).filename,
+          }
+        : undefined,
     });
 
     // save post
     await post.save();
+
+    // invalidate feed cache
+    await clearFeedCache();
 
     return res.status(201).json({
       success: true,
@@ -142,21 +208,27 @@ export const createPost = async (req: Request, res: Response) => {
       post,
     });
   } catch (err: any) {
+    // duplicate slug
     if (err.code === 11000) {
       return res.status(409).json({
         success: false,
-        message: "Duplicate slug, try different title",
+        message: "Duplicate slug, try different title!",
       });
     }
 
-    console.log(`Error in the createPost controller! ${err.message}`);
-    res.status(500).json({ message: "Internal server error!" });
+    console.log(`Error in createPost controller! ${err.message}`);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error!",
+    });
   }
 };
 
 // update existing post
 export const updatePost = async (req: Request<Params>, res: Response) => {
   const { postId } = req.params;
+
   const userId = (req as any).user?._id;
 
   try {
@@ -178,6 +250,7 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
 
     // find post
     const post = await Post.findById(postId);
+
     if (!post) {
       return res.status(404).json({
         success: false,
@@ -193,30 +266,39 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // normalize form-data values
+    // normalize input
     const title = req.body.title?.trim();
+
     const content = req.body.content?.trim();
+
     const file = req.file;
 
-    // ensure at least one update exists
+    // ensure update exists
     const hasText =
       (title && title.length > 0) || (content && content.length > 0);
+
     const hasImage = !!file;
 
     if (!hasText && !hasImage) {
       return res.status(400).json({
         success: false,
-        message: "At least one of title, content, or image must be provided!",
+        message: "At least one field is required!",
       });
     }
 
-    // update text fields
-    if (title) post.title = title;
-    if (content) post.content = content;
+    // update title
+    if (title) {
+      post.title = title;
+    }
 
-    // update image if provided
+    // update content
+    if (content) {
+      post.content = content;
+    }
+
+    // update image
     if (file) {
-      // delete old image from cloudinary
+      // delete old image
       if (post.image?.public_id) {
         await cloudinary.uploader.destroy(post.image.public_id);
       }
@@ -227,7 +309,12 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
       };
     }
 
+    // save
     await post.save();
+
+    // invalidate cache
+    await deleteCache(`post:${postId}`);
+    await clearFeedCache();
 
     return res.status(200).json({
       success: true,
@@ -236,7 +323,9 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     console.log(`Error in updatePost controller! ${err.message}`);
+
     return res.status(500).json({
+      success: false,
       message: "Internal server error!",
     });
   }
@@ -245,6 +334,7 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
 // delete post
 export const deletePost = async (req: Request<Params>, res: Response) => {
   const { postId } = req.params;
+
   const userId = (req as any).user?._id;
 
   try {
@@ -256,7 +346,7 @@ export const deletePost = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // check user auth
+    // auth check
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -266,6 +356,7 @@ export const deletePost = async (req: Request<Params>, res: Response) => {
 
     // find post
     const post = await Post.findById(postId);
+
     if (!post) {
       return res.status(404).json({
         success: false,
@@ -273,7 +364,7 @@ export const deletePost = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // verify ownership
+    // ownership check
     if (post.author.toString() !== userId.toString()) {
       return res.status(403).json({
         success: false,
@@ -281,23 +372,29 @@ export const deletePost = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // delete cloudinary image
+    // delete image
     if (post.image?.public_id) {
       await cloudinary.uploader.destroy(post.image.public_id);
     }
 
-    console.log("PUBLIC_ID:", post.image?.public_id);
-
     // delete post
     await post.deleteOne();
 
-    res.status(200).json({
+    // invalidate cache
+    await deleteCache(`post:${postId}`);
+    await clearFeedCache();
+
+    return res.status(200).json({
       success: true,
       message: "Post deleted successfully!",
     });
   } catch (err: any) {
-    console.log(`Error in the deletePost controller! ${err.message}`);
-    res.status(500).json({ message: "Internal server error!" });
+    console.log(`Error in deletePost controller! ${err.message}`);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error!",
+    });
   }
 };
 
@@ -310,7 +407,7 @@ export const sharePost = async (req: Request<Params>, res: Response) => {
     if (!mongoose.Types.ObjectId.isValid(postId)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid post Id!",
+        message: "Invalid post ID!",
       });
     }
 
@@ -318,11 +415,16 @@ export const sharePost = async (req: Request<Params>, res: Response) => {
     const post = await Post.findByIdAndUpdate(
       postId,
       {
-        $inc: { sharesCount: 1 },
+        $inc: {
+          sharesCount: 1,
+        },
       },
+      {
+        new: true,
+      },
+    ).select("sharesCount slug");
 
-      { new: true },
-    );
+    // check existence
     if (!post) {
       return res.status(404).json({
         success: false,
@@ -330,39 +432,49 @@ export const sharePost = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // generate url
+    // invalidate cache
+    await deleteCache(`post:${postId}`);
+
+    // share url
     const shareUrl = `${process.env.CLIENT_URL}/post/${post.slug}`;
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Post shared successfully!",
       shares: post.sharesCount,
       shareUrl,
     });
   } catch (err: any) {
-    console.log(`Error in the share post controller! ${err.message}`);
-    res.status(500).json({ message: "Internal server error!" });
+    console.log(`Error in sharePost controller! ${err.message}`);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error!",
+    });
   }
 };
 
-// view post count
+// increment post views
 export const viewsCount = async (req: Request<Params>, res: Response) => {
   const { postId } = req.params;
+
   const currentUser = (req as any).user?._id;
 
   try {
-    // validate post
+    // validate id
     if (!mongoose.Types.ObjectId.isValid(postId)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid post Id!",
+        message: "Invalid post ID!",
       });
     }
 
-    // check post exists
+    // fetch minimal fields
     const post = await Post.findById(postId)
       .select("_id author viewsCount")
       .lean();
+
+    // check existence
     if (!post) {
       return res.status(404).json({
         success: false,
@@ -370,7 +482,7 @@ export const viewsCount = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // prevent self views count
+    // ignore self views
     if (currentUser && post.author.toString() === currentUser.toString()) {
       return res.status(200).json({
         success: true,
@@ -379,23 +491,32 @@ export const viewsCount = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // increment views count
+    // increment views
     const updatedPost = await Post.findByIdAndUpdate(
       postId,
       {
-        $inc: { viewsCount: 1 },
+        $inc: {
+          viewsCount: 1,
+        },
       },
-      { new: true },
-    );
+      {
+        new: true,
+      },
+    ).select("viewsCount");
 
-    res.status(200).json({
+    // invalidate cache
+    await deleteCache(`post:${postId}`);
+
+    return res.status(200).json({
       success: true,
       message: "View counted successfully!",
       views: updatedPost?.viewsCount,
     });
   } catch (err: any) {
-    console.log(`Error in the viewsCount controller! ${err.message}`);
-    res.status(500).json({
+    console.log(`Error in viewsCount controller! ${err.message}`);
+
+    return res.status(500).json({
+      success: false,
       message: "Internal server error!",
     });
   }

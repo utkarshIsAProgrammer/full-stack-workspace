@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { User } from "../models/user.model";
 import { deleteAccountSchema } from "../schemas/user.schema";
 import { sendDeletionMail } from "../configs/nodeMailer";
+import { getCache, setCache, clearUsersCache } from "../configs/cache";
 
 type Params = {
   userId: string;
@@ -20,9 +21,18 @@ export const getAll = async (req: Request, res: Response) => {
 
     // if cursor exists fetch older user
     if (cursor) {
-      query_id: {
-        $lt: cursor;
-      }
+      query._id = { $lt: cursor };
+    }
+
+    // cache key
+    const cacheKey = `users:${cursor || "first"}:${limit}`;
+
+    // get from cache
+    try {
+      const cachedUsers = await getCache(cacheKey);
+      if (cachedUsers) return res.status(200).json(cachedUsers);
+    } catch (err: any) {
+      console.log(`Cache error in getAll users! ${err.message}`);
     }
 
     // fetch all users
@@ -52,13 +62,23 @@ export const getAll = async (req: Request, res: Response) => {
     // next cursor
     const nextCursor = users[users.length - 1]?._id || null;
 
-    return res.status(200).json({
+    // prepare response
+    const responseData = {
       success: true,
       message: "All users fetched successfully!",
       users,
       nextCursor,
       hasMore,
-    });
+    };
+
+    // set cache
+    try {
+      await setCache(cacheKey, responseData, 60);
+    } catch (err: any) {
+      console.log(`Cache set error in getAll users! ${err.message}`);
+    }
+
+    return res.status(200).json(responseData);
   } catch (err: any) {
     console.log(`Error in the getAll users controller! ${err.message}`);
     res.status(500).json({ message: "Internal server error!" });
@@ -97,6 +117,9 @@ export const deleteAccount = async (req: Request, res: Response) => {
     // get user id from the auth middleware
     const userId = req.user?._id;
     await User.findByIdAndDelete(userId);
+
+    // clear users cache
+    await clearUsersCache();
 
     // send account deletion email
     sendDeletionMail({
