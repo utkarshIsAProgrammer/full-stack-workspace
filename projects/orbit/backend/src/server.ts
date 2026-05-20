@@ -1,6 +1,9 @@
 import express from "express";
 import "dotenv/config";
+import cors from "cors";
+import helmet from "helmet";
 import cookieParser from "cookie-parser";
+import { validateEnv } from "./configs/env";
 import { connectDB } from "./db/db";
 import { authRoutes } from "./routes/auth.routes";
 import { passwordRoutes } from "./routes/password.routes";
@@ -12,13 +15,35 @@ import { followRoutes } from "./routes/follow.routes";
 import { saveRoutes } from "./routes/saves.routes";
 import { repostRoutes } from "./routes/repost.routes";
 import { searchRoutes } from "./routes/search.routes";
+import { notificationRoutes } from "./routes/notification.routes";
+
+const env = validateEnv();
 
 const app = express();
-const port = process.env.PORT || 5000;
+const port = env.PORT;
+const allowedOrigins = [env.CLIENT_URL];
 
 app.set("trust proxy", 1);
 
-app.use(express.json());
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  }),
+);
+
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  }),
+);
+app.use(express.json({ limit: "100kb" }));
 app.use(cookieParser());
 
 // api routes
@@ -32,21 +57,10 @@ app.use("/api/follows", followRoutes);
 app.use("/api/saves", saveRoutes);
 app.use("/api/reposts", repostRoutes);
 app.use("/api/search", searchRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 connectDB().then(() => {
   app.listen(port, () => {
     console.log(`Server is running on PORT: ${port}`);
   });
 });
-
-// ! BEN IS LOGGED IN
-
-/* 
-! --- ADD ---
-! SEARCH POST/PROFILE
- */
-
-/* 
-TODO: 
-* 1. USER PROFILE AND SYNC WITH SEARCH PROFILE
- */

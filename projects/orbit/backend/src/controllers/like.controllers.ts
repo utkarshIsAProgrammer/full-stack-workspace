@@ -4,6 +4,10 @@ import mongoose from "mongoose";
 import Post from "../models/post.model";
 import Comment from "../models/comment.model";
 import Like from "../models/like.model";
+import {
+  createNotification,
+  deleteInteractionNotification,
+} from "../utilities/notification";
 
 type Params = {
   postId: string;
@@ -36,7 +40,7 @@ export const togglePostLikes = async (req: Request<Params>, res: Response) => {
     }
 
     // find post
-    const post = await Post.findById(postId).select("_id").lean();
+    const post = await Post.findById(postId).select("_id author").lean();
 
     if (!post) {
       return res.status(404).json({
@@ -65,6 +69,14 @@ export const togglePostLikes = async (req: Request<Params>, res: Response) => {
         { new: true },
       );
 
+      // create notification
+      await createNotification({
+        recipient: post.author.toString(),
+        sender: author.toString(),
+        type: "like",
+        post: postId,
+      });
+
       return res.status(201).json({
         success: true,
         message: "Post liked successfully!",
@@ -74,8 +86,15 @@ export const togglePostLikes = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // unlike post
     await existingLike.deleteOne();
+
+    await deleteInteractionNotification({
+      recipient: post.author.toString(),
+      sender: author.toString(),
+      type: "like",
+      post: postId,
+      comment: null,
+    });
 
     // decrement likes count
     const updatedPost = await Post.findByIdAndUpdate(
@@ -126,7 +145,9 @@ export const toggleCommentLikes = async (
     }
 
     // find comment
-    const comment = await Comment.findById(commentId).select("_id").lean();
+    const comment = await Comment.findById(commentId)
+      .select("_id author post")
+      .lean();
 
     if (!comment) {
       return res.status(404).json({
@@ -155,6 +176,15 @@ export const toggleCommentLikes = async (
         { new: true },
       );
 
+      // create notification
+      await createNotification({
+        recipient: comment.author.toString(),
+        sender: author.toString(),
+        type: "like",
+        post: comment.post.toString(),
+        comment: commentId,
+      });
+
       return res.status(201).json({
         success: true,
         message: "Comment liked successfully!",
@@ -165,6 +195,14 @@ export const toggleCommentLikes = async (
     }
 
     await existingLike.deleteOne();
+
+    await deleteInteractionNotification({
+      recipient: comment.author.toString(),
+      sender: author.toString(),
+      type: "like",
+      post: comment.post.toString(),
+      comment: commentId,
+    });
 
     const updatedComment = await Comment.findByIdAndUpdate(
       commentId,

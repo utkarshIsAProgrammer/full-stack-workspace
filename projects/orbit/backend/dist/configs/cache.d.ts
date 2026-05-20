@@ -6,4 +6,5 @@ export declare const clearUsersCache: () => Promise<void>;
 export declare const clearCommentsCache: (postId: string) => Promise<void>;
 export declare const clearFollowCache: (userId: string, followerId: string) => Promise<void>;
 export declare const clearSavesCache: (userId: string) => Promise<void>;
+export declare const clearAllSavesCache: () => Promise<void>;
 //# sourceMappingURL=cache.d.ts.map

@@ -2,13 +2,17 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import Repost from "../models/repost.model";
 import Post from "../models/post.model";
+import {
+  createNotification,
+  deleteInteractionNotification,
+} from "../utilities/notification";
 
 type Params = {
   postId: string;
 };
 
 export const toggleRepost = async (req: Request<Params>, res: Response) => {
-  const userId = (req as any).user?._id;
+  const userId = req.user?._id;
   const { postId } = req.params;
 
   try {
@@ -56,6 +60,13 @@ export const toggleRepost = async (req: Request<Params>, res: Response) => {
     if (existingRepost) {
       await existingRepost.deleteOne();
 
+      await deleteInteractionNotification({
+        recipient: post.author.toString(),
+        sender: userId.toString(),
+        type: "repost",
+        post: postId,
+      });
+
       const updatedPost = await Post.findByIdAndUpdate(
         postId,
         { $inc: { repostsCount: -1 } },
@@ -84,6 +95,13 @@ export const toggleRepost = async (req: Request<Params>, res: Response) => {
       { new: true },
     );
 
+    await createNotification({
+      recipient: post.author.toString(),
+      sender: userId.toString(),
+      type: "repost",
+      post: postId,
+    });
+
     return res.status(201).json({
       success: true,
       message: "Repost created!",
@@ -95,7 +113,6 @@ export const toggleRepost = async (req: Request<Params>, res: Response) => {
     console.log(`Error in toggleRepost controller! ${err.message}`);
 
     return res.status(500).json({
-      success: false,
       message: "Internal server error!",
     });
   }

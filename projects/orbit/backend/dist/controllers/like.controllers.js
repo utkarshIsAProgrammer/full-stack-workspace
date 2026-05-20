@@ -8,6 +8,7 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const post_model_1 = __importDefault(require("../models/post.model"));
 const comment_model_1 = __importDefault(require("../models/comment.model"));
 const like_model_1 = __importDefault(require("../models/like.model"));
+const notification_1 = require("../utilities/notification");
 // toggle like for a post
 const togglePostLikes = async (req, res) => {
     const author = req.user?._id;
@@ -28,7 +29,7 @@ const togglePostLikes = async (req, res) => {
             });
         }
         // find post
-        const post = await post_model_1.default.findById(postId).select("_id").lean();
+        const post = await post_model_1.default.findById(postId).select("_id author").lean();
         if (!post) {
             return res.status(404).json({
                 success: false,
@@ -48,6 +49,13 @@ const togglePostLikes = async (req, res) => {
             });
             // increment likes count
             const updatedPost = await post_model_1.default.findByIdAndUpdate(postId, { $inc: { likesCount: 1 } }, { new: true });
+            // create notification
+            await (0, notification_1.createNotification)({
+                recipient: post.author.toString(),
+                sender: author.toString(),
+                type: "like",
+                post: postId,
+            });
             return res.status(201).json({
                 success: true,
                 message: "Post liked successfully!",
@@ -56,8 +64,14 @@ const togglePostLikes = async (req, res) => {
                 post: updatedPost,
             });
         }
-        // unlike post
         await existingLike.deleteOne();
+        await (0, notification_1.deleteInteractionNotification)({
+            recipient: post.author.toString(),
+            sender: author.toString(),
+            type: "like",
+            post: postId,
+            comment: null,
+        });
         // decrement likes count
         const updatedPost = await post_model_1.default.findByIdAndUpdate(postId, { $inc: { likesCount: -1 } }, { new: true });
         return res.status(200).json({
@@ -96,7 +110,9 @@ const toggleCommentLikes = async (req, res) => {
             });
         }
         // find comment
-        const comment = await comment_model_1.default.findById(commentId).select("_id").lean();
+        const comment = await comment_model_1.default.findById(commentId)
+            .select("_id author post")
+            .lean();
         if (!comment) {
             return res.status(404).json({
                 success: false,
@@ -116,6 +132,14 @@ const toggleCommentLikes = async (req, res) => {
             });
             // increment likes count
             const updatedComment = await comment_model_1.default.findByIdAndUpdate(commentId, { $inc: { likesCount: 1 } }, { new: true });
+            // create notification
+            await (0, notification_1.createNotification)({
+                recipient: comment.author.toString(),
+                sender: author.toString(),
+                type: "like",
+                post: comment.post.toString(),
+                comment: commentId,
+            });
             return res.status(201).json({
                 success: true,
                 message: "Comment liked successfully!",
@@ -125,6 +149,13 @@ const toggleCommentLikes = async (req, res) => {
             });
         }
         await existingLike.deleteOne();
+        await (0, notification_1.deleteInteractionNotification)({
+            recipient: comment.author.toString(),
+            sender: author.toString(),
+            type: "like",
+            post: comment.post.toString(),
+            comment: commentId,
+        });
         const updatedComment = await comment_model_1.default.findByIdAndUpdate(commentId, { $inc: { likesCount: -1 } }, { new: true });
         return res.status(200).json({
             success: true,

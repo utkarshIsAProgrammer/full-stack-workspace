@@ -220,7 +220,6 @@ export const shareProfile = async (req: Request<Params>, res: Response) => {
   } catch (err: any) {
     console.log(`Error in the shareProfile controller! ${err.message}`);
     res.status(500).json({
-      success: false,
       message: "Internal server error!",
     });
   }
@@ -228,7 +227,7 @@ export const shareProfile = async (req: Request<Params>, res: Response) => {
 
 export const viewsCount = async (req: Request<Params>, res: Response) => {
   const { userId } = req.params;
-  const currentUser = (req as any).user?._id;
+  const currentUser = req.user?._id;
 
   try {
     // validate post
@@ -274,7 +273,6 @@ export const viewsCount = async (req: Request<Params>, res: Response) => {
   } catch (err: any) {
     console.log(`Error in the viewsCount controller! ${err.message}`);
     res.status(500).json({
-      success: false,
       message: "Internal server error!",
     });
   }

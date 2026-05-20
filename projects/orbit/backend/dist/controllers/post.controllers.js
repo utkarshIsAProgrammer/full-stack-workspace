@@ -6,6 +6,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.viewsCount = exports.sharePost = exports.deletePost = exports.updatePost = exports.createPost = exports.getAllPosts = exports.getPost = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const post_model_1 = __importDefault(require("../models/post.model"));
+const comment_model_1 = __importDefault(require("../models/comment.model"));
+const like_model_1 = __importDefault(require("../models/like.model"));
+const repost_model_1 = __importDefault(require("../models/repost.model"));
+const saves_model_1 = __importDefault(require("../models/saves.model"));
+const notification_model_1 = __importDefault(require("../models/notification.model"));
 const post_schema_1 = require("../schemas/post.schema");
 const cloudinary_1 = __importDefault(require("../configs/cloudinary"));
 const cache_1 = require("../configs/cache");
@@ -61,7 +66,6 @@ const getPost = async (req, res) => {
     catch (err) {
         console.log(`Error in getPost controller! ${err.message}`);
         return res.status(500).json({
-            success: false,
             message: "Internal server error!",
         });
     }
@@ -129,7 +133,6 @@ const getAllPosts = async (req, res) => {
     catch (err) {
         console.log(`Error in getAllPosts controller! ${err.message}`);
         return res.status(500).json({
-            success: false,
             message: "Internal server error!",
         });
     }
@@ -186,7 +189,6 @@ const createPost = async (req, res) => {
         }
         console.log(`Error in createPost controller! ${err.message}`);
         return res.status(500).json({
-            success: false,
             message: "Internal server error!",
         });
     }
@@ -272,7 +274,6 @@ const updatePost = async (req, res) => {
     catch (err) {
         console.log(`Error in updatePost controller! ${err.message}`);
         return res.status(500).json({
-            success: false,
             message: "Internal server error!",
         });
     }
@@ -312,15 +313,27 @@ const deletePost = async (req, res) => {
                 message: "Forbidden!",
             });
         }
-        // delete image
+        const comments = await comment_model_1.default.find({ post: postId }).select("_id").lean();
+        const commentIds = comments.map((c) => c._id);
+        await Promise.all([
+            comment_model_1.default.deleteMany({ post: postId }),
+            like_model_1.default.deleteMany({
+                $or: [{ post: postId }, { comment: { $in: commentIds } }],
+            }),
+            repost_model_1.default.deleteMany({ post: postId }),
+            saves_model_1.default.deleteMany({ post: postId }),
+            notification_model_1.default.deleteMany({
+                $or: [{ post: postId }, { comment: { $in: commentIds } }],
+            }),
+        ]);
         if (post.image?.public_id) {
             await cloudinary_1.default.uploader.destroy(post.image.public_id);
         }
-        // delete post
         await post.deleteOne();
-        // invalidate cache
         await (0, cache_1.deleteCache)(`post:${postId}`);
         await (0, cache_1.clearFeedCache)();
+        await (0, cache_1.clearCommentsCache)(postId);
+        await (0, cache_1.clearAllSavesCache)();
         return res.status(200).json({
             success: true,
             message: "Post deleted successfully!",
@@ -329,7 +342,6 @@ const deletePost = async (req, res) => {
     catch (err) {
         console.log(`Error in deletePost controller! ${err.message}`);
         return res.status(500).json({
-            success: false,
             message: "Internal server error!",
         });
     }
@@ -375,7 +387,6 @@ const sharePost = async (req, res) => {
     catch (err) {
         console.log(`Error in sharePost controller! ${err.message}`);
         return res.status(500).json({
-            success: false,
             message: "Internal server error!",
         });
     }
@@ -431,7 +442,6 @@ const viewsCount = async (req, res) => {
     catch (err) {
         console.log(`Error in viewsCount controller! ${err.message}`);
         return res.status(500).json({
-            success: false,
             message: "Internal server error!",
         });
     }

@@ -3,6 +3,10 @@ import mongoose from "mongoose";
 import Post from "../models/post.model";
 import Save from "../models/saves.model";
 import { getCache, setCache, clearSavesCache } from "../configs/cache";
+import {
+  createNotification,
+  deleteInteractionNotification,
+} from "../utilities/notification";
 
 type Params = {
   postId: string;
@@ -10,7 +14,7 @@ type Params = {
 
 export const toggleSavePost = async (req: Request<Params>, res: Response) => {
   const { postId } = req.params;
-  const userId = (req as any).user?._id;
+  const userId = req.user?._id;
 
   try {
     //  check user auth
@@ -27,7 +31,7 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
     }
 
     // check post exists
-    const post = await Post.findById(postId).select("_id").lean();
+    const post = await Post.findById(postId).select("_id author").lean();
     if (!post) {
       return res.status(404).json({
         success: false,
@@ -45,6 +49,13 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
     if (alreadySaved) {
       await alreadySaved.deleteOne();
 
+      await deleteInteractionNotification({
+        recipient: post.author.toString(),
+        sender: userId.toString(),
+        type: "save",
+        post: postId,
+      });
+
       // decrement saves count
       const updatedPost = await Post.findByIdAndUpdate(
         postId,
@@ -53,7 +64,7 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
       );
 
       // clear cache
-      await clearSavesCache(userId);
+      await clearSavesCache(userId.toString());
 
       return res.status(200).json({
         success: true,
@@ -70,15 +81,20 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
       post: postId,
     });
 
-    // increment saves count
     const updatedPost = await Post.findByIdAndUpdate(
       postId,
       { $inc: { savesCount: 1 } },
       { new: true },
     );
 
-    // clear cache
-    await clearSavesCache(userId);
+    await createNotification({
+      recipient: post.author.toString(),
+      sender: userId.toString(),
+      type: "save",
+      post: postId,
+    });
+
+    await clearSavesCache(userId.toString());
 
     res.status(201).json({
       success: true,
@@ -89,12 +105,12 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     console.log(`Error in the toggleSavePost controller! ${err.message}`);
-    res.status(500).json({ success: true, message: "Internal server error!" });
+    res.status(500).json({ message: "Internal server error!" });
   }
 };
 
 export const getSavedPosts = async (req: Request, res: Response) => {
-  const userId = (req as any).user?._id;
+  const userId = req.user?._id;
 
   try {
     //  check user auth
@@ -186,6 +202,6 @@ export const getSavedPosts = async (req: Request, res: Response) => {
     res.status(200).json(responseData);
   } catch (err: any) {
     console.log(`Error in the getSavedPosts controller! ${err.message}`);
-    res.status(500).json({ success: false, message: "Internal server error!" });
+    res.status(500).json({ message: "Internal server error!" });
   }
 };

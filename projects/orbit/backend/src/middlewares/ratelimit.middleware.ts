@@ -43,3 +43,14 @@ export const interactionLimiter = rateLimit({
     message: "Too many actions performed. Please try after some time.",
   },
 });
+
+// notification read limiter
+export const notificationLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+
+  message: {
+    success: false,
+    message: "Too many notification requests. Please try after some time.",
+  },
+});

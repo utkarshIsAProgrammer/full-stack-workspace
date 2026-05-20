@@ -3,6 +3,10 @@ import mongoose from "mongoose";
 import { User } from "../models/user.model";
 import Follow from "../models/follow.model";
 import { getCache, setCache, clearFollowCache } from "../configs/cache";
+import {
+  createNotification,
+  deleteInteractionNotification,
+} from "../utilities/notification";
 
 type Params = {
   userId: string;
@@ -75,6 +79,12 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
         $inc: { followingCount: 1 },
       });
 
+      await createNotification({
+        recipient: userId,
+        sender: follower.toString(),
+        type: "follow",
+      });
+
       // clear cache
       await clearFollowCache(userId, follower.toString());
 
@@ -87,8 +97,13 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // unfollow
     await existingFollow.deleteOne();
+
+    await deleteInteractionNotification({
+      recipient: userId,
+      sender: follower.toString(),
+      type: "follow",
+    });
 
     const updatedTargetUser = await User.findByIdAndUpdate(
       userId,
@@ -115,7 +130,6 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
     console.log(`Error in the toggleFollowUser controller! ${err.message}`);
 
     return res.status(500).json({
-      success: false,
       message: "Internal Server Error!",
     });
   }
@@ -202,7 +216,6 @@ export const getFollowers = async (req: Request<Params>, res: Response) => {
     console.log(`Error in getFollowers controller! ${err.message}`);
 
     return res.status(500).json({
-      success: false,
       message: "Internal Server Error!",
     });
   }
@@ -290,7 +303,6 @@ export const getFollowing = async (req: Request<Params>, res: Response) => {
     console.log(`Error in getFollowing controller! ${err.message}`);
 
     return res.status(500).json({
-      success: false,
       message: "Internal Server Error!",
     });
   }

@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.interactionLimiter = exports.commentLimiter = exports.otpLimiter = exports.authLimiter = void 0;
+exports.notificationLimiter = exports.interactionLimiter = exports.commentLimiter = exports.otpLimiter = exports.authLimiter = void 0;
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 // auth limiter
 exports.authLimiter = (0, express_rate_limit_1.default)({
@@ -39,6 +39,15 @@ exports.interactionLimiter = (0, express_rate_limit_1.default)({
     message: {
         success: false,
         message: "Too many actions performed. Please try after some time.",
+    },
+});
+// notification read limiter
+exports.notificationLimiter = (0, express_rate_limit_1.default)({
+    windowMs: 60 * 1000,
+    max: 60,
+    message: {
+        success: false,
+        message: "Too many notification requests. Please try after some time.",
     },
 });
 //# sourceMappingURL=ratelimit.middleware.js.map

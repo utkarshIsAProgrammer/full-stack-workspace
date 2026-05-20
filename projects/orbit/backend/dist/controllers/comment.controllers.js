@@ -7,8 +7,11 @@ exports.deleteComment = exports.updateComment = exports.addComment = exports.get
 const mongoose_1 = __importDefault(require("mongoose"));
 const comment_model_1 = __importDefault(require("../models/comment.model"));
 const post_model_1 = __importDefault(require("../models/post.model"));
+const like_model_1 = __importDefault(require("../models/like.model"));
+const notification_model_1 = __importDefault(require("../models/notification.model"));
 const comment_schema_1 = require("../schemas/comment.schema");
 const cache_1 = require("../configs/cache");
+const notification_1 = require("../utilities/notification");
 // Get all comments for a specific post
 const getComment = async (req, res) => {
     const { postId } = req.params;
@@ -102,8 +105,11 @@ const addComment = async (req, res) => {
         }
         // check for parent comment (is reply)
         const parent = result.data.parent;
+        let parentComment = null;
         if (parent) {
-            const parentComment = await comment_model_1.default.findById(parent).select("_id").lean();
+            parentComment = await comment_model_1.default.findById(parent)
+                .select("_id author")
+                .lean();
             if (!parentComment) {
                 return res.status(404).json({
                     success: false,
@@ -120,9 +126,25 @@ const addComment = async (req, res) => {
         const comment = new comment_model_1.default({ ...result.data, author, post: postId });
         await comment.save();
         // increment comments count
-        await post_model_1.default.findByIdAndUpdate(postId, {
+        const postData = await post_model_1.default.findByIdAndUpdate(postId, {
             $inc: { commentsCount: 1 },
         });
+        const notifyRecipients = new Set();
+        if (postData) {
+            notifyRecipients.add(postData.author.toString());
+        }
+        if (parentComment) {
+            notifyRecipients.add(parentComment.author.toString());
+        }
+        for (const recipient of notifyRecipients) {
+            await (0, notification_1.createNotification)({
+                recipient,
+                sender: author.toString(),
+                type: "comment",
+                post: postId,
+                comment: comment._id.toString(),
+            });
+        }
         // clear cache
         await (0, cache_1.clearCommentsCache)(postId);
         res.status(201).json({
@@ -191,6 +213,14 @@ const updateComment = async (req, res) => {
     }
 };
 exports.updateComment = updateComment;
+const collectDescendantCommentIds = async (commentId) => {
+    const replies = await comment_model_1.default.find({ parent: commentId }).select("_id").lean();
+    const ids = [commentId];
+    for (const reply of replies) {
+        ids.push(...(await collectDescendantCommentIds(reply._id.toString())));
+    }
+    return ids;
+};
 // delete comment
 const deleteComment = async (req, res) => {
     const author = req.user?._id;
@@ -217,12 +247,15 @@ const deleteComment = async (req, res) => {
                 message: "Forbidden!",
             });
         }
-        // decrement comments count
+        const commentIds = await collectDescendantCommentIds(commentId);
+        await Promise.all([
+            comment_model_1.default.deleteMany({ _id: { $in: commentIds } }),
+            like_model_1.default.deleteMany({ comment: { $in: commentIds } }),
+            notification_model_1.default.deleteMany({ comment: { $in: commentIds } }),
+        ]);
         await post_model_1.default.findByIdAndUpdate(comment.post, {
-            $inc: { commentsCount: -1 },
+            $inc: { commentsCount: -commentIds.length },
         });
-        // delete comment
-        await comment.deleteOne();
         // clear cache
         if (comment.post)
             await (0, cache_1.clearCommentsCache)(comment.post.toString());

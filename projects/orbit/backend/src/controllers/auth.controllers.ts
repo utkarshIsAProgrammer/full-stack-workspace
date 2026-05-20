@@ -65,6 +65,11 @@ export const signup = async (req: Request, res: Response) => {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 
+    void sendWelcomeMail({
+      email: user.email,
+      username: user.username,
+    });
+
     return res.status(201).json({
       success: true,
       message: "User created successfully!",
@@ -81,12 +86,6 @@ export const signup = async (req: Request, res: Response) => {
         followingCount: user.followingCount,
         createdAt: user.createdAt,
       },
-    });
-
-    // send welcome email
-    sendWelcomeMail({
-      email: user.email,
-      username: user.username,
     });
   } catch (err: any) {
     if (req.file) {
@@ -128,10 +127,7 @@ export const login = async (req: Request, res: Response) => {
         });
       } catch (err: any) {
         console.log(`Invalid/expired token! ${err.message}`);
-        return res.status(401).json({
-          success: false,
-          message: "Invalid/expired token!",
-        });
+        res.clearCookie("jwt", cookieOptions);
       }
     }
 
@@ -189,7 +185,6 @@ export const login = async (req: Request, res: Response) => {
     console.log(`Error in the login controller! ${err.message}`);
 
     return res.status(500).json({
-      success: false,
       message: "Internal server error!",
     });
   }

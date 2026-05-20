@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.clearSavesCache = exports.clearFollowCache = exports.clearCommentsCache = exports.clearUsersCache = exports.clearFeedCache = exports.deleteCache = exports.setCache = exports.getCache = void 0;
+exports.clearAllSavesCache = exports.clearSavesCache = exports.clearFollowCache = exports.clearCommentsCache = exports.clearUsersCache = exports.clearFeedCache = exports.deleteCache = exports.setCache = exports.getCache = void 0;
 const redis_1 = require("./redis");
 // get data from cache
 const getCache = async (key) => {
@@ -58,4 +58,11 @@ const clearSavesCache = async (userId) => {
         await redis_1.redis.del(...keys);
 };
 exports.clearSavesCache = clearSavesCache;
+// clear all saved-posts list caches (e.g. after a post is deleted)
+const clearAllSavesCache = async () => {
+    const keys = await redis_1.redis.keys("saves:*");
+    if (keys.length > 0)
+        await redis_1.redis.del(...keys);
+};
+exports.clearAllSavesCache = clearAllSavesCache;
 //# sourceMappingURL=cache.js.map

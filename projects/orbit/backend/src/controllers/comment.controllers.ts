@@ -2,11 +2,14 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import Comment from "../models/comment.model";
 import Post from "../models/post.model";
+import Like from "../models/like.model";
+import Notification from "../models/notification.model";
 import {
   addCommentSchema,
   updateCommentSchema,
 } from "../schemas/comment.schema";
 import { getCache, setCache, clearCommentsCache } from "../configs/cache";
+import { createNotification } from "../utilities/notification";
 
 type Params = {
   postId: string;
@@ -121,8 +124,11 @@ export const addComment = async (req: Request<Params>, res: Response) => {
 
     // check for parent comment (is reply)
     const parent = result.data.parent;
+    let parentComment: { author: mongoose.Types.ObjectId } | null = null;
     if (parent) {
-      const parentComment = await Comment.findById(parent).select("_id").lean();
+      parentComment = await Comment.findById(parent)
+        .select("_id author")
+        .lean();
 
       if (!parentComment) {
         return res.status(404).json({
@@ -143,9 +149,27 @@ export const addComment = async (req: Request<Params>, res: Response) => {
     await comment.save();
 
     // increment comments count
-    await Post.findByIdAndUpdate(postId, {
+    const postData = await Post.findByIdAndUpdate(postId, {
       $inc: { commentsCount: 1 },
     });
+
+    const notifyRecipients = new Set<string>();
+    if (postData) {
+      notifyRecipients.add(postData.author.toString());
+    }
+    if (parentComment) {
+      notifyRecipients.add(parentComment.author.toString());
+    }
+
+    for (const recipient of notifyRecipients) {
+      await createNotification({
+        recipient,
+        sender: author.toString(),
+        type: "comment",
+        post: postId,
+        comment: comment._id.toString(),
+      });
+    }
 
     // clear cache
     await clearCommentsCache(postId);
@@ -227,6 +251,19 @@ export const updateComment = async (
   }
 };
 
+const collectDescendantCommentIds = async (
+  commentId: string,
+): Promise<string[]> => {
+  const replies = await Comment.find({ parent: commentId }).select("_id").lean();
+  const ids = [commentId];
+
+  for (const reply of replies) {
+    ids.push(...(await collectDescendantCommentIds(reply._id.toString())));
+  }
+
+  return ids;
+};
+
 // delete comment
 export const deleteComment = async (
   req: Request<CommentParams>,
@@ -260,13 +297,17 @@ export const deleteComment = async (
       });
     }
 
-    // decrement comments count
-    await Post.findByIdAndUpdate(comment.post, {
-      $inc: { commentsCount: -1 },
-    });
+    const commentIds = await collectDescendantCommentIds(commentId);
 
-    // delete comment
-    await comment.deleteOne();
+    await Promise.all([
+      Comment.deleteMany({ _id: { $in: commentIds } }),
+      Like.deleteMany({ comment: { $in: commentIds } }),
+      Notification.deleteMany({ comment: { $in: commentIds } }),
+    ]);
+
+    await Post.findByIdAndUpdate(comment.post, {
+      $inc: { commentsCount: -commentIds.length },
+    });
 
     // clear cache
     if (comment.post) await clearCommentsCache(comment.post.toString());

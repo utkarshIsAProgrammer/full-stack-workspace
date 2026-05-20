@@ -62,6 +62,10 @@ const signup = async (req, res) => {
             ...cookie_1.cookieOptions,
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
         });
+        void (0, nodeMailer_1.sendWelcomeMail)({
+            email: user.email,
+            username: user.username,
+        });
         return res.status(201).json({
             success: true,
             message: "User created successfully!",
@@ -78,11 +82,6 @@ const signup = async (req, res) => {
                 followingCount: user.followingCount,
                 createdAt: user.createdAt,
             },
-        });
-        // send welcome email
-        (0, nodeMailer_1.sendWelcomeMail)({
-            email: user.email,
-            username: user.username,
         });
     }
     catch (err) {
@@ -123,10 +122,7 @@ const login = async (req, res) => {
             }
             catch (err) {
                 console.log(`Invalid/expired token! ${err.message}`);
-                return res.status(401).json({
-                    success: false,
-                    message: "Invalid/expired token!",
-                });
+                res.clearCookie("jwt", cookie_1.cookieOptions);
             }
         }
         // find user
@@ -177,7 +173,6 @@ const login = async (req, res) => {
     catch (err) {
         console.log(`Error in the login controller! ${err.message}`);
         return res.status(500).json({
-            success: false,
             message: "Internal server error!",
         });
     }

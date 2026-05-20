@@ -7,6 +7,7 @@ exports.toggleRepost = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const repost_model_1 = __importDefault(require("../models/repost.model"));
 const post_model_1 = __importDefault(require("../models/post.model"));
+const notification_1 = require("../utilities/notification");
 const toggleRepost = async (req, res) => {
     const userId = req.user?._id;
     const { postId } = req.params;
@@ -48,6 +49,12 @@ const toggleRepost = async (req, res) => {
         // un-repost post
         if (existingRepost) {
             await existingRepost.deleteOne();
+            await (0, notification_1.deleteInteractionNotification)({
+                recipient: post.author.toString(),
+                sender: userId.toString(),
+                type: "repost",
+                post: postId,
+            });
             const updatedPost = await post_model_1.default.findByIdAndUpdate(postId, { $inc: { repostsCount: -1 } }, { new: true });
             return res.status(200).json({
                 success: true,
@@ -64,6 +71,12 @@ const toggleRepost = async (req, res) => {
         });
         // increment repost count
         const updatedPost = await post_model_1.default.findByIdAndUpdate(postId, { $inc: { repostsCount: 1 } }, { new: true });
+        await (0, notification_1.createNotification)({
+            recipient: post.author.toString(),
+            sender: userId.toString(),
+            type: "repost",
+            post: postId,
+        });
         return res.status(201).json({
             success: true,
             message: "Repost created!",
@@ -75,7 +88,6 @@ const toggleRepost = async (req, res) => {
     catch (err) {
         console.log(`Error in toggleRepost controller! ${err.message}`);
         return res.status(500).json({
-            success: false,
             message: "Internal server error!",
         });
     }

@@ -34,7 +34,7 @@ const searchUsers = async (req, res) => {
     }
     catch (err) {
         console.log(`Error in the searchUsers controller! ${err.message}`);
-        return res.status(500).json({ message: "Internal server err:any" });
+        return res.status(500).json({ message: "Internal server error!" });
     }
 };
 exports.searchUsers = searchUsers;
@@ -67,7 +67,7 @@ const searchPosts = async (req, res) => {
     }
     catch (err) {
         console.log(`Error in the searchPosts controller! ${err.message}`);
-        return res.status(500).json({ message: "Internal server error" });
+        return res.status(500).json({ message: "Internal server error!" });
     }
 };
 exports.searchPosts = searchPosts;

@@ -1,9 +1,21 @@
 import mongoose from "mongoose";
 import type { Request, Response } from "express";
 import Post from "../models/post.model";
+import Comment from "../models/comment.model";
+import Like from "../models/like.model";
+import Repost from "../models/repost.model";
+import Save from "../models/saves.model";
+import Notification from "../models/notification.model";
 import { createPostSchema } from "../schemas/post.schema";
 import cloudinary from "../configs/cloudinary";
-import { getCache, setCache, deleteCache, clearFeedCache } from "../configs/cache";
+import {
+  getCache,
+  setCache,
+  deleteCache,
+  clearFeedCache,
+  clearCommentsCache,
+  clearAllSavesCache,
+} from "../configs/cache";
 
 type Params = {
   postId: string;
@@ -70,7 +82,6 @@ export const getPost = async (req: Request<Params>, res: Response) => {
     console.log(`Error in getPost controller! ${err.message}`);
 
     return res.status(500).json({
-      success: false,
       message: "Internal server error!",
     });
   }
@@ -153,7 +164,6 @@ export const getAllPosts = async (req: Request, res: Response) => {
     console.log(`Error in getAllPosts controller! ${err.message}`);
 
     return res.status(500).json({
-      success: false,
       message: "Internal server error!",
     });
   }
@@ -174,7 +184,7 @@ export const createPost = async (req: Request, res: Response) => {
     }
 
     // auth check
-    const author = (req as any).user?._id;
+    const author = req.user?._id;
 
     if (!author) {
       return res.status(401).json({
@@ -219,7 +229,6 @@ export const createPost = async (req: Request, res: Response) => {
     console.log(`Error in createPost controller! ${err.message}`);
 
     return res.status(500).json({
-      success: false,
       message: "Internal server error!",
     });
   }
@@ -229,7 +238,7 @@ export const createPost = async (req: Request, res: Response) => {
 export const updatePost = async (req: Request<Params>, res: Response) => {
   const { postId } = req.params;
 
-  const userId = (req as any).user?._id;
+  const userId = req.user?._id;
 
   try {
     // validate id
@@ -325,7 +334,6 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
     console.log(`Error in updatePost controller! ${err.message}`);
 
     return res.status(500).json({
-      success: false,
       message: "Internal server error!",
     });
   }
@@ -335,7 +343,7 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
 export const deletePost = async (req: Request<Params>, res: Response) => {
   const { postId } = req.params;
 
-  const userId = (req as any).user?._id;
+  const userId = req.user?._id;
 
   try {
     // validate id
@@ -372,17 +380,31 @@ export const deletePost = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    // delete image
+    const comments = await Comment.find({ post: postId }).select("_id").lean();
+    const commentIds = comments.map((c) => c._id);
+
+    await Promise.all([
+      Comment.deleteMany({ post: postId }),
+      Like.deleteMany({
+        $or: [{ post: postId }, { comment: { $in: commentIds } }],
+      }),
+      Repost.deleteMany({ post: postId }),
+      Save.deleteMany({ post: postId }),
+      Notification.deleteMany({
+        $or: [{ post: postId }, { comment: { $in: commentIds } }],
+      }),
+    ]);
+
     if (post.image?.public_id) {
       await cloudinary.uploader.destroy(post.image.public_id);
     }
 
-    // delete post
     await post.deleteOne();
 
-    // invalidate cache
     await deleteCache(`post:${postId}`);
     await clearFeedCache();
+    await clearCommentsCache(postId);
+    await clearAllSavesCache();
 
     return res.status(200).json({
       success: true,
@@ -392,7 +414,6 @@ export const deletePost = async (req: Request<Params>, res: Response) => {
     console.log(`Error in deletePost controller! ${err.message}`);
 
     return res.status(500).json({
-      success: false,
       message: "Internal server error!",
     });
   }
@@ -448,7 +469,6 @@ export const sharePost = async (req: Request<Params>, res: Response) => {
     console.log(`Error in sharePost controller! ${err.message}`);
 
     return res.status(500).json({
-      success: false,
       message: "Internal server error!",
     });
   }
@@ -458,7 +478,7 @@ export const sharePost = async (req: Request<Params>, res: Response) => {
 export const viewsCount = async (req: Request<Params>, res: Response) => {
   const { postId } = req.params;
 
-  const currentUser = (req as any).user?._id;
+  const currentUser = req.user?._id;
 
   try {
     // validate id
@@ -516,7 +536,6 @@ export const viewsCount = async (req: Request<Params>, res: Response) => {
     console.log(`Error in viewsCount controller! ${err.message}`);
 
     return res.status(500).json({
-      success: false,
       message: "Internal server error!",
     });
   }

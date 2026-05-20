@@ -8,6 +8,7 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const user_model_1 = require("../models/user.model");
 const follow_model_1 = __importDefault(require("../models/follow.model"));
 const cache_1 = require("../configs/cache");
+const notification_1 = require("../utilities/notification");
 // toggle follow/unfollow user
 const toggleFollowUser = async (req, res) => {
     const follower = req.user?._id;
@@ -61,6 +62,11 @@ const toggleFollowUser = async (req, res) => {
             await user_model_1.User.findByIdAndUpdate(follower, {
                 $inc: { followingCount: 1 },
             });
+            await (0, notification_1.createNotification)({
+                recipient: userId,
+                sender: follower.toString(),
+                type: "follow",
+            });
             // clear cache
             await (0, cache_1.clearFollowCache)(userId, follower.toString());
             return res.status(201).json({
@@ -71,8 +77,12 @@ const toggleFollowUser = async (req, res) => {
                 follow,
             });
         }
-        // unfollow
         await existingFollow.deleteOne();
+        await (0, notification_1.deleteInteractionNotification)({
+            recipient: userId,
+            sender: follower.toString(),
+            type: "follow",
+        });
         const updatedTargetUser = await user_model_1.User.findByIdAndUpdate(userId, {
             $inc: { followersCount: -1 },
         }, { new: true });
@@ -91,7 +101,6 @@ const toggleFollowUser = async (req, res) => {
     catch (err) {
         console.log(`Error in the toggleFollowUser controller! ${err.message}`);
         return res.status(500).json({
-            success: false,
             message: "Internal Server Error!",
         });
     }
@@ -168,7 +177,6 @@ const getFollowers = async (req, res) => {
     catch (err) {
         console.log(`Error in getFollowers controller! ${err.message}`);
         return res.status(500).json({
-            success: false,
             message: "Internal Server Error!",
         });
     }
@@ -245,7 +253,6 @@ const getFollowing = async (req, res) => {
     catch (err) {
         console.log(`Error in getFollowing controller! ${err.message}`);
         return res.status(500).json({
-            success: false,
             message: "Internal Server Error!",
         });
     }

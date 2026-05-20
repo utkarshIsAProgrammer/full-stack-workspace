@@ -55,3 +55,9 @@ export const clearSavesCache = async (userId: string) => {
   const keys = await redis.keys(`saves:${userId}:*`);
   if (keys.length > 0) await redis.del(...keys);
 };
+
+// clear all saved-posts list caches (e.g. after a post is deleted)
+export const clearAllSavesCache = async () => {
+  const keys = await redis.keys("saves:*");
+  if (keys.length > 0) await redis.del(...keys);
+};

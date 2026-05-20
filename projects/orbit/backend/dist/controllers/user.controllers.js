@@ -195,7 +195,6 @@ const shareProfile = async (req, res) => {
     catch (err) {
         console.log(`Error in the shareProfile controller! ${err.message}`);
         res.status(500).json({
-            success: false,
             message: "Internal server error!",
         });
     }
@@ -241,7 +240,6 @@ const viewsCount = async (req, res) => {
     catch (err) {
         console.log(`Error in the viewsCount controller! ${err.message}`);
         res.status(500).json({
-            success: false,
             message: "Internal server error!",
         });
     }
