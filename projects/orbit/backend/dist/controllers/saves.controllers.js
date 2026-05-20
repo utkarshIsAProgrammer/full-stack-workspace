@@ -7,6 +7,7 @@ exports.getSavedPosts = exports.toggleSavePost = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const post_model_1 = __importDefault(require("../models/post.model"));
 const saves_model_1 = __importDefault(require("../models/saves.model"));
+const cache_1 = require("../configs/cache");
 const toggleSavePost = async (req, res) => {
     const { postId } = req.params;
     const userId = req.user?._id;
@@ -40,6 +41,8 @@ const toggleSavePost = async (req, res) => {
             await alreadySaved.deleteOne();
             // decrement saves count
             const updatedPost = await post_model_1.default.findByIdAndUpdate(postId, { $inc: { savesCount: -1 } }, { new: true });
+            // clear cache
+            await (0, cache_1.clearSavesCache)(userId);
             return res.status(200).json({
                 success: true,
                 message: "Post unsaved!",
@@ -55,6 +58,8 @@ const toggleSavePost = async (req, res) => {
         });
         // increment saves count
         const updatedPost = await post_model_1.default.findByIdAndUpdate(postId, { $inc: { savesCount: 1 } }, { new: true });
+        // clear cache
+        await (0, cache_1.clearSavesCache)(userId);
         res.status(201).json({
             success: true,
             message: "Post saved!",
@@ -88,9 +93,18 @@ const getSavedPosts = async (req, res) => {
         };
         // if cursor exists fetch older saves
         if (cursor) {
-            query._id = {
-                $lt: cursor,
-            };
+            query._id = { $lt: cursor };
+        }
+        // cache key
+        const cacheKey = `saves:${userId}:${cursor || "first"}:${limit}`;
+        // get from cache
+        try {
+            const cachedSaves = await (0, cache_1.getCache)(cacheKey);
+            if (cachedSaves)
+                return res.status(200).json(cachedSaves);
+        }
+        catch (err) {
+            console.log(`Cache error in getSavedPosts! ${err.message}`);
         }
         // find saved posts
         const savedPosts = await saves_model_1.default.find(query)
@@ -123,14 +137,22 @@ const getSavedPosts = async (req, res) => {
         }
         // next cursor
         const nextCursor = savedPosts[savedPosts.length - 1]?._id || null;
-        res.status(200).json({
+        const responseData = {
             success: true,
             message: "Saved posts fetched successfully!",
             count: savedPosts.length,
             savedPosts,
             nextCursor,
             hasMore,
-        });
+        };
+        // set cache
+        try {
+            await (0, cache_1.setCache)(cacheKey, responseData, 60);
+        }
+        catch (err) {
+            console.log(`Cache set error in getSavedPosts! ${err.message}`);
+        }
+        res.status(200).json(responseData);
     }
     catch (err) {
         console.log(`Error in the getSavedPosts controller! ${err.message}`);

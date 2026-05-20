@@ -7,7 +7,8 @@ exports.repostRoutes = void 0;
 const express_1 = __importDefault(require("express"));
 const auth_middleware_1 = require("../middlewares/auth.middleware");
 const repost_controllers_1 = require("../controllers/repost.controllers");
+const ratelimit_middleware_1 = require("../middlewares/ratelimit.middleware");
 const router = express_1.default.Router();
 exports.repostRoutes = router;
-router.post("/:postId", auth_middleware_1.protect, repost_controllers_1.toggleRepost);
+router.post("/:postId", auth_middleware_1.protect, ratelimit_middleware_1.interactionLimiter, repost_controllers_1.toggleRepost);
 //# sourceMappingURL=repost.routes.js.map

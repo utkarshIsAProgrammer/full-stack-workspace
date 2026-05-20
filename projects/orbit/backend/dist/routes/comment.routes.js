@@ -7,10 +7,11 @@ exports.commentRoutes = void 0;
 const express_1 = __importDefault(require("express"));
 const comment_controllers_1 = require("../controllers/comment.controllers");
 const auth_middleware_1 = require("../middlewares/auth.middleware");
+const ratelimit_middleware_1 = require("../middlewares/ratelimit.middleware");
 const router = express_1.default.Router();
 exports.commentRoutes = router;
 router.get("/:postId", comment_controllers_1.getComment);
-router.post("/:postId", auth_middleware_1.protect, comment_controllers_1.addComment);
-router.put("/:commentId", auth_middleware_1.protect, comment_controllers_1.updateComment);
+router.post("/:postId", auth_middleware_1.protect, ratelimit_middleware_1.commentLimiter, comment_controllers_1.addComment);
+router.put("/:commentId", auth_middleware_1.protect, ratelimit_middleware_1.commentLimiter, comment_controllers_1.updateComment);
 router.delete("/:commentId", auth_middleware_1.protect, comment_controllers_1.deleteComment);
 //# sourceMappingURL=comment.routes.js.map

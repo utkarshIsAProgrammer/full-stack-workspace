@@ -6,7 +6,16 @@ import { z } from "zod";
 /** Schema for user signup */
 export declare const signupSchema: z.ZodObject<{
     username: z.ZodString;
+    fullName: z.ZodString;
+    gender: z.ZodEnum<{
+        male: "male";
+        female: "female";
+        others: "others";
+    }>;
     email: z.ZodString;
+    bio: z.ZodOptional<z.ZodString>;
+    profilePic: z.ZodOptional<z.ZodString>;
+    bannerImage: z.ZodOptional<z.ZodString>;
     password: z.ZodString;
 }, z.core.$strip>;
 /** Schema for user login */
@@ -37,10 +46,22 @@ export declare const deleteAccountSchema: z.ZodObject<{
     email: z.ZodString;
     password: z.ZodString;
 }, z.core.$strip>;
+/** Schema for updating profile */
+export declare const updateProfileSchema: z.ZodObject<{
+    username: z.ZodOptional<z.ZodString>;
+    fullName: z.ZodOptional<z.ZodString>;
+    gender: z.ZodOptional<z.ZodEnum<{
+        male: "male";
+        female: "female";
+        others: "others";
+    }>>;
+    bio: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type updatePasswordInput = z.infer<typeof updatePasswordSchema>;
 export type forgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type verifyOtpInput = z.infer<typeof verifyOtpSchema>;
 export type deleteAccountInput = z.infer<typeof deleteAccountSchema>;
+export type updateProfileInput = z.infer<typeof updateProfileSchema>;
 //# sourceMappingURL=user.schema.d.ts.map

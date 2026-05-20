@@ -4,7 +4,7 @@
  * @description Zod validation schemas for user-related inputs.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteAccountSchema = exports.verifyOtpSchema = exports.forgotPasswordSchema = exports.updatePasswordSchema = exports.loginSchema = exports.signupSchema = void 0;
+exports.updateProfileSchema = exports.deleteAccountSchema = exports.verifyOtpSchema = exports.forgotPasswordSchema = exports.updatePasswordSchema = exports.loginSchema = exports.signupSchema = void 0;
 const zod_1 = require("zod");
 /**
  * Base user schema for common fields.
@@ -15,7 +15,20 @@ const userSchema = zod_1.z.object({
         .min(3, "Name must be at least 3 characters long!")
         .max(100, "Name must be less than 100 characters!")
         .trim(),
+    fullName: zod_1.z
+        .string()
+        .min(3, "Full name must be at least 3 characters long!")
+        .max(50, "Full name must be less than 50 characters!")
+        .trim(),
+    gender: zod_1.z.enum(["male", "female", "others"]),
     email: zod_1.z.string().email("Invalid email format!").trim().lowercase(),
+    bio: zod_1.z
+        .string()
+        .max(300, "Bio must be less than 300 characters!")
+        .trim()
+        .optional(),
+    profilePic: zod_1.z.string().url("Invalid profile picture URL!").trim().optional(),
+    bannerImage: zod_1.z.string().url("Invalid banner image URL!").trim().optional(),
     password: zod_1.z
         .string()
         .min(8, "Password must be at least 8 characters long!")
@@ -73,4 +86,25 @@ exports.verifyOtpSchema = zod_1.z
 });
 /** Schema for account deletion */
 exports.deleteAccountSchema = exports.loginSchema;
+/** Schema for updating profile */
+exports.updateProfileSchema = zod_1.z.object({
+    username: zod_1.z
+        .string()
+        .min(3, "Name must be at least 3 characters long!")
+        .max(100, "Name must be less than 100 characters!")
+        .trim()
+        .optional(),
+    fullName: zod_1.z
+        .string()
+        .min(3, "Full name must be at least 3 characters long!")
+        .max(50, "Full name must be less than 50 characters!")
+        .trim()
+        .optional(),
+    gender: zod_1.z.enum(["male", "female", "others"]).optional(),
+    bio: zod_1.z
+        .string()
+        .max(300, "Bio must be less than 300 characters!")
+        .trim()
+        .optional(),
+});
 //# sourceMappingURL=user.schema.js.map

@@ -4,6 +4,7 @@ import { signupSchema, loginSchema } from "../schemas/user.schema";
 import { sendWelcomeMail } from "../configs/nodeMailer";
 import jwt from "jsonwebtoken";
 import { cookieOptions } from "../configs/cookie";
+import cloudinary from "../configs/cloudinary";
 
 // signup
 export const signup = async (req: Request, res: Response) => {
@@ -11,6 +12,9 @@ export const signup = async (req: Request, res: Response) => {
 
   try {
     if (!result.success) {
+      if (req.file) {
+        await cloudinary.uploader.destroy(req.file.filename);
+      }
       return res.status(400).json({
         success: false,
         message: "Invalid data",
@@ -18,20 +22,40 @@ export const signup = async (req: Request, res: Response) => {
       });
     }
 
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Profile picture is required!",
+      });
+    }
+
     // check user exists
     const userExists = await User.findOne({
-      email: result.data.email,
+      $or: [{ email: result.data.email }, { username: result.data.username }],
     });
 
     if (userExists) {
+      await cloudinary.uploader.destroy(req.file.filename);
+      if (userExists.email === result.data.email) {
+        return res.status(400).json({
+          success: false,
+          message: "Email already exists!",
+        });
+      }
       return res.status(400).json({
         success: false,
-        message: "User already exists!",
+        message: "Username already exists!",
       });
     }
 
     // create and save new user
-    const user = new User(result.data);
+    const user = new User({
+      ...result.data,
+      profilePic: {
+        url: req.file.path,
+        public_id: req.file.filename,
+      },
+    });
     await user.save();
 
     // generate jwt and set cookie
@@ -41,11 +65,22 @@ export const signup = async (req: Request, res: Response) => {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "User created successfully!",
-      ...user.toObject(),
-      password: undefined, // remove password from response
+      user: {
+        _id: user._id,
+        username: user.username,
+        fullName: user.fullName,
+        email: user.email,
+        gender: user.gender,
+        bio: user.bio,
+        profilePic: user.profilePic,
+        bannerImage: user.bannerImage,
+        followersCount: user.followersCount,
+        followingCount: user.followingCount,
+        createdAt: user.createdAt,
+      },
     });
 
     // send welcome email
@@ -54,6 +89,13 @@ export const signup = async (req: Request, res: Response) => {
       username: user.username,
     });
   } catch (err: any) {
+    if (req.file) {
+      try {
+        await cloudinary.uploader.destroy(req.file.filename);
+      } catch (cloudErr) {
+        console.log("Cloudinary destroy error: ", cloudErr);
+      }
+    }
     console.log(`Error in the signup controller! ${err.message}`);
     res.status(500).json({ message: "Internal server error!" });
   }
@@ -86,7 +128,7 @@ export const login = async (req: Request, res: Response) => {
         });
       } catch (err: any) {
         console.log(`Invalid/expired token! ${err.message}`);
-        res.status(401).json({
+        return res.status(401).json({
           success: false,
           message: "Invalid/expired token!",
         });
@@ -130,8 +172,13 @@ export const login = async (req: Request, res: Response) => {
       message: "User logged in successfully!",
       user: {
         _id: user._id,
+        fullName: user.fullName,
         username: user.username,
         email: user.email,
+        gender: user.gender,
+        bio: user.bio,
+        profilePic: user.profilePic,
+        bannerImage: user.bannerImage,
         followersCount: user.followersCount,
         followingCount: user.followingCount,
         createdAt: user.createdAt,

@@ -17,6 +17,49 @@ const userSchema = new mongoose_1.default.Schema({
         maxlength: [100, "Username must be less than 100 characters!"],
         trim: true,
         unique: true,
+        lowercase: true,
+    },
+    // fullname
+    fullName: {
+        type: String,
+        required: [true, "Full name is required!"],
+        maxlength: 50,
+        trim: true,
+    },
+    // gender
+    gender: {
+        type: String,
+        required: true,
+        enum: ["male", "female", "others"],
+        lowercase: true,
+    },
+    // profile bio
+    bio: {
+        type: String,
+        maxlength: 300,
+        default: "",
+    },
+    // profile pic
+    profilePic: {
+        url: {
+            type: String,
+            default: "",
+        },
+        public_id: {
+            type: String,
+            default: "",
+        },
+    },
+    // banner image
+    bannerImage: {
+        url: {
+            type: String,
+            default: "",
+        },
+        public_id: {
+            type: String,
+            default: "",
+        },
     },
     // email
     email: {
@@ -65,6 +108,7 @@ const userSchema = new mongoose_1.default.Schema({
         index: { expires: 0 },
     },
 }, { timestamps: true });
+userSchema.index({ username: "text", fullName: "text" });
 // password hashing
 userSchema.pre("save", async function () {
     // Only hash the password if it has been modified (or is new)

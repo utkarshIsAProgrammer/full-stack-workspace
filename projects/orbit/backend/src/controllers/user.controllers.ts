@@ -1,9 +1,19 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { User } from "../models/user.model";
-import { deleteAccountSchema } from "../schemas/user.schema";
+import {
+  deleteAccountSchema,
+  updateProfileSchema,
+} from "../schemas/user.schema";
+import cloudinary from "../configs/cloudinary";
 import { sendDeletionMail } from "../configs/nodeMailer";
 import { getCache, setCache, clearUsersCache } from "../configs/cache";
+import Post from "../models/post.model";
+import Comment from "../models/comment.model";
+import Like from "../models/like.model";
+import Follow from "../models/follow.model";
+import Save from "../models/saves.model";
+import Repost from "../models/repost.model";
 
 type Params = {
   userId: string;
@@ -116,6 +126,39 @@ export const deleteAccount = async (req: Request, res: Response) => {
 
     // get user id from the auth middleware
     const userId = req.user?._id;
+    
+    // delete profile pic and banner image from cloudinary
+    if (user.profilePic?.public_id) {
+      try {
+        await cloudinary.uploader.destroy(user.profilePic.public_id);
+      } catch (e) {}
+    }
+    if (user.bannerImage?.public_id) {
+      try {
+        await cloudinary.uploader.destroy(user.bannerImage.public_id);
+      } catch (e) {}
+    }
+
+    // handle orphaned cloudinary images from posts
+    const userPosts = await Post.find({ author: userId as any });
+    for (const post of userPosts) {
+      if (post.image?.public_id) {
+        try {
+          await cloudinary.uploader.destroy(post.image.public_id);
+        } catch (e) {}
+      }
+    }
+
+    // Delete orphaned data
+    await Post.deleteMany({ author: userId as any });
+    await Comment.deleteMany({ author: userId as any });
+    await Like.deleteMany({ user: userId as any });
+    await Save.deleteMany({ user: userId as any });
+    await Repost.deleteMany({ user: userId as any });
+    await Follow.deleteMany({
+      $or: [{ follower: userId as any }, { following: userId as any }],
+    });
+
     await User.findByIdAndDelete(userId);
 
     // clear users cache
@@ -197,9 +240,7 @@ export const viewsCount = async (req: Request<Params>, res: Response) => {
     }
 
     // check post exists
-    const profile = await User.findById(userId)
-      .select("_id viewsCount")
-      .lean();
+    const profile = await User.findById(userId).select("_id viewsCount").lean();
     if (!profile) {
       return res.status(404).json({
         success: false,
@@ -236,5 +277,118 @@ export const viewsCount = async (req: Request<Params>, res: Response) => {
       success: false,
       message: "Internal server error!",
     });
+  }
+};
+
+// update profile
+export const updateProfile = async (req: Request, res: Response) => {
+  const result = updateProfileSchema.safeParse(req.body);
+
+  const cleanupFiles = async (filesObj: any) => {
+    if (!filesObj) return;
+    const files = filesObj as { [fieldname: string]: Express.Multer.File[] };
+    const pPic = files.profilePic?.[0];
+    const bImg = files.bannerImage?.[0];
+
+    if (pPic?.filename) {
+      try {
+        await cloudinary.uploader.destroy(pPic.filename);
+      } catch (e) {}
+    }
+    if (bImg?.filename) {
+      try {
+        await cloudinary.uploader.destroy(bImg.filename);
+      } catch (e) {}
+    }
+  };
+
+  try {
+    if (!result.success) {
+      await cleanupFiles(req.files);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid data",
+        error: result.error.issues,
+      });
+    }
+
+    const userId = req.user?._id;
+    const user = await User.findById(userId);
+
+    if (!user) {
+      await cleanupFiles(req.files);
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found!" });
+    }
+
+    // check if username exists
+    if (result.data.username && result.data.username !== user.username) {
+      const userExists = await User.findOne({ username: result.data.username });
+      if (userExists) {
+        await cleanupFiles(req.files);
+        return res
+          .status(400)
+          .json({ success: false, message: "Username already exists!" });
+      }
+    }
+
+    const updateData: any = { ...result.data };
+
+    if (req.files) {
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+      const newProfilePic = files.profilePic?.[0];
+      const newBannerImg = files.bannerImage?.[0];
+
+      if (newProfilePic) {
+        if (user.profilePic?.public_id) {
+          try {
+            await cloudinary.uploader.destroy(user.profilePic.public_id);
+          } catch (e) {}
+        }
+        updateData.profilePic = {
+          url: newProfilePic.path,
+          public_id: newProfilePic.filename,
+        };
+      }
+
+      if (newBannerImg) {
+        if (user.bannerImage?.public_id) {
+          try {
+            await cloudinary.uploader.destroy(user.bannerImage.public_id);
+          } catch (e) {}
+        }
+        updateData.bannerImage = {
+          url: newBannerImg.path,
+          public_id: newBannerImg.filename,
+        };
+      }
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(userId, updateData, {
+      new: true,
+    });
+
+    // update cache
+    await clearUsersCache();
+
+    return res.status(200).json({
+      success: true,
+      message: "Profile updated successfully!",
+      user: {
+        _id: updatedUser?._id,
+        fullName: updatedUser?.fullName,
+        username: updatedUser?.username,
+        email: updatedUser?.email,
+        gender: updatedUser?.gender,
+        bio: updatedUser?.bio,
+        profilePic: updatedUser?.profilePic,
+        bannerImage: updatedUser?.bannerImage,
+      },
+    });
+  } catch (err: any) {
+    await cleanupFiles(req.files);
+    console.log(`Error in the updateProfile controller! ${err.message}`);
+    res.status(500).json({ message: "Internal server error!" });
   }
 };

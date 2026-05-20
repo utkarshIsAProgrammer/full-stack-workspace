@@ -6,14 +6,28 @@ import cloudinary from "../configs/cloudinary";
 const storage = new CloudinaryStorage({
   cloudinary,
   params: async (req, file) => ({
-    folder: "blobBlogs",
+    folder: "orbit",
+    resource_type: "image",
     allowed_formats: ["jpg", "jpeg", "png", "webp"],
     public_id: `${Date.now()}-${file.originalname}`,
+
+    transformation: [
+      {
+        width: 1200,
+        crop: "limit",
+        quality: "auto",
+        fetch_format: "auto",
+      },
+    ],
   }),
 });
 
 // filter allowed types
-const fileFilter = (req: any, file: Express.Multer.File, cb: any) => {
+const fileFilter = (
+  req: Express.Request,
+  file: Express.Multer.File,
+  cb: any,
+) => {
   const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
 
   if (!allowed.includes(file.mimetype)) {

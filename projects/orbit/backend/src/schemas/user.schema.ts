@@ -15,7 +15,25 @@ const userSchema = z.object({
     .max(100, "Name must be less than 100 characters!")
     .trim(),
 
+  fullName: z
+    .string()
+    .min(3, "Full name must be at least 3 characters long!")
+    .max(50, "Full name must be less than 50 characters!")
+    .trim(),
+
+  gender: z.enum(["male", "female", "others"]),
+
   email: z.string().email("Invalid email format!").trim().lowercase(),
+
+  bio: z
+    .string()
+    .max(300, "Bio must be less than 300 characters!")
+    .trim()
+    .optional(),
+
+  profilePic: z.string().url("Invalid profile picture URL!").trim().optional(),
+
+  bannerImage: z.string().url("Invalid banner image URL!").trim().optional(),
 
   password: z
     .string()
@@ -81,6 +99,28 @@ export const verifyOtpSchema = z
 /** Schema for account deletion */
 export const deleteAccountSchema = loginSchema;
 
+/** Schema for updating profile */
+export const updateProfileSchema = z.object({
+  username: z
+    .string()
+    .min(3, "Name must be at least 3 characters long!")
+    .max(100, "Name must be less than 100 characters!")
+    .trim()
+    .optional(),
+  fullName: z
+    .string()
+    .min(3, "Full name must be at least 3 characters long!")
+    .max(50, "Full name must be less than 50 characters!")
+    .trim()
+    .optional(),
+  gender: z.enum(["male", "female", "others"]).optional(),
+  bio: z
+    .string()
+    .max(300, "Bio must be less than 300 characters!")
+    .trim()
+    .optional(),
+});
+
 // Type definitions derived from Zod schemas
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
@@ -88,3 +128,4 @@ export type updatePasswordInput = z.infer<typeof updatePasswordSchema>;
 export type forgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type verifyOtpInput = z.infer<typeof verifyOtpSchema>;
 export type deleteAccountInput = z.infer<typeof deleteAccountSchema>;
+export type updateProfileInput = z.infer<typeof updateProfileSchema>;

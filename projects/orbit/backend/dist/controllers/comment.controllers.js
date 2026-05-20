@@ -8,6 +8,7 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const comment_model_1 = __importDefault(require("../models/comment.model"));
 const post_model_1 = __importDefault(require("../models/post.model"));
 const comment_schema_1 = require("../schemas/comment.schema");
+const cache_1 = require("../configs/cache");
 // Get all comments for a specific post
 const getComment = async (req, res) => {
     const { postId } = req.params;
@@ -31,6 +32,17 @@ const getComment = async (req, res) => {
         if (cursor) {
             query._id = { $lt: cursor };
         }
+        // cache key
+        const cacheKey = `comments:${postId}:${cursor || "first"}:${limit}`;
+        // get from cache
+        try {
+            const cachedComments = await (0, cache_1.getCache)(cacheKey);
+            if (cachedComments)
+                return res.status(200).json(cachedComments);
+        }
+        catch (err) {
+            console.log(`Cache error in getComment! ${err.message}`);
+        }
         // fetch comments with author info
         const comments = await comment_model_1.default.find(query)
             .sort({ _id: -1 })
@@ -45,12 +57,20 @@ const getComment = async (req, res) => {
         }
         // next cursor
         const nextCursor = comments[comments.length - 1]?._id || null;
-        return res.status(200).json({
+        const responseData = {
             success: true,
             comments,
             nextCursor,
             hasMore,
-        });
+        };
+        // set cache
+        try {
+            await (0, cache_1.setCache)(cacheKey, responseData, 60);
+        }
+        catch (err) {
+            console.log(`Cache set error in getComment! ${err.message}`);
+        }
+        return res.status(200).json(responseData);
     }
     catch (err) {
         console.log(`Error in getComment: ${err.message}`);
@@ -103,6 +123,8 @@ const addComment = async (req, res) => {
         await post_model_1.default.findByIdAndUpdate(postId, {
             $inc: { commentsCount: 1 },
         });
+        // clear cache
+        await (0, cache_1.clearCommentsCache)(postId);
         res.status(201).json({
             success: true,
             message: "Comment added successfully!",
@@ -136,7 +158,9 @@ const updateComment = async (req, res) => {
                 .json({ success: false, message: "Unauthorized access!" });
         }
         // find comment (exists)
-        const comment = await comment_model_1.default.findById(commentId).select("_id author").lean();
+        const comment = await comment_model_1.default.findById(commentId)
+            .select("_id author post")
+            .lean();
         if (!comment) {
             return res.status(404).json({
                 success: false,
@@ -152,6 +176,9 @@ const updateComment = async (req, res) => {
         }
         // update and save
         const updatedComment = await comment_model_1.default.findByIdAndUpdate(commentId, { content: result.data.content }, { new: true, runValidators: true });
+        // clear cache
+        if (comment.post)
+            await (0, cache_1.clearCommentsCache)(comment.post.toString());
         res.status(200).json({
             success: true,
             message: "Comment updated successfully!",
@@ -196,6 +223,9 @@ const deleteComment = async (req, res) => {
         });
         // delete comment
         await comment.deleteOne();
+        // clear cache
+        if (comment.post)
+            await (0, cache_1.clearCommentsCache)(comment.post.toString());
         res.status(200).json({
             success: true,
             message: "Comment deleted successfully!",

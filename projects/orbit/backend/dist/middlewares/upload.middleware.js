@@ -10,9 +10,18 @@ const cloudinary_1 = __importDefault(require("../configs/cloudinary"));
 const storage = new multer_storage_cloudinary_1.CloudinaryStorage({
     cloudinary: cloudinary_1.default,
     params: async (req, file) => ({
-        folder: "blobBlogs",
+        folder: "orbit",
+        resource_type: "image",
         allowed_formats: ["jpg", "jpeg", "png", "webp"],
         public_id: `${Date.now()}-${file.originalname}`,
+        transformation: [
+            {
+                width: 1200,
+                crop: "limit",
+                quality: "auto",
+                fetch_format: "auto",
+            },
+        ],
     }),
 });
 // filter allowed types

@@ -3,22 +3,44 @@ declare const userSchema: mongoose.Schema<any, mongoose.Model<any, any, any, any
     timestamps: true;
 }, {
     username: string;
+    fullName: string;
+    gender: "male" | "female" | "others";
+    bio: string;
     email: string;
     password: string;
     followersCount: number;
     followingCount: number;
     sharesCount: number;
     viewsCount: number;
+    profilePic?: {
+        url: string;
+        public_id: string;
+    } | null;
+    bannerImage?: {
+        url: string;
+        public_id: string;
+    } | null;
     otp?: string | null;
     otpExpiry?: NativeDate | null;
 } & mongoose.DefaultTimestampProps, mongoose.Document<unknown, {}, {
     username: string;
+    fullName: string;
+    gender: "male" | "female" | "others";
+    bio: string;
     email: string;
     password: string;
     followersCount: number;
     followingCount: number;
     sharesCount: number;
     viewsCount: number;
+    profilePic?: {
+        url: string;
+        public_id: string;
+    } | null;
+    bannerImage?: {
+        url: string;
+        public_id: string;
+    } | null;
     otp?: string | null;
     otpExpiry?: NativeDate | null;
 } & mongoose.DefaultTimestampProps, {
@@ -27,12 +49,23 @@ declare const userSchema: mongoose.Schema<any, mongoose.Model<any, any, any, any
     timestamps: true;
 }> & Omit<{
     username: string;
+    fullName: string;
+    gender: "male" | "female" | "others";
+    bio: string;
     email: string;
     password: string;
     followersCount: number;
     followingCount: number;
     sharesCount: number;
     viewsCount: number;
+    profilePic?: {
+        url: string;
+        public_id: string;
+    } | null;
+    bannerImage?: {
+        url: string;
+        public_id: string;
+    } | null;
     otp?: string | null;
     otpExpiry?: NativeDate | null;
 } & mongoose.DefaultTimestampProps & {
@@ -43,12 +76,23 @@ declare const userSchema: mongoose.Schema<any, mongoose.Model<any, any, any, any
     id: string;
 }, unknown, {
     username: string;
+    fullName: string;
+    gender: "male" | "female" | "others";
+    bio: string;
     email: string;
     password: string;
     followersCount: number;
     followingCount: number;
     sharesCount: number;
     viewsCount: number;
+    profilePic?: {
+        url: string;
+        public_id: string;
+    } | null;
+    bannerImage?: {
+        url: string;
+        public_id: string;
+    } | null;
     otp?: string | null;
     otpExpiry?: NativeDate | null;
     createdAt: NativeDate;
@@ -67,22 +111,44 @@ export type UserDocument = HydratedDocument<UserType> & {
 };
 export declare const User: mongoose.Model<UserDocument, {}, {}, {}, mongoose.Document<unknown, {}, UserDocument, {}, mongoose.DefaultSchemaOptions> & mongoose.Document<unknown, {}, {
     username: string;
+    fullName: string;
+    gender: "male" | "female" | "others";
+    bio: string;
     email: string;
     password: string;
     followersCount: number;
     followingCount: number;
     sharesCount: number;
     viewsCount: number;
+    profilePic?: {
+        url: string;
+        public_id: string;
+    } | null;
+    bannerImage?: {
+        url: string;
+        public_id: string;
+    } | null;
     otp?: string | null;
     otpExpiry?: NativeDate | null;
 } & mongoose.DefaultTimestampProps, {}, mongoose.DefaultSchemaOptions> & {
     username: string;
+    fullName: string;
+    gender: "male" | "female" | "others";
+    bio: string;
     email: string;
     password: string;
     followersCount: number;
     followingCount: number;
     sharesCount: number;
     viewsCount: number;
+    profilePic?: {
+        url: string;
+        public_id: string;
+    } | null;
+    bannerImage?: {
+        url: string;
+        public_id: string;
+    } | null;
     otp?: string | null;
     otpExpiry?: NativeDate | null;
 } & mongoose.DefaultTimestampProps & {

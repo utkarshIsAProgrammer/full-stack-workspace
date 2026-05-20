@@ -6,5 +6,6 @@ export declare const getAll: (req: Request, res: Response) => Promise<Response<a
 export declare const deleteAccount: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const shareProfile: (req: Request<Params>, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export declare const viewsCount: (req: Request<Params>, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
+export declare const updateProfile: (req: Request, res: Response) => Promise<Response<any, Record<string, any>> | undefined>;
 export {};
 //# sourceMappingURL=user.controllers.d.ts.map

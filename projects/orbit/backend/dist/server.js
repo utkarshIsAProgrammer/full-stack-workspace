@@ -16,8 +16,10 @@ const like_routes_1 = require("./routes/like.routes");
 const follow_routes_1 = require("./routes/follow.routes");
 const saves_routes_1 = require("./routes/saves.routes");
 const repost_routes_1 = require("./routes/repost.routes");
+const search_routes_1 = require("./routes/search.routes");
 const app = (0, express_1.default)();
 const port = process.env.PORT || 5000;
+app.set("trust proxy", 1);
 app.use(express_1.default.json());
 app.use((0, cookie_parser_1.default)());
 // api routes
@@ -30,6 +32,7 @@ app.use("/api/likes", like_routes_1.likeRoutes);
 app.use("/api/follows", follow_routes_1.followRoutes);
 app.use("/api/saves", saves_routes_1.saveRoutes);
 app.use("/api/reposts", repost_routes_1.repostRoutes);
+app.use("/api/search", search_routes_1.searchRoutes);
 (0, db_1.connectDB)().then(() => {
     app.listen(port, () => {
         console.log(`Server is running on PORT: ${port}`);
@@ -38,6 +41,10 @@ app.use("/api/reposts", repost_routes_1.repostRoutes);
 // ! BEN IS LOGGED IN
 /*
 ! --- ADD ---
-! CURSOR PAGING
+! SEARCH POST/PROFILE
+ */
+/*
+TODO:
+* 1. USER PROFILE AND SYNC WITH SEARCH PROFILE
  */
 //# sourceMappingURL=server.js.map

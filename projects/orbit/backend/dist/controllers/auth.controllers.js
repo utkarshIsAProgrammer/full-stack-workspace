@@ -9,29 +9,52 @@ const user_schema_1 = require("../schemas/user.schema");
 const nodeMailer_1 = require("../configs/nodeMailer");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const cookie_1 = require("../configs/cookie");
+const cloudinary_1 = __importDefault(require("../configs/cloudinary"));
 // signup
 const signup = async (req, res) => {
     const result = user_schema_1.signupSchema.safeParse(req.body);
     try {
         if (!result.success) {
+            if (req.file) {
+                await cloudinary_1.default.uploader.destroy(req.file.filename);
+            }
             return res.status(400).json({
                 success: false,
                 message: "Invalid data",
                 error: result.error.issues,
             });
         }
-        // check user exists
-        const userExists = await user_model_1.User.findOne({
-            email: result.data.email,
-        });
-        if (userExists) {
+        if (!req.file) {
             return res.status(400).json({
                 success: false,
-                message: "User already exists!",
+                message: "Profile picture is required!",
+            });
+        }
+        // check user exists
+        const userExists = await user_model_1.User.findOne({
+            $or: [{ email: result.data.email }, { username: result.data.username }],
+        });
+        if (userExists) {
+            await cloudinary_1.default.uploader.destroy(req.file.filename);
+            if (userExists.email === result.data.email) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Email already exists!",
+                });
+            }
+            return res.status(400).json({
+                success: false,
+                message: "Username already exists!",
             });
         }
         // create and save new user
-        const user = new user_model_1.User(result.data);
+        const user = new user_model_1.User({
+            ...result.data,
+            profilePic: {
+                url: req.file.path,
+                public_id: req.file.filename,
+            },
+        });
         await user.save();
         // generate jwt and set cookie
         const token = user?.signToken();
@@ -39,11 +62,22 @@ const signup = async (req, res) => {
             ...cookie_1.cookieOptions,
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
         });
-        res.status(201).json({
+        return res.status(201).json({
             success: true,
             message: "User created successfully!",
-            ...user.toObject(),
-            password: undefined, // remove password from response
+            user: {
+                _id: user._id,
+                username: user.username,
+                fullName: user.fullName,
+                email: user.email,
+                gender: user.gender,
+                bio: user.bio,
+                profilePic: user.profilePic,
+                bannerImage: user.bannerImage,
+                followersCount: user.followersCount,
+                followingCount: user.followingCount,
+                createdAt: user.createdAt,
+            },
         });
         // send welcome email
         (0, nodeMailer_1.sendWelcomeMail)({
@@ -52,6 +86,14 @@ const signup = async (req, res) => {
         });
     }
     catch (err) {
+        if (req.file) {
+            try {
+                await cloudinary_1.default.uploader.destroy(req.file.filename);
+            }
+            catch (cloudErr) {
+                console.log("Cloudinary destroy error: ", cloudErr);
+            }
+        }
         console.log(`Error in the signup controller! ${err.message}`);
         res.status(500).json({ message: "Internal server error!" });
     }
@@ -81,7 +123,7 @@ const login = async (req, res) => {
             }
             catch (err) {
                 console.log(`Invalid/expired token! ${err.message}`);
-                res.status(401).json({
+                return res.status(401).json({
                     success: false,
                     message: "Invalid/expired token!",
                 });
@@ -118,8 +160,13 @@ const login = async (req, res) => {
             message: "User logged in successfully!",
             user: {
                 _id: user._id,
+                fullName: user.fullName,
                 username: user.username,
                 email: user.email,
+                gender: user.gender,
+                bio: user.bio,
+                profilePic: user.profilePic,
+                bannerImage: user.bannerImage,
                 followersCount: user.followersCount,
                 followingCount: user.followingCount,
                 createdAt: user.createdAt,

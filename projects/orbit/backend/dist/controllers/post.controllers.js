@@ -8,6 +8,7 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const post_model_1 = __importDefault(require("../models/post.model"));
 const post_schema_1 = require("../schemas/post.schema");
 const cloudinary_1 = __importDefault(require("../configs/cloudinary"));
+const cache_1 = require("../configs/cache");
 // get single post by id
 const getPost = async (req, res) => {
     const { postId } = req.params;
@@ -19,8 +20,20 @@ const getPost = async (req, res) => {
                 message: "Invalid ID!",
             });
         }
+        // cache key
+        const cacheKey = `post:${postId}`;
+        // get cached post
+        try {
+            const cachedPost = await (0, cache_1.getCache)(cacheKey);
+            if (cachedPost) {
+                return res.status(200).json(cachedPost);
+            }
+        }
+        catch (cacheError) {
+            console.log(`Cache error in getPost controller! ${cacheError.message}`);
+        }
         // fetch post
-        const post = await post_model_1.default.findOne({ _id: postId })
+        const post = await post_model_1.default.findById(postId)
             .populate("author", "username email")
             .lean();
         // check existence
@@ -30,15 +43,27 @@ const getPost = async (req, res) => {
                 message: "Post not found!",
             });
         }
-        res.status(200).json({
+        // response data
+        const responseData = {
             success: true,
             message: "Post fetched successfully!",
             post,
-        });
+        };
+        // cache post
+        try {
+            await (0, cache_1.setCache)(cacheKey, responseData, 60 * 5);
+        }
+        catch (cacheError) {
+            console.log(`Cache set error in getPost controller! ${cacheError.message}`);
+        }
+        return res.status(200).json(responseData);
     }
     catch (err) {
-        console.log(`Error in the getPost controller! ${err.message}`);
-        res.status(500).json({ message: "Internal server error!" });
+        console.log(`Error in getPost controller! ${err.message}`);
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error!",
+        });
     }
 };
 exports.getPost = getPost;
@@ -48,45 +73,65 @@ const getAllPosts = async (req, res) => {
         // pagination
         const limit = Math.min(Number(req.query.limit) || 10, 20);
         const cursor = req.query.cursor;
+        // query
         const query = {};
-        // if cursor exists fetch older posts
+        // cursor pagination
         if (cursor) {
             query._id = {
                 $lt: cursor,
             };
         }
-        // fetch all posts
+        // cache key
+        const cacheKey = `posts:${cursor || "first"}:${limit}`;
+        // get cached posts
+        try {
+            const cachedPosts = await (0, cache_1.getCache)(cacheKey);
+            if (cachedPosts) {
+                return res.status(200).json(cachedPosts);
+            }
+        }
+        catch (cacheError) {
+            console.log(`Cache error in getAllPosts controller! ${cacheError.message}`);
+        }
+        // fetch posts
         const posts = await post_model_1.default.find(query)
-            .sort({ _id: -1 }) /// newest first
-            .limit(limit + 1) // an extra post for "hasMore"
+            .sort({ _id: -1 })
+            .limit(limit + 1)
             .populate("author", "username email")
             .lean();
-        // check more post exists
+        // check more posts
         const hasMore = posts.length > limit;
         // remove extra post
         if (hasMore) {
             posts.pop();
         }
-        // check empty list (post)
-        if (posts.length === 0) {
-            return res.status(200).json({
-                success: true,
-                message: "No posts yet!",
-            });
-        }
         // next cursor
         const nextCursor = posts[posts.length - 1]?._id || null;
-        return res.status(200).json({
+        // response data
+        const responseData = {
             success: true,
-            message: "All posts fetched successfully!",
+            message: posts.length
+                ? "All posts fetched successfully!"
+                : "No posts yet!",
             posts,
             nextCursor,
             hasMore,
-        });
+        };
+        // cache posts
+        try {
+            await (0, cache_1.setCache)(cacheKey, responseData, 60);
+        }
+        catch (cacheError) {
+            console.log(`Cache set error in getAllPosts controller! ${cacheError.message}`);
+        }
+        return res.status(200).json(responseData);
     }
     catch (err) {
-        console.log(`Error in the getAllPosts controller! ${err.message}`);
-        res.status(500).json({ message: "Internal server error!" });
+        console.log(`Error in getAllPosts controller! ${err.message}`);
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error!",
+        });
     }
 };
 exports.getAllPosts = getAllPosts;
@@ -94,7 +139,7 @@ exports.getAllPosts = getAllPosts;
 const createPost = async (req, res) => {
     const result = post_schema_1.createPostSchema.safeParse(req.body);
     try {
-        // check validation
+        // validate input
         if (!result.success) {
             return res.status(400).json({
                 success: false,
@@ -102,7 +147,7 @@ const createPost = async (req, res) => {
                 error: result.error.issues,
             });
         }
-        // check user auth
+        // auth check
         const author = req.user?._id;
         if (!author) {
             return res.status(401).json({
@@ -110,17 +155,21 @@ const createPost = async (req, res) => {
                 message: "Unauthorized access!",
             });
         }
-        // create post object
+        // create post
         const post = new post_model_1.default({
             ...result.data,
             author,
-            image: {
-                url: req.file?.path || "",
-                public_id: req.file?.filename || "",
-            },
+            image: req.file
+                ? {
+                    url: req.file.path,
+                    public_id: req.file.filename,
+                }
+                : undefined,
         });
         // save post
         await post.save();
+        // invalidate feed cache
+        await (0, cache_1.clearFeedCache)();
         return res.status(201).json({
             success: true,
             message: "Post created successfully!",
@@ -128,14 +177,18 @@ const createPost = async (req, res) => {
         });
     }
     catch (err) {
+        // duplicate slug
         if (err.code === 11000) {
             return res.status(409).json({
                 success: false,
-                message: "Duplicate slug, try different title",
+                message: "Duplicate slug, try different title!",
             });
         }
-        console.log(`Error in the createPost controller! ${err.message}`);
-        res.status(500).json({ message: "Internal server error!" });
+        console.log(`Error in createPost controller! ${err.message}`);
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error!",
+        });
     }
 };
 exports.createPost = createPost;
@@ -173,27 +226,30 @@ const updatePost = async (req, res) => {
                 message: "Forbidden!",
             });
         }
-        // normalize form-data values
+        // normalize input
         const title = req.body.title?.trim();
         const content = req.body.content?.trim();
         const file = req.file;
-        // ensure at least one update exists
+        // ensure update exists
         const hasText = (title && title.length > 0) || (content && content.length > 0);
         const hasImage = !!file;
         if (!hasText && !hasImage) {
             return res.status(400).json({
                 success: false,
-                message: "At least one of title, content, or image must be provided!",
+                message: "At least one field is required!",
             });
         }
-        // update text fields
-        if (title)
+        // update title
+        if (title) {
             post.title = title;
-        if (content)
+        }
+        // update content
+        if (content) {
             post.content = content;
-        // update image if provided
+        }
+        // update image
         if (file) {
-            // delete old image from cloudinary
+            // delete old image
             if (post.image?.public_id) {
                 await cloudinary_1.default.uploader.destroy(post.image.public_id);
             }
@@ -202,7 +258,11 @@ const updatePost = async (req, res) => {
                 public_id: file.filename,
             };
         }
+        // save
         await post.save();
+        // invalidate cache
+        await (0, cache_1.deleteCache)(`post:${postId}`);
+        await (0, cache_1.clearFeedCache)();
         return res.status(200).json({
             success: true,
             message: "Post updated successfully!",
@@ -212,6 +272,7 @@ const updatePost = async (req, res) => {
     catch (err) {
         console.log(`Error in updatePost controller! ${err.message}`);
         return res.status(500).json({
+            success: false,
             message: "Internal server error!",
         });
     }
@@ -229,7 +290,7 @@ const deletePost = async (req, res) => {
                 message: "Invalid ID!",
             });
         }
-        // check user auth
+        // auth check
         if (!userId) {
             return res.status(401).json({
                 success: false,
@@ -244,28 +305,33 @@ const deletePost = async (req, res) => {
                 message: "Post not found!",
             });
         }
-        // verify ownership
+        // ownership check
         if (post.author.toString() !== userId.toString()) {
             return res.status(403).json({
                 success: false,
                 message: "Forbidden!",
             });
         }
-        // delete cloudinary image
+        // delete image
         if (post.image?.public_id) {
             await cloudinary_1.default.uploader.destroy(post.image.public_id);
         }
-        console.log("PUBLIC_ID:", post.image?.public_id);
         // delete post
         await post.deleteOne();
-        res.status(200).json({
+        // invalidate cache
+        await (0, cache_1.deleteCache)(`post:${postId}`);
+        await (0, cache_1.clearFeedCache)();
+        return res.status(200).json({
             success: true,
             message: "Post deleted successfully!",
         });
     }
     catch (err) {
-        console.log(`Error in the deletePost controller! ${err.message}`);
-        res.status(500).json({ message: "Internal server error!" });
+        console.log(`Error in deletePost controller! ${err.message}`);
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error!",
+        });
     }
 };
 exports.deletePost = deletePost;
@@ -277,22 +343,29 @@ const sharePost = async (req, res) => {
         if (!mongoose_1.default.Types.ObjectId.isValid(postId)) {
             return res.status(400).json({
                 success: false,
-                message: "Invalid post Id!",
+                message: "Invalid post ID!",
             });
         }
         // increment share count
         const post = await post_model_1.default.findByIdAndUpdate(postId, {
-            $inc: { sharesCount: 1 },
-        }, { new: true });
+            $inc: {
+                sharesCount: 1,
+            },
+        }, {
+            new: true,
+        }).select("sharesCount slug");
+        // check existence
         if (!post) {
             return res.status(404).json({
                 success: false,
                 message: "Post not found!",
             });
         }
-        // generate url
+        // invalidate cache
+        await (0, cache_1.deleteCache)(`post:${postId}`);
+        // share url
         const shareUrl = `${process.env.CLIENT_URL}/post/${post.slug}`;
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             message: "Post shared successfully!",
             shares: post.sharesCount,
@@ -300,34 +373,38 @@ const sharePost = async (req, res) => {
         });
     }
     catch (err) {
-        console.log(`Error in the share post controller! ${err.message}`);
-        res.status(500).json({ message: "Internal server error!" });
+        console.log(`Error in sharePost controller! ${err.message}`);
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error!",
+        });
     }
 };
 exports.sharePost = sharePost;
-// view post count
+// increment post views
 const viewsCount = async (req, res) => {
     const { postId } = req.params;
     const currentUser = req.user?._id;
     try {
-        // validate post
+        // validate id
         if (!mongoose_1.default.Types.ObjectId.isValid(postId)) {
             return res.status(400).json({
                 success: false,
-                message: "Invalid post Id!",
+                message: "Invalid post ID!",
             });
         }
-        // check post exists
+        // fetch minimal fields
         const post = await post_model_1.default.findById(postId)
             .select("_id author viewsCount")
             .lean();
+        // check existence
         if (!post) {
             return res.status(404).json({
                 success: false,
                 message: "Post not found!",
             });
         }
-        // prevent self views count
+        // ignore self views
         if (currentUser && post.author.toString() === currentUser.toString()) {
             return res.status(200).json({
                 success: true,
@@ -335,19 +412,26 @@ const viewsCount = async (req, res) => {
                 views: post.viewsCount,
             });
         }
-        // increment views count
+        // increment views
         const updatedPost = await post_model_1.default.findByIdAndUpdate(postId, {
-            $inc: { viewsCount: 1 },
-        }, { new: true });
-        res.status(200).json({
+            $inc: {
+                viewsCount: 1,
+            },
+        }, {
+            new: true,
+        }).select("viewsCount");
+        // invalidate cache
+        await (0, cache_1.deleteCache)(`post:${postId}`);
+        return res.status(200).json({
             success: true,
             message: "View counted successfully!",
             views: updatedPost?.viewsCount,
         });
     }
     catch (err) {
-        console.log(`Error in the viewsCount controller! ${err.message}`);
-        res.status(500).json({
+        console.log(`Error in viewsCount controller! ${err.message}`);
+        return res.status(500).json({
+            success: false,
             message: "Internal server error!",
         });
     }

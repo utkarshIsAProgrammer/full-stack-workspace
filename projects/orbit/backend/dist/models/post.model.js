@@ -73,6 +73,7 @@ const postSchema = new mongoose_1.default.Schema({
     },
 }, { timestamps: true });
 // combined index
+postSchema.index({ title: "text" });
 postSchema.index({ author: 1, createdAt: -1 });
 // slug generation
 postSchema.pre("validate", async function () {

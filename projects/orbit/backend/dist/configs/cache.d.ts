@@ -1,0 +1,9 @@
+export declare const getCache: <T>(key: string) => Promise<T | null>;
+export declare const setCache: (key: string, value: unknown, ttl?: number) => Promise<void>;
+export declare const deleteCache: (key: string) => Promise<void>;
+export declare const clearFeedCache: () => Promise<void>;
+export declare const clearUsersCache: () => Promise<void>;
+export declare const clearCommentsCache: (postId: string) => Promise<void>;
+export declare const clearFollowCache: (userId: string, followerId: string) => Promise<void>;
+export declare const clearSavesCache: (userId: string) => Promise<void>;
+//# sourceMappingURL=cache.d.ts.map

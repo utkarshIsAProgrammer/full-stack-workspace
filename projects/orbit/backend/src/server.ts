@@ -11,6 +11,7 @@ import { likeRoutes } from "./routes/like.routes";
 import { followRoutes } from "./routes/follow.routes";
 import { saveRoutes } from "./routes/saves.routes";
 import { repostRoutes } from "./routes/repost.routes";
+import { searchRoutes } from "./routes/search.routes";
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -30,6 +31,7 @@ app.use("/api/likes", likeRoutes);
 app.use("/api/follows", followRoutes);
 app.use("/api/saves", saveRoutes);
 app.use("/api/reposts", repostRoutes);
+app.use("/api/search", searchRoutes);
 
 connectDB().then(() => {
   app.listen(port, () => {
@@ -41,17 +43,10 @@ connectDB().then(() => {
 
 /* 
 ! --- ADD ---
-! RATELIMITING USING EXPRESS-RATE-LIMIT (KEEPING IT SIMPLE)
-! REDIS CACHING FOR ALL GET REQUESTS
-* NOTE: CACHING NOTE VERY CLEAR YET, BUT CAN BE IMPLEMENTED WITH SOME STRUGGLE AND AI HELP 
-
-! --- FIX ---
-! PROBLEMS IN EACH CONTROLLERS THAT MIGHT BREAK IN SOME CASES
-! "blobBlogs" IS NOW "Orbit"
+! SEARCH POST/PROFILE
  */
 
 /* 
 TODO: 
-* 1. image optimization
-* 2. search (user/post)
+* 1. USER PROFILE AND SYNC WITH SEARCH PROFILE
  */

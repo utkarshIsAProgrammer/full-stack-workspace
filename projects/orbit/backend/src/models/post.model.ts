@@ -84,6 +84,7 @@ const postSchema = new mongoose.Schema(
 );
 
 // combined index
+postSchema.index({ title: "text" });
 postSchema.index({ author: 1, createdAt: -1 });
 
 // slug generation
