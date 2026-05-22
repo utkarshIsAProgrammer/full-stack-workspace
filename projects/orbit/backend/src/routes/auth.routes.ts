@@ -6,7 +6,15 @@ import upload from "../middlewares/upload.middleware";
 
 const router = express.Router();
 
-router.post("/signup", authLimiter, upload.single("profilePic"), signup);
+router.post(
+  "/signup",
+  authLimiter,
+  upload.fields([
+    { name: "profilePic", maxCount: 1 },
+    { name: "bannerImage", maxCount: 1 },
+  ]),
+  signup
+);
 router.post("/login", authLimiter, login);
 router.post("/logout", protect, logout);
 

@@ -10,11 +10,23 @@ import cloudinary from "../configs/cloudinary";
 export const signup = async (req: Request, res: Response) => {
   const result = signupSchema.safeParse(req.body);
 
+  const cleanupFiles = async (filesObj: any) => {
+    if (!filesObj) return;
+    const files = filesObj as { [fieldname: string]: Express.Multer.File[] };
+    const pPic = files.profilePic?.[0];
+    const bImg = files.bannerImage?.[0];
+    
+    if (pPic?.filename) {
+      try { await cloudinary.uploader.destroy(pPic.filename); } catch (e) {}
+    }
+    if (bImg?.filename) {
+      try { await cloudinary.uploader.destroy(bImg.filename); } catch (e) {}
+    }
+  };
+
   try {
     if (!result.success) {
-      if (req.file) {
-        await cloudinary.uploader.destroy(req.file.filename);
-      }
+      await cleanupFiles(req.files);
       return res.status(400).json({
         success: false,
         message: "Invalid data",
@@ -22,7 +34,12 @@ export const signup = async (req: Request, res: Response) => {
       });
     }
 
-    if (!req.file) {
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+    const profilePic = files?.profilePic?.[0];
+    const bannerImage = files?.bannerImage?.[0];
+
+    if (!profilePic) {
+      await cleanupFiles(req.files);
       return res.status(400).json({
         success: false,
         message: "Profile picture is required!",
@@ -35,7 +52,7 @@ export const signup = async (req: Request, res: Response) => {
     });
 
     if (userExists) {
-      await cloudinary.uploader.destroy(req.file.filename);
+      await cleanupFiles(req.files);
       if (userExists.email === result.data.email) {
         return res.status(400).json({
           success: false,
@@ -48,14 +65,23 @@ export const signup = async (req: Request, res: Response) => {
       });
     }
 
-    // create and save new user
-    const user = new User({
+    const userData: any = {
       ...result.data,
       profilePic: {
-        url: req.file.path,
-        public_id: req.file.filename,
+        url: profilePic.path,
+        public_id: profilePic.filename,
       },
-    });
+    };
+
+    if (bannerImage) {
+      userData.bannerImage = {
+        url: bannerImage.path,
+        public_id: bannerImage.filename,
+      };
+    }
+
+    // create and save new user
+    const user = new User(userData);
     await user.save();
 
     // generate jwt and set cookie

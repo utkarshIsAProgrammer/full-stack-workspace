@@ -1,6 +1,8 @@
 import express from "express";
 import {
   getComment,
+  getAllComments,
+  getCommentReplies,
   addComment,
   updateComment,
   deleteComment,
@@ -10,6 +12,8 @@ import { commentLimiter } from "../middlewares/ratelimit.middleware";
 
 const router = express.Router();
 
+router.get("/", getAllComments);
+router.get("/replies/:commentId", getCommentReplies);
 router.get("/:postId", getComment);
 router.post("/:postId", protect, commentLimiter, addComment);
 router.put("/:commentId", protect, commentLimiter, updateComment);

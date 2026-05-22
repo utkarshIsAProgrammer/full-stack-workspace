@@ -31,9 +31,9 @@ const userSchema = z.object({
     .trim()
     .optional(),
 
-  profilePic: z.string().url("Invalid profile picture URL!").trim().optional(),
+  profilePic: z.url("Invalid profile picture URL!").trim().optional(),
 
-  bannerImage: z.string().url("Invalid banner image URL!").trim().optional(),
+  bannerImage: z.url("Invalid banner image URL!").trim().optional(),
 
   password: z
     .string()
@@ -107,18 +107,31 @@ export const updateProfileSchema = z.object({
     .max(100, "Name must be less than 100 characters!")
     .trim()
     .optional(),
+
   fullName: z
     .string()
     .min(3, "Full name must be at least 3 characters long!")
     .max(50, "Full name must be less than 50 characters!")
     .trim()
     .optional(),
+
   gender: z.enum(["male", "female", "others"]).optional(),
+
   bio: z
     .string()
     .max(300, "Bio must be less than 300 characters!")
     .trim()
     .optional(),
+
+  removeProfilePic: z.preprocess(
+    (val) => val === "true" || val === true,
+    z.boolean().optional(),
+  ),
+
+  removeBannerImage: z.preprocess(
+    (val) => val === "true" || val === true,
+    z.boolean().optional(),
+  ),
 });
 
 // Type definitions derived from Zod schemas

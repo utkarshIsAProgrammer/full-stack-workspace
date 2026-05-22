@@ -32,7 +32,7 @@ likeSchema.index(
   { author: 1, post: 1 },
   {
     unique: true,
-    partialFilterExpression: { post: { $exists: true } },
+    partialFilterExpression: { post: { $ne: null } },
   },
 );
 
@@ -40,7 +40,7 @@ likeSchema.index(
   { author: 1, comment: 1 },
   {
     unique: true,
-    partialFilterExpression: { comment: { $exists: true } },
+    partialFilterExpression: { comment: { $ne: null } },
   },
 );
 // like model

@@ -99,6 +99,89 @@ export const getComment = async (req: Request<Params>, res: Response) => {
   }
 };
 
+// Get all comments
+export const getAllComments = async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 10, 50);
+    const cursor = req.query.cursor as string;
+
+    const query: any = {};
+    if (cursor) {
+      query._id = { $lt: cursor };
+    }
+
+    const comments = await Comment.find(query)
+      .sort({ _id: -1 })
+      .limit(limit + 1)
+      .populate("author", "username email profilePic")
+      .lean();
+
+    const hasMore = comments.length > limit;
+    if (hasMore) {
+      comments.pop();
+    }
+
+    const nextCursor = comments[comments.length - 1]?._id || null;
+
+    return res.status(200).json({
+      success: true,
+      comments,
+      nextCursor,
+      hasMore,
+    });
+  } catch (err: any) {
+    console.log(`Error in getAllComments: ${err.message}`);
+    return res.status(500).json({ message: "Internal server error!" });
+  }
+};
+
+// Get replies for a specific comment
+export const getCommentReplies = async (
+  req: Request<CommentParams>,
+  res: Response,
+) => {
+  const { commentId } = req.params;
+
+  try {
+    if (!mongoose.Types.ObjectId.isValid(commentId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid comment ID!" });
+    }
+
+    const limit = Math.min(Number(req.query.limit) || 10, 50);
+    const cursor = req.query.cursor as string;
+
+    const query: any = { parent: commentId };
+    if (cursor) {
+      query._id = { $lt: cursor };
+    }
+
+    const replies = await Comment.find(query)
+      .sort({ _id: -1 })
+      .limit(limit + 1)
+      .populate("author", "username email profilePic")
+      .lean();
+
+    const hasMore = replies.length > limit;
+    if (hasMore) {
+      replies.pop();
+    }
+
+    const nextCursor = replies[replies.length - 1]?._id || null;
+
+    return res.status(200).json({
+      success: true,
+      replies,
+      nextCursor,
+      hasMore,
+    });
+  } catch (err: any) {
+    console.log(`Error in getCommentReplies: ${err.message}`);
+    return res.status(500).json({ message: "Internal server error!" });
+  }
+};
+
 // create a new comment or reply
 export const addComment = async (req: Request<Params>, res: Response) => {
   const result = addCommentSchema.safeParse(req.body);
@@ -254,7 +337,9 @@ export const updateComment = async (
 const collectDescendantCommentIds = async (
   commentId: string,
 ): Promise<string[]> => {
-  const replies = await Comment.find({ parent: commentId }).select("_id").lean();
+  const replies = await Comment.find({ parent: commentId })
+    .select("_id")
+    .lean();
   const ids = [commentId];
 
   for (const reply of replies) {

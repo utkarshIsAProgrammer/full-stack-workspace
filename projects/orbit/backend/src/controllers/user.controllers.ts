@@ -126,7 +126,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
 
     // get user id from the auth middleware
     const userId = req.user?._id;
-    
+
     // delete profile pic and banner image from cloudinary
     if (user.profilePic?.public_id) {
       try {
@@ -331,7 +331,30 @@ export const updateProfile = async (req: Request, res: Response) => {
       }
     }
 
+    // Check explicit deletion flags first
     const updateData: any = { ...result.data };
+    delete updateData.removeProfilePic;
+    delete updateData.removeBannerImage;
+
+    // Remove profile pic
+    if (result.data.removeProfilePic) {
+      if (user.profilePic?.public_id) {
+        try {
+          await cloudinary.uploader.destroy(user.profilePic.public_id);
+        } catch (e) {}
+      }
+      updateData.profilePic = { url: "", public_id: "" };
+    }
+
+    // Remove banner image
+    if (result.data.removeBannerImage) {
+      if (user.bannerImage?.public_id) {
+        try {
+          await cloudinary.uploader.destroy(user.bannerImage.public_id);
+        } catch (e) {}
+      }
+      updateData.bannerImage = { url: "", public_id: "" };
+    }
 
     if (req.files) {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] };

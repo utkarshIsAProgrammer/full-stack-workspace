@@ -276,9 +276,9 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
     }
 
     // normalize input
-    const title = req.body.title?.trim();
+    const title = req.body?.title?.trim();
 
-    const content = req.body.content?.trim();
+    const content = req.body?.content?.trim();
 
     const file = req.file;
 

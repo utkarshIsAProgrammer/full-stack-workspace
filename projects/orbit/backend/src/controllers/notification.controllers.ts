@@ -111,6 +111,7 @@ export const getNotifications = async (req: Request, res: Response) => {
 export const markAsRead = async (req: Request, res: Response) => {
   try {
     const userId = req.user?._id;
+    const notificationId = req.params.notificationId as string | undefined;
 
     if (!userId) {
       return res.status(401).json({
@@ -119,6 +120,35 @@ export const markAsRead = async (req: Request, res: Response) => {
       });
     }
 
+    // if notificationId is provided, mark only that single notification as read
+    if (notificationId) {
+      if (!mongoose.Types.ObjectId.isValid(notificationId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid notification ID!",
+        });
+      }
+
+      const notification = await Notification.findOneAndUpdate(
+        { _id: notificationId, recipient: userId, isRead: false },
+        { isRead: true },
+        { new: true }
+      );
+
+      if (!notification) {
+        return res.status(404).json({
+          success: false,
+          message: "Notification not found or already read!",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Notification marked as read!",
+      });
+    }
+
+    // if no notificationId is provided, mark ALL as read
     await Notification.updateMany(
       { recipient: userId, isRead: false },
       { isRead: true },
@@ -126,7 +156,7 @@ export const markAsRead = async (req: Request, res: Response) => {
 
     return res.status(200).json({
       success: true,
-      message: "Notifications marked as read!",
+      message: "All notifications marked as read!",
     });
   } catch (err: any) {
     console.log(`Error in markAsRead controller! ${err.message}`);

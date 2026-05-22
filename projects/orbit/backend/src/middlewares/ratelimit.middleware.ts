@@ -3,7 +3,7 @@ import rateLimit from "express-rate-limit";
 // auth limiter
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: 20,
 
   message: {
     success: false,
@@ -14,7 +14,7 @@ export const authLimiter = rateLimit({
 // otp limiter
 export const otpLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
-  max: 3,
+  max: 5,
 
   message: {
     success: false,
@@ -36,7 +36,7 @@ export const commentLimiter = rateLimit({
 // interaction limiter
 export const interactionLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 100,
+  max: 30,
 
   message: {
     success: false,
@@ -47,7 +47,7 @@ export const interactionLimiter = rateLimit({
 // notification read limiter
 export const notificationLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 60,
+  max: 40,
 
   message: {
     success: false,
