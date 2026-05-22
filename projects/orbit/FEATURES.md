@@ -1,6 +1,6 @@
 # Orbit — Features & How They Work
 
-**Orbit** is a social blogging platform API. Users create accounts, publish posts with images, interact with each other, and get notified when something happens on their content. This document explains **what the app does** and **how each feature works** behind the scenes.
+**Orbit** is a social media platform API. Users create accounts, publish posts with images, interact with each other, and get notified when something happens on their content. This document explains **what the app does** and **how each feature works** behind the scenes.
 
 ---
 
@@ -22,7 +22,7 @@ The backend stores data in **MongoDB**, speeds up reads with **Redis cache**, an
 
 ### Sign up
 
-1. User sends username, email, password, gender, and a **profile picture** (required file upload).
+1. User sends username, email, password, gender, a **profile picture** (required), and an optional **banner image**.
 2. Server checks email/username are unique.
 3. Password is **hashed** (never stored plain text).
 4. Profile image goes to **Cloudinary**.
@@ -95,8 +95,9 @@ User must confirm with their **password**. The account is removed and associated
 
 ### Read comments
 
-- For a given post, loads **top-level comments** (not nested inline list of all depths in one flat sort — replies use `parent`).
-- Paginated with cursor; cached per post.
+- **On a post:** `GET /api/comments/:postId` — top-level comments only (`parent: null`), paginated, cached per post.
+- **Replies:** `GET /api/comments/replies/:commentId` — direct replies to one comment, paginated.
+- **Global:** `GET /api/comments/` — all comments across posts (paginated), for explore/admin-style views.
 
 ### Add comment
 
@@ -176,9 +177,10 @@ Self-actions never notify (e.g. commenting on your own post).
 
 ### Reading notifications
 
-- **List:** Newest first, paginated. Each item includes sender profile, post title/slug, comment snippet when relevant.
-- **Unread count:** For badge on UI.
-- **Mark all read:** Sets `isRead: true` on all your unread items.
+- **List:** Newest first, paginated (cursor = `{timestamp}_{notificationId}`). Each item includes sender profile, post title/slug, comment snippet when relevant.
+- **Unread count:** For badge on UI (`GET /api/notifications/unread-count`).
+- **Mark all read:** `PUT /api/notifications/mark-as-read`
+- **Mark one read:** `PUT /api/notifications/mark-as-read/:notificationId`
 
 Notifications are removed when:
 
@@ -244,4 +246,13 @@ All uploads (signup photo, profile, banner, post image) go to **Cloudinary**. De
 
 For the full route list, file structure, and tech tables, see **`PROJECT.md`**.
 
-21 May 2026 | @indieDev | Panchajanya
+---
+
+## Documentation index
+
+| File | Use |
+|------|-----|
+| [`README.md`](README.md) | Repo overview |
+| [`PROJECT.md`](PROJECT.md) | API & architecture reference |
+| [`backend/README.md`](backend/README.md) | Backend setup |
+| [`FRONTEND_AI_PROMPT.md`](FRONTEND_AI_PROMPT.md) | Build the frontend with AI |

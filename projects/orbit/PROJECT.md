@@ -1,8 +1,10 @@
 # Orbit — Project Documentation
 
-A **social blogging platform API** (backend). Users sign up, publish posts with images, interact via likes/comments/follows/reposts/saves, and receive real-time-style **in-app notifications**. Built with **Node.js, Express, TypeScript, and MongoDB**.
+A **social media platform API** (backend). Users sign up, publish posts with images, interact via likes/comments/follows/reposts/saves, and receive real-time-style **in-app notifications**. Built with **Node.js, Express, TypeScript, and MongoDB**.
 
 > **Scope of this repo:** `backend/` only (REST API). Connect a separate frontend using `CLIENT_URL` + cookie auth.
+
+**Docs:** [`README.md`](README.md) · [`backend/README.md`](backend/README.md) · [`FEATURES.md`](FEATURES.md) · [`FRONTEND_AI_PROMPT.md`](FRONTEND_AI_PROMPT.md)
 
 ---
 
@@ -191,11 +193,11 @@ Legend: **Auth** = `protect` required | **View** = `protectViews` (optional logi
 
 ### Auth — `/api/auth`
 
-| Method | Path      | Auth   | Description                                   |
-| ------ | --------- | ------ | --------------------------------------------- |
-| POST   | `/signup` | Public | Register (multipart `profilePic` required)    |
-| POST   | `/login`  | Public | Login; sets `jwt` cookie; clears stale cookie |
-| POST   | `/logout` | Auth   | Clears `jwt` cookie                           |
+| Method | Path      | Auth   | Description                                                         |
+| ------ | --------- | ------ | ------------------------------------------------------------------- |
+| POST   | `/signup` | Public | Register (multipart: `profilePic` required, `bannerImage` optional) |
+| POST   | `/login`  | Public | Login; sets `jwt` cookie; clears stale cookie                       |
+| POST   | `/logout` | Auth   | Clears `jwt` cookie                                                 |
 
 ### Password — `/api/password`
 
@@ -229,12 +231,16 @@ Legend: **Auth** = `protect` required | **View** = `protectViews` (optional logi
 
 ### Comments — `/api/comments`
 
-| Method | Path          | Auth   | Description                                           |
-| ------ | ------------- | ------ | ----------------------------------------------------- |
-| GET    | `/:postId`    | Public | Top-level comments + pagination (`?limit`, `?cursor`) |
-| POST   | `/:postId`    | Auth   | Add comment or reply (`parent` optional)              |
-| PUT    | `/:commentId` | Auth   | Edit own comment                                      |
-| DELETE | `/:commentId` | Auth   | Delete own comment thread (+ cascade)                 |
+| Method | Path                  | Auth   | Description                                      |
+| ------ | --------------------- | ------ | ------------------------------------------------ |
+| GET    | `/`                   | Public | All comments (global feed, paginated)            |
+| GET    | `/replies/:commentId` | Public | Replies to a comment (`?limit`, `?cursor`)       |
+| GET    | `/:postId`            | Public | Top-level comments on a post (paginated, cached) |
+| POST   | `/:postId`            | Auth   | Add comment or reply (`parent` optional in body) |
+| PUT    | `/:commentId`         | Auth   | Edit own comment                                 |
+| DELETE | `/:commentId`         | Auth   | Delete own comment thread (+ cascade)            |
+
+> Route order: `/replies/:commentId` is registered before `/:postId` so `replies` is not captured as a post id.
 
 ### Likes — `/api/likes`
 
@@ -273,11 +279,12 @@ Legend: **Auth** = `protect` required | **View** = `protectViews` (optional logi
 
 ### Notifications — `/api/notifications`
 
-| Method | Path            | Auth | Description                              |
-| ------ | --------------- | ---- | ---------------------------------------- |
-| GET    | `/unread-count` | Auth | Count of unread notifications            |
-| GET    | `/`             | Auth | List notifications (`?limit`, `?cursor`) |
-| PUT    | `/mark-as-read` | Auth | Mark all notifications as read           |
+| Method | Path                            | Auth | Description                                    |
+| ------ | ------------------------------- | ---- | ---------------------------------------------- |
+| GET    | `/unread-count`                 | Auth | Count of unread notifications                  |
+| GET    | `/`                             | Auth | List notifications (`?limit`, `?cursor`)       |
+| PUT    | `/mark-as-read`                 | Auth | Mark **all** notifications as read             |
+| PUT    | `/mark-as-read/:notificationId` | Auth | Mark **one** notification as read (owner only) |
 
 **Notification pagination cursor:** `{timestamp}_{notificationId}` (not raw `_id`).
 
@@ -285,19 +292,19 @@ Legend: **Auth** = `protect` required | **View** = `protectViews` (optional logi
 
 ## 11. Controllers reference
 
-| File                          | Exported functions                                                                            |
-| ----------------------------- | --------------------------------------------------------------------------------------------- |
-| `auth.controllers.ts`         | `signup`, `login`, `logout`                                                                   |
-| `password.controllers.ts`     | `updatePassword`, `requestOtpForForgotPassword`, `verifyOtpAndForgotPassword`                 |
-| `user.controllers.ts`         | `getAll`, `deleteAccount`, `shareProfile`, `viewsCount`, `updateProfile`                      |
-| `post.controllers.ts`         | `getPost`, `getAllPosts`, `createPost`, `updatePost`, `deletePost`, `sharePost`, `viewsCount` |
-| `comment.controllers.ts`      | `getComment`, `addComment`, `updateComment`, `deleteComment`                                  |
-| `like.controllers.ts`         | `togglePostLikes`, `toggleCommentLikes`                                                       |
-| `follow.controllers.ts`       | `toggleFollowUser`, `getFollowers`, `getFollowing`                                            |
-| `saves.controllers.ts`        | `toggleSavePost`, `getSavedPosts`                                                             |
-| `repost.controllers.ts`       | `toggleRepost`                                                                                |
-| `search.controllers.ts`       | `searchUsers`, `searchPosts`                                                                  |
-| `notification.controllers.ts` | `getUnreadCount`, `getNotifications`, `markAsRead`                                            |
+| File                          | Exported functions                                                                                  |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| `auth.controllers.ts`         | `signup`, `login`, `logout`                                                                         |
+| `password.controllers.ts`     | `updatePassword`, `requestOtpForForgotPassword`, `verifyOtpAndForgotPassword`                       |
+| `user.controllers.ts`         | `getAll`, `deleteAccount`, `shareProfile`, `viewsCount`, `updateProfile`                            |
+| `post.controllers.ts`         | `getPost`, `getAllPosts`, `createPost`, `updatePost`, `deletePost`, `sharePost`, `viewsCount`       |
+| `comment.controllers.ts`      | `getComment`, `getAllComments`, `getCommentReplies`, `addComment`, `updateComment`, `deleteComment` |
+| `like.controllers.ts`         | `togglePostLikes`, `toggleCommentLikes`                                                             |
+| `follow.controllers.ts`       | `toggleFollowUser`, `getFollowers`, `getFollowing`                                                  |
+| `saves.controllers.ts`        | `toggleSavePost`, `getSavedPosts`                                                                   |
+| `repost.controllers.ts`       | `toggleRepost`                                                                                      |
+| `search.controllers.ts`       | `searchUsers`, `searchPosts`                                                                        |
+| `notification.controllers.ts` | `getUnreadCount`, `getNotifications`, `markAsRead`                                                  |
 
 **Utilities:** `utilities/notification.ts`
 
@@ -318,11 +325,11 @@ Legend: **Auth** = `protect` required | **View** = `protectViews` (optional logi
 
 ## 13. Feature summary (for presentation)
 
-1. **User accounts** — Registration with profile photo, login/logout, profile updates, account deletion
+1. **User accounts** — Registration with profile photo (+ optional banner), login/logout, profile updates, account deletion
 2. **Posts** — CRUD with images, unique slugs, feed pagination, view/share counters
 3. **Comments** — Threaded replies, edit/delete with cascade cleanup
 4. **Social engagement** — Likes (posts & comments), follows, reposts, saves
-5. **Notifications** — Automatic alerts for social actions; unread count; mark all read
+5. **Notifications** — Automatic alerts for social actions; unread count; mark one or all read; removed on undo/delete
 6. **Search** — Users and posts (MongoDB text index on posts)
 7. **Password recovery** — Email OTP flow
 8. **Performance** — Redis caching on read-heavy endpoints
@@ -349,13 +356,11 @@ Legend: **Auth** = `protect` required | **View** = `protectViews` (optional logi
 
 ## 16. Continuing development — quick checklist
 
-- [ ] Add frontend repo or document its API client base URL
-- [ ] Fix `CLIENT_URL` in `.env` if server fails at boot
-- [ ] Handle notification `type: "save"` in UI
-- [ ] Use compound notification cursor for infinite scroll
-- [ ] Consider adding health route `GET /api/health`
+- [ ] Add `frontend/` and wire to `CLIENT_URL`
+- [ ] Add `GET /api/health` for monitoring
 - [ ] Add integration tests (e.g. Vitest + supertest)
+- [ ] Optional: endpoints for “did current user like/save/follow?” to simplify UI state
 
 ---
 
-21 May 2026 | @indieDev | Panchajanya
+_Last updated: May 2026_
