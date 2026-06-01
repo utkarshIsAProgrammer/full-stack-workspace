@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
+import { zValidator } from "@hono/zod-validator";
+import { productQuerySchema } from "./products.schema";
 
 const app = new Hono();
 
@@ -29,4 +31,17 @@ app.get("/products/:id", (c) => {
 	);
 });
 
+// zod with hono
+app.get("/products", zValidator("query", productQuerySchema), async (c) => {
+	const data = c.req.valid("query");
+	return c.json(data);
+});
+
+app.post("/products", async (c) => {
+	const body = await c.req.json().catch(() => ({}));
+	return c.json(
+		{ message: "Product created successfully", received: body },
+		201,
+	);
+});
 export default app;
