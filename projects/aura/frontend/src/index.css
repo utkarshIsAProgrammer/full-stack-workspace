@@ -1,0 +1,535 @@
+@import "tailwindcss";
+
+/* ===========================================
+   Luma Design System — Light, Airy, Vibrant
+   Palette: #E5D9F2 #F5EFFF #CDC1FF #A594F9
+   =========================================== */
+
+:root {
+  /* ── Color Palette ── */
+  --aura-bg: #F5EFFF;
+  --aura-bg-secondary: #EDE7F8;
+  --aura-bg-tertiary: #E5D9F2;
+
+  --aura-sidebar: #E5D9F2;
+  --aura-sidebar-hover: rgba(165, 148, 249, 0.12);
+  --aura-sidebar-active: rgba(205, 193, 255, 0.4);
+
+  --aura-accent: #A594F9;
+  --aura-accent-light: #CDC1FF;
+  --aura-accent-lighter: rgba(205, 193, 255, 0.3);
+  --aura-accent-dark: #8B78E8;
+
+  --aura-text: #2D1B4E;
+  --aura-text-secondary: #5A4E7A;
+  --aura-text-tertiary: #8A7DA6;
+  --aura-text-on-dark: #2D1B4E;
+  --aura-text-on-dark-secondary: rgba(45, 27, 78, 0.7);
+
+  --aura-border: #DCD0ED;
+  --aura-border-light: rgba(220, 208, 237, 0.5);
+
+  --aura-success: #7DBD8A;
+  --aura-danger: #D48A8A;
+  --aura-warning: #D4BD8A;
+
+  /* ── Surfaces ── */
+  --aura-surface: #FFFFFF;
+  --aura-surface-secondary: var(--aura-bg);
+  --aura-surface-tertiary: var(--aura-bg-secondary);
+
+  /* ── Modal ── */
+  --aura-modal-bg: #FFFFFF;
+  --aura-modal-overlay: rgba(45, 27, 78, 0.4);
+
+  /* ── Shadows ── */
+  --aura-shadow-sm: 0 1px 3px rgba(45, 27, 78, 0.06);
+  --aura-shadow-md: 0 4px 12px rgba(45, 27, 78, 0.08);
+  --aura-shadow-lg: 0 8px 30px rgba(45, 27, 78, 0.1);
+  --aura-shadow-xl: 0 20px 60px rgba(45, 27, 78, 0.12);
+  --aura-shadow-glow: 0 0 40px rgba(165, 148, 249, 0.15);
+
+  /* ── Radii ── */
+  --aura-radius-sm: 6px;
+  --aura-radius-md: 10px;
+  --aura-radius-lg: 16px;
+  --aura-radius-xl: 24px;
+
+  /* ── Typography ── */
+  --aura-font-heading: "Spectral", Georgia, "Times New Roman", serif;
+  --aura-font: "Raleway", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --aura-font-mono: "JetBrains Mono", "SF Mono", Monaco, "Cascadia Code", monospace;
+}
+
+/* ── Smooth Theme Transitions ── */
+body {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ── Base Styles ── */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--aura-font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: var(--aura-bg);
+  color: var(--aura-text);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--aura-text-tertiary);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--aura-text-secondary);
+}
+
+/* ── Selection ── */
+::selection {
+  background: var(--aura-accent-lighter);
+  color: var(--aura-text);
+}
+
+/* ═══════════════════════════════════════════
+   DARK MODE
+   ═══════════════════════════════════════════ */
+
+.dark {
+  --aura-bg: #130C1F;
+  --aura-bg-secondary: #1E1535;
+  --aura-bg-tertiary: #2A1F45;
+
+  --aura-sidebar: #1E1535;
+  --aura-sidebar-hover: rgba(165, 148, 249, 0.15);
+  --aura-sidebar-active: rgba(165, 148, 249, 0.25);
+
+  --aura-accent: #A594F9;
+  --aura-accent-light: #CDC1FF;
+  --aura-accent-lighter: rgba(165, 148, 249, 0.2);
+  --aura-accent-dark: #8B78E8;
+
+  --aura-text: #E8E0F0;
+  --aura-text-secondary: #CDC1FF;
+  --aura-text-tertiary: #8A7DA6;
+  --aura-text-on-dark: #E8E0F0;
+  --aura-text-on-dark-secondary: rgba(232, 224, 240, 0.7);
+
+  --aura-border: #3A2D5A;
+  --aura-border-light: rgba(58, 45, 90, 0.5);
+
+  --aura-surface: rgba(30, 21, 53, 0.85);
+  --aura-surface-secondary: rgba(19, 12, 31, 0.95);
+  --aura-surface-tertiary: rgba(42, 31, 69, 0.7);
+
+  --aura-modal-bg: rgba(30, 21, 53, 0.92);
+  --aura-modal-overlay: rgba(0, 0, 0, 0.6);
+
+  --aura-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --aura-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --aura-shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.5);
+  --aura-shadow-xl: 0 20px 60px rgba(0, 0, 0, 0.6);
+  --aura-shadow-glow: 0 0 40px rgba(165, 148, 249, 0.25);
+}
+
+.dark body {
+  background: #130C1F;
+  color: #E8E0F0;
+}
+
+.dark .auth-left {
+  background: linear-gradient(135deg, #2A1F45 0%, #1E1535 50%, #130C1F 100%);
+}
+
+.dark .auth-left::before {
+  background:
+    radial-gradient(ellipse at 15% 30%, rgba(165, 148, 249, 0.2) 0%, transparent 50%),
+    radial-gradient(ellipse at 85% 20%, rgba(205, 193, 255, 0.15) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 80%, rgba(165, 148, 249, 0.1) 0%, transparent 40%);
+}
+
+.dark .auth-right {
+  background: #130C1F;
+}
+
+.dark .auth-card {
+  background: rgba(30, 21, 53, 0.7);
+  border-color: rgba(58, 45, 90, 0.5);
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.5),
+    0 0 40px rgba(165, 148, 249, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.dark .auth-feature-item {
+  background: rgba(30, 21, 53, 0.5);
+  border-color: rgba(58, 45, 90, 0.4);
+}
+
+.dark .auth-feature-item:hover {
+  background: rgba(42, 31, 69, 0.6);
+  border-color: rgba(165, 148, 249, 0.3);
+}
+
+.dark .auth-feature-icon {
+  background: rgba(165, 148, 249, 0.2);
+}
+
+.dark .auth-stats {
+  border-top-color: rgba(58, 45, 90, 0.4);
+}
+
+.dark .auth-stat-divider {
+  background: rgba(58, 45, 90, 0.4);
+}
+
+/* ── Focus ── */
+:focus-visible {
+  outline: 2px solid var(--aura-accent);
+  outline-offset: 2px;
+  border-radius: var(--aura-radius-sm);
+}
+
+/* ═══════════════════════════════════════════
+   Clerk Authentication — Themed Overrides
+   Clerk renders its own modal outside our app
+   ═══════════════════════════════════════════ */
+
+/* Clerk modal backdrop */
+.cl-internal-b3fm6y,
+.cl-internal-1hp5nqm {
+  background: var(--aura-modal-overlay) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+/* Clerk modal card */
+.cl-card,
+.cl-internal-1dtsg6b,
+.cl-internal-13lfsvs {
+  border-radius: var(--aura-radius-xl) !important;
+  box-shadow: var(--aura-shadow-xl) !important;
+  border: 1px solid var(--aura-border) !important;
+}
+
+/* Clerk modal inner card */
+.cl-cardBox,
+.cl-internal-qk4r9b {
+  border-radius: var(--aura-radius-xl) !important;
+  overflow: hidden !important;
+}
+
+/* Clerk social buttons */
+.cl-socialButtonsBlockButton,
+.cl-internal-1gxwfpt {
+  border-color: var(--aura-border) !important;
+  border-radius: var(--aura-radius-md) !important;
+  color: var(--aura-text) !important;
+  font-family: var(--aura-font) !important;
+  transition: all 0.2s ease !important;
+}
+
+.cl-socialButtonsBlockButton:hover,
+.cl-internal-1gxwfpt:hover {
+  background: var(--aura-accent-lighter) !important;
+  border-color: var(--aura-accent-light) !important;
+}
+
+/* Clerk form inputs */
+.cl-input,
+.cl-internal-1w3vifk,
+.cl-internal-1t3v7n2 {
+  border-radius: var(--aura-radius-md) !important;
+  border-color: var(--aura-border) !important;
+  color: var(--aura-text) !important;
+  font-family: var(--aura-font) !important;
+  background: var(--aura-bg) !important;
+}
+
+.cl-input:focus,
+.cl-internal-1w3vifk:focus {
+  border-color: var(--aura-accent) !important;
+  box-shadow: 0 0 0 3px rgba(165, 148, 249, 0.15) !important;
+}
+
+/* Clerk labels */
+.cl-label,
+.cl-internal-15di949 {
+  color: var(--aura-text) !important;
+  font-weight: 600 !important;
+  font-family: var(--aura-font) !important;
+}
+
+/* Clerk primary button */
+.cl-primaryButton,
+.cl-internal-1au7l7d {
+  background: linear-gradient(135deg, #A594F9 0%, #8B78E8 100%) !important;
+  border-radius: var(--aura-radius-md) !important;
+  font-family: var(--aura-font) !important;
+  font-weight: 600 !important;
+  transition: all 0.2s ease !important;
+}
+
+.cl-primaryButton:hover,
+.cl-internal-1au7l7d:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 15px rgba(165, 148, 249, 0.3) !important;
+}
+
+/* Clerk header */
+.cl-headerTitle,
+.cl-internal-1td92zf {
+  color: var(--aura-text) !important;
+  font-family: var(--aura-font) !important;
+}
+
+.cl-headerSubtitle,
+.cl-internal-1u9r73k {
+  color: var(--aura-text-secondary) !important;
+  font-family: var(--aura-font) !important;
+}
+
+/* Clerk footer links */
+.cl-footerActionLink,
+.cl-internal-7kmcmq {
+  color: var(--aura-accent) !important;
+  font-family: var(--aura-font) !important;
+}
+
+/* Clerk divider */
+.cl-dividerLine,
+.cl-internal-1t501mh {
+  background: var(--aura-border) !important;
+}
+
+.cl-dividerText,
+.cl-internal-fm2t7f {
+  color: var(--aura-text-tertiary) !important;
+}
+
+/* Clerk identity preview */
+.cl-identityPreview,
+.cl-internal-beo70f {
+  background: var(--aura-accent-lighter) !important;
+  border-color: var(--aura-accent-light) !important;
+  border-radius: var(--aura-radius-md) !important;
+}
+
+/* Clerk user button popover */
+.cl-userButtonPopoverCard,
+.cl-internal-1p5xo2s {
+  border-radius: var(--aura-radius-lg) !important;
+  border-color: var(--aura-border) !important;
+  box-shadow: var(--aura-shadow-lg) !important;
+}
+
+.cl-userButtonPopoverActionItem,
+.cl-internal-1uu0bx3 {
+  color: var(--aura-text) !important;
+  font-family: var(--aura-font) !important;
+}
+
+.cl-userButtonPopoverActionItem:hover,
+.cl-internal-1uu0bx3:hover {
+  background: var(--aura-accent-lighter) !important;
+}
+
+/* Clerk badge/pill */
+.cl-badge,
+.cl-internal-1h1t6gu {
+  background: var(--aura-accent-lighter) !important;
+  color: var(--aura-accent-dark) !important;
+}
+
+/* Clerk alternative methods button */
+.cl-alternativeMethodsBlockButton,
+.cl-internal-1gxwfpt {
+  border-color: var(--aura-border) !important;
+  border-radius: var(--aura-radius-md) !important;
+  color: var(--aura-text) !important;
+}
+
+/* Clerk back link */
+.cl-backLink,
+.cl-internal-g3kq3e {
+  color: var(--aura-accent) !important;
+}
+
+/* Clerk form field errors */
+.cl-formFieldError,
+.cl-internal-1hp5nqm {
+  color: var(--aura-danger) !important;
+}
+
+/* ═══════════════════════════════════════════
+   CLERK — Dark Mode (X/Twitter-style)
+   Black backgrounds, white text, gray accents
+   ═══════════════════════════════════════════ */
+
+.dark .cl-card,
+.dark .cl-internal-1dtsg6b,
+.dark .cl-internal-13lfsvs {
+  background: #0d0d0d !important;
+  border-color: #2a2a2a !important;
+}
+
+.dark .cl-cardBox,
+.dark .cl-internal-qk4r9b {
+  background: transparent !important;
+}
+
+.dark .cl-internal-b3fm6y,
+.dark .cl-internal-1hp5nqm {
+  background: rgba(0, 0, 0, 0.7) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+.dark .cl-headerTitle,
+.dark .cl-internal-1td92zf {
+  color: #e5e5e5 !important;
+}
+
+.dark .cl-headerSubtitle,
+.dark .cl-internal-1u9r73k {
+  color: #71767b !important;
+}
+
+.dark .cl-label,
+.dark .cl-internal-15di949 {
+  color: #e5e5e5 !important;
+}
+
+.dark .cl-input,
+.dark .cl-internal-1w3vifk,
+.dark .cl-internal-1t3v7n2 {
+  background: #1a1a1a !important;
+  border-color: #333333 !important;
+  color: #e5e5e5 !important;
+}
+
+.dark .cl-input:focus,
+.dark .cl-internal-1w3vifk:focus {
+  border-color: #71767b !important;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark .cl-input::placeholder {
+  color: #535353 !important;
+}
+
+.dark .cl-primaryButton,
+.dark .cl-internal-1au7l7d {
+  background: linear-gradient(135deg, #A594F9 0%, #8B78E8 100%) !important;
+  border-radius: 9999px !important;
+  color: #ffffff !important;
+}
+
+.dark .cl-primaryButton:hover,
+.dark .cl-internal-1au7l7d:hover {
+  box-shadow: 0 4px 15px rgba(165, 148, 249, 0.3) !important;
+}
+
+.dark .cl-socialButtonsBlockButton,
+.dark .cl-internal-1gxwfpt {
+  border-color: #333333 !important;
+  color: #e5e5e5 !important;
+  background: transparent !important;
+}
+
+.dark .cl-socialButtonsBlockButton:hover,
+.dark .cl-internal-1gxwfpt:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: #535353 !important;
+}
+
+.dark .cl-footerActionLink,
+.dark .cl-internal-7kmcmq {
+  color: #A594F9 !important;
+}
+
+.dark .cl-footerActionText {
+  color: #71767b !important;
+}
+
+.dark .cl-dividerLine,
+.dark .cl-internal-1t501mh {
+  background: #333333 !important;
+}
+
+.dark .cl-dividerText,
+.dark .cl-internal-fm2t7f {
+  color: #535353 !important;
+}
+
+.dark .cl-backLink,
+.dark .cl-internal-g3kq3e {
+  color: #71767b !important;
+}
+
+.dark .cl-backLink:hover {
+  color: #e5e5e5 !important;
+}
+
+.dark .cl-alternativeMethodsBlockButton,
+.dark .cl-internal-1gxwfpt {
+  border-color: #333333 !important;
+  color: #e5e5e5 !important;
+  background: transparent !important;
+}
+
+.dark .cl-alternativeMethodsBlockButton:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+.dark .cl-identityPreview,
+.dark .cl-internal-beo70f {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: #333333 !important;
+}
+
+.dark .cl-userButtonPopoverCard,
+.dark .cl-internal-1p5xo2s {
+  background: #0d0d0d !important;
+  border-color: #2a2a2a !important;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6) !important;
+}
+
+.dark .cl-userButtonPopoverActionItem,
+.dark .cl-internal-1uu0bx3 {
+  color: #e5e5e5 !important;
+}
+
+.dark .cl-userButtonPopoverActionItem:hover,
+.dark .cl-internal-1uu0bx3:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+.dark .cl-badge,
+.dark .cl-internal-1h1t6gu {
+  background: #1a1a1a !important;
+  color: #71767b !important;
+}
+
+.dark .cl-formFieldError,
+.dark .cl-internal-1hp5nqm {
+  color: #ff3742 !important;
+}
