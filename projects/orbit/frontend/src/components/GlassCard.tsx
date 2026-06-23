@@ -30,7 +30,7 @@ export default React.memo(function GlassCard({
 }: GlassCardProps) {
 
   // Fluid, premium liquid glass class combinations for Dark Space macOS glass feel
-  const baseClasses = `relative overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/90 backdrop-blur-none sm:bg-zinc-950/50 sm:backdrop-blur-lg px-6 py-6 shadow-[0_25px_65px_-15px_rgba(0,0,0,0.85)] hover:border-white/20 transition-all duration-300 ${onClick ? "cursor-pointer" : ""
+  const baseClasses = `relative overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/95 backdrop-blur-none sm:bg-zinc-950/70 sm:backdrop-blur-md px-5 py-5 shadow-[0_25px_65px_-15px_rgba(0,0,0,0.85)] hover:border-white/20 transition-all duration-300 ${onClick ? "cursor-pointer" : ""
     } ${className}`;
 
   const GlassGlossOverlay = () => (

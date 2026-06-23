@@ -1,4 +1,6 @@
-import React, { useState } from "react";
+import UserAvatar from "./UserAvatar";
+import React, { useState, useEffect } from "react";
+import { useKeyboardOpen } from "../hooks/useKeyboardOpen";
 import {
   User as UserIcon,
   Lock,
@@ -9,7 +11,9 @@ import {
   AlertCircle,
   Shield,
   Eye,
-  EyeOff
+  EyeOff,
+  X,
+  Volume2
 } from "lucide-react";
 import { User as UserType } from "../types";
 import GlassCard from "./GlassCard";
@@ -17,21 +21,33 @@ import ValidationMessage from "./ValidationMessage";
 import CharCounter from "./CharCounter";
 import { apiFetch } from "../utils/api";
 import { validateProfile, validatePasswordChange, validateDeleteAccount } from "../utils/validation";
+import EchoTest from "./EchoTest";
 
 interface SettingsProps {
   user: UserType;
   onUserUpdate: (newUser: UserType) => void;
   onLogout: () => void;
+  onEditProfileOpenChange?: (open: boolean) => void;
 }
 
-export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps) {
+export default function Settings({ user, onUserUpdate, onLogout, onEditProfileOpenChange }: SettingsProps) {
   // Navigation Tabs for settings sections
-  const [activeSubTab, setActiveSubTab] = useState<"profile" | "password" | "account" | "logout">("profile");
+  const [activeSubTab, setActiveSubTab] = useState<"profile" | "password" | "account" | "audio" | "logout">("profile");
 
-  const switchSubTab = (tab: "profile" | "password" | "account" | "logout") => {
+  const switchSubTab = (tab: "profile" | "password" | "account" | "audio" | "logout") => {
     setActiveSubTab(tab);
     setFieldErrors({});
   };
+
+  // Notify parent when edit profile tab opens/closes (for dock hiding)
+  useEffect(() => {
+    onEditProfileOpenChange?.(activeSubTab === "profile");
+  }, [activeSubTab, onEditProfileOpenChange]);
+
+  // Also notify on mount/unmount
+  useEffect(() => {
+    return () => onEditProfileOpenChange?.(false);
+  }, [onEditProfileOpenChange]);
 
   // Profile Edit fields
   const [fullName, setFullName] = useState(user.fullName || "");
@@ -73,6 +89,19 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // Auto-clear error messages after 6 seconds
+  useEffect(() => {
+    if (!profileError) return;
+    const timer = setTimeout(() => setProfileError(null), 6000);
+    return () => clearTimeout(timer);
+  }, [profileError]);
+
+  useEffect(() => {
+    if (!passwordError) return;
+    const timer = setTimeout(() => setPasswordError(null), 6000);
+    return () => clearTimeout(timer);
+  }, [passwordError]);
+
   // Profile Submit handler
   const handleProfileSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,9 +124,13 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
 
       if (profilePicFile) {
         formData.append("profilePic", profilePicFile);
+      } else if (!profilePicPreview && user.profilePic?.url) {
+        formData.append("removeProfilePic", "true");
       }
       if (bannerPicFile) {
         formData.append("bannerImage", bannerPicFile);
+      } else if (!bannerPicPreview && user.bannerImage?.url) {
+        formData.append("removeBannerImage", "true");
       }
 
       const res = await apiFetch("/api/users/update-profile", {
@@ -190,9 +223,11 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
     }
   };
 
+  const isKeyboardOpen = useKeyboardOpen();
+
   return (
-    <div className="w-full px-4 pb-28 mt-4 leading-normal font-sans">
-      <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="w-full px-4 pb-28 mt-4 leading-normal font-sans">        {!isKeyboardOpen && (
+        <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold font-sans text-slate-900 dark:text-zinc-100 leading-normal tracking-tight">
             Account Settings
@@ -202,13 +237,18 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
           </p>
         </div>
       </div>
+        )}
 
       <div className="flex flex-col gap-6 max-w-2xl mx-auto">
         {/* Main interactive cards area */}
         <div className="w-full min-h-75">
           {activeSubTab === "profile" && (
-            <GlassCard animate={true} className="p-6">
-              <h3 className="text-sm font-bold text-black dark:text-white uppercase tracking-wider mb-4 border-b border-zinc-900 pb-2">
+            <GlassCard animate={true} className={`transition-all duration-200 ${
+              isKeyboardOpen ? "p-4" : "p-6"
+            }`}>
+              <h3 className={`font-bold text-black dark:text-white uppercase tracking-wider mb-4 border-b border-zinc-900 pb-2 transition-all duration-200 ${
+                isKeyboardOpen ? "text-[11px]" : "text-sm"
+              }`}>
                 Edit Profile
               </h3>
 
@@ -226,14 +266,16 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                 </div>
               )}
 
-              <form onSubmit={handleProfileSubmit} noValidate className="space-y-4">
+              <form onSubmit={handleProfileSubmit} noValidate className={`transition-all duration-200 ${
+                isKeyboardOpen ? "space-y-3" : "space-y-4"
+              }`}>
                 {/* Images Upload */}
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1 col-span-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 pl-3">
-                      Avatar Image
+                  <div className="space-y-1 col-span-1 text-center">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                      Profile Pic
                     </span>
-                    <div className="relative flex h-24 items-center justify-center rounded-3xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors">
+                    <div className="relative flex h-16 w-16 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
                       <input
                         type="file"
                         accept="image/*"
@@ -244,30 +286,48 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                             setProfilePicPreview(URL.createObjectURL(file));
                           }
                         }}
-                        className="absolute inset-0 opacity-0 cursor-pointer animate-none"
+                        className="absolute inset-0 opacity-0 cursor-pointer rounded-full animate-none"
                       />
-                      <div className="text-center space-y-1">
-                        {profilePicPreview ? (
-                         <img loading="lazy"
-                           src={profilePicPreview}
+                      {profilePicPreview ? (
+                        <>
+                          <UserAvatar
+                            key={profilePicPreview}
+                            src={profilePicPreview}
                             alt="Profile preview"
-                            className="mx-auto h-12 w-12 rounded-full object-cover border border-zinc-700 shadow-sm"
+                            className="absolute inset-0 h-full w-full rounded-full object-cover pointer-events-none"
                           />
-                        ) : (
-                          <Camera className="mx-auto h-5 w-5 text-zinc-400 dark:text-zinc-500" />
-                        )}
-                        <span className="block text-[9px] text-zinc-500 dark:text-zinc-400">
-                          Upload avatar
-                        </span>
-                      </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setProfilePicFile(null);
+                              setProfilePicPreview("");
+                            }}
+                            className="absolute top-3 right-3 h-4 w-4 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-md cursor-pointer transition-colors z-20"
+                            title="Remove avatar"
+                          >
+                            <X className="h-2.5 w-2.5 text-white" />
+                          </button>
+                          <span className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[9px] text-zinc-500 dark:text-zinc-400 z-10 whitespace-nowrap pointer-events-none">
+                            Tap to change
+                          </span>
+                        </>
+                      ) : (
+                        <div className="text-center space-y-1">
+                          <Camera className="mx-auto h-5 w-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-300 transition-colors" />
+                          <span className="block text-[8px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                            Upload avatar
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div className="space-y-1 col-span-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 pl-3">
+                  <div className="space-y-1 col-span-1 text-center">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
                       Banner Image
                     </span>
-                    <div className="relative flex h-24 items-center justify-center rounded-3xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors">
+                    <div className="relative flex h-16 w-full items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
                       <input
                         type="file"
                         accept="image/*"
@@ -278,28 +338,46 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                             setBannerPicPreview(URL.createObjectURL(file));
                           }
                         }}
-                        className="absolute inset-0 opacity-0 cursor-pointer animate-none"
+                        className="absolute inset-0 opacity-0 cursor-pointer rounded-full animate-none"
                       />
-                      <div className="text-center space-y-1">
-                        {bannerPicPreview ? (
-                         <img loading="lazy"
-                           src={bannerPicPreview}
+                      {bannerPicPreview ? (
+                        <>
+                          <UserAvatar
+                            key={bannerPicPreview}
+                            src={bannerPicPreview}
                             alt="Banner preview"
-                            className="mx-auto h-12 w-24 rounded-2xl object-cover border border-zinc-700 shadow-sm"
+                            className="absolute inset-0 h-full w-full rounded-full object-cover pointer-events-none"
                           />
-                        ) : (
-                          <Camera className="mx-auto h-5 w-5 text-zinc-400 dark:text-zinc-500" />
-                        )}
-                        <span className="block text-[9px] text-zinc-500 dark:text-zinc-400">
-                          Upload banner
-                        </span>
-                      </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setBannerPicFile(null);
+                              setBannerPicPreview("");
+                            }}
+                            className="absolute top-3 right-3 h-4 w-4 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-md cursor-pointer transition-colors z-20"
+                            title="Remove banner"
+                          >
+                            <X className="h-2.5 w-2.5 text-white" />
+                          </button>
+                          <span className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[9px] text-zinc-500 dark:text-zinc-400 z-10 whitespace-nowrap pointer-events-none">
+                            Tap to change
+                          </span>
+                        </>
+                      ) : (
+                        <div className="text-center space-y-1">
+                          <Camera className="mx-auto h-5 w-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-300 transition-colors" />
+                          <span className="block text-[8px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                            Upload banner
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
 
                 <div className="space-y-1.5 label text-left">
-                  <label htmlFor="settings-fullname" className="text-xs font-semibold text-zinc-300 pl-4">
+                  <label htmlFor="settings-fullname" className="text-[10px] font-semibold text-zinc-300 pl-4">
                     Full Name
                   </label>
                   <input
@@ -309,7 +387,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                     value={fullName}
                     onChange={(e) => { setFullName(e.target.value); clearFieldError("fullName"); }}
                     maxLength={50}
-                    className="w-full rounded-full border border-zinc-800 bg-zinc-900/55 py-3.5 px-5 text-sm font-medium text-black dark:text-white focus:outline-none focus:border-black dark:focus:border-white focus:bg-white dark:focus:bg-black transition-all"
+                    className="w-full rounded-full border border-zinc-800 bg-zinc-900/55 py-3 max-sm:py-2 px-4.5 max-sm:px-3.5 text-xs max-sm:text-[11px] font-medium text-black dark:text-white focus:outline-none focus:border-black dark:focus:border-white focus:bg-white dark:focus:bg-black transition-all"
                   />
                   <div className="flex items-center justify-between px-1">
                     <ValidationMessage message={fieldErrors.fullName} />
@@ -318,7 +396,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                 </div>
 
                 <div className="space-y-1.5 label text-left">
-                  <label htmlFor="settings-bio" className="text-xs font-semibold text-zinc-300 pl-4">
+                  <label htmlFor="settings-bio" className="text-[10px] font-semibold text-zinc-300 pl-4">
                     Bio
                   </label>
                   <textarea
@@ -327,7 +405,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                     value={bio}
                     onChange={(e) => setBio(e.target.value)}
                     placeholder="A brief snippet about yourself..."
-                    className="w-full rounded-3xl border border-zinc-800 bg-zinc-900/55 py-3.5 px-5 text-sm font-medium text-black dark:text-white focus:outline-none focus:border-black dark:focus:border-white focus:bg-white dark:focus:bg-black transition-all resize-none"
+                    className="w-full rounded-3xl border border-zinc-800 bg-zinc-900/55 py-3 max-sm:py-2 px-4.5 max-sm:px-3.5 text-xs max-sm:text-[11px] font-medium text-black dark:text-white focus:outline-none focus:border-black dark:focus:border-white focus:bg-white dark:focus:bg-black transition-all resize-none"
                     maxLength={300}
                   />
                   <div className="flex justify-end px-1">
@@ -338,7 +416,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                 <button
                   type="submit"
                   disabled={savingProfile}
-                  className="w-full rounded-full bg-black py-3.5 text-xs font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 font-sans transition-all disabled:opacity-40 shadow-md cursor-pointer"
+                  className="w-full rounded-full bg-black py-3 max-sm:py-2 text-[11px] max-sm:text-[10px] font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 font-sans transition-all disabled:opacity-40 shadow-md cursor-pointer"
                 >
                   {savingProfile ? "Saving..." : "Save Changes"}
                 </button>
@@ -347,8 +425,12 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
           )}
 
           {activeSubTab === "password" && (
-            <GlassCard animate={true} className="p-6">
-              <h3 className="text-sm font-bold text-black dark:text-white uppercase tracking-wider mb-4 border-b border-zinc-900 pb-2">
+            <GlassCard animate={true} className={`transition-all duration-200 ${
+              isKeyboardOpen ? "p-4" : "p-6"
+            }`}>
+              <h3 className={`font-bold text-black dark:text-white uppercase tracking-wider mb-4 border-b border-zinc-900 pb-2 transition-all duration-200 ${
+                isKeyboardOpen ? "text-[11px]" : "text-sm"
+              }`}>
                 Modify Password
               </h3>
 
@@ -366,9 +448,11 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                 </div>
               )}
 
-              <form onSubmit={handlePasswordSubmit} noValidate className="space-y-4">
+              <form onSubmit={handlePasswordSubmit} noValidate className={`transition-all duration-200 ${
+                isKeyboardOpen ? "space-y-3" : "space-y-4"
+              }`}>
                 <div className="space-y-1.5 text-left">
-                  <label htmlFor="settings-current-password" className="text-xs font-semibold text-zinc-300 pl-4">
+                  <label htmlFor="settings-current-password" className="text-[10px] font-semibold text-zinc-300 pl-4">
                     Current Password
                   </label>
                   <div className="relative">
@@ -379,12 +463,12 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                       required
                       value={currentPassword}
                       onChange={(e) => { setCurrentPassword(e.target.value); clearFieldError("currentPassword"); }}
-                      className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 pl-5 pr-12 text-sm font-medium text-black dark:text-white focus:outline-none focus:border-black dark:focus:border-white focus:bg-white dark:focus:bg-black transition-all"
+                      className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3 max-sm:py-2 pl-4.5 max-sm:pl-3.5 pr-11 max-sm:pr-9 text-xs max-sm:text-[11px] font-medium text-black dark:text-white focus:outline-none focus:border-black dark:focus:border-white focus:bg-white dark:focus:bg-black transition-all"
                     />
                     <button
                       type="button"
                       onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                      className="absolute right-4.5 top-3.5 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                      className="absolute right-4 top-3 text-zinc-400 hover:text-zinc-600 cursor-pointer"
                     >
                       {showCurrentPassword ? (
                         <Eye className="h-4 w-4" />
@@ -397,7 +481,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                 </div>
 
                 <div className="space-y-1.5 text-left">
-                  <label htmlFor="settings-new-password" className="text-xs font-semibold text-zinc-300 pl-4">
+                  <label htmlFor="settings-new-password" className="text-[10px] font-semibold text-zinc-300 pl-4">
                     New Password
                   </label>
                   <div className="relative">
@@ -408,12 +492,12 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                       required
                       value={newPassword}
                       onChange={(e) => { setNewPassword(e.target.value); clearFieldError("newPassword"); }}
-                      className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 pl-5 pr-12 text-sm font-medium text-black dark:text-white focus:outline-none focus:border-black dark:focus:border-white focus:bg-white dark:focus:bg-black transition-all"
+                      className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3 max-sm:py-2 pl-4.5 max-sm:pl-3.5 pr-11 max-sm:pr-9 text-xs max-sm:text-[11px] font-medium text-black dark:text-white focus:outline-none focus:border-black dark:focus:border-white focus:bg-white dark:focus:bg-black transition-all"
                     />
                     <button
                       type="button"
                       onClick={() => setShowNewPassword(!showNewPassword)}
-                      className="absolute right-4.5 top-3.5 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                      className="absolute right-4 top-3 text-zinc-400 hover:text-zinc-600 cursor-pointer"
                     >
                       {showNewPassword ? (
                         <Eye className="h-4 w-4" />
@@ -426,7 +510,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                 </div>
 
                 <div className="space-y-1.5 text-left">
-                  <label htmlFor="settings-confirm-password" className="text-xs font-semibold text-zinc-300 pl-4">
+                  <label htmlFor="settings-confirm-password" className="text-[10px] font-semibold text-zinc-300 pl-4">
                     Confirm New Password
                   </label>
                   <input
@@ -435,7 +519,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                     required
                     value={confirmPassword}
                     onChange={(e) => { setConfirmPassword(e.target.value); clearFieldError("confirmPassword"); }}
-                    className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-sm font-medium text-black dark:text-white focus:outline-none focus:border-black dark:focus:border-white focus:bg-white dark:focus:bg-black transition-all"
+                    className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3 max-sm:py-2 px-4.5 max-sm:px-3.5 text-xs max-sm:text-[11px] font-medium text-black dark:text-white focus:outline-none focus:border-black dark:focus:border-white focus:bg-white dark:focus:bg-black transition-all"
                   />
                   <ValidationMessage message={fieldErrors.confirmPassword} />
                 </div>
@@ -443,7 +527,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                 <button
                   type="submit"
                   disabled={savingPassword}
-                  className="w-full rounded-full bg-black py-3.5 text-xs font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 font-sans transition-all disabled:opacity-40 shadow-md cursor-pointer"
+                  className="w-full rounded-full bg-black py-3 max-sm:py-2 text-[11px] max-sm:text-[10px] font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 font-sans transition-all disabled:opacity-40 shadow-md cursor-pointer"
                 >
                   {savingPassword ? "Updating password..." : "Update Password"}
                 </button>
@@ -452,9 +536,11 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
           )}
 
           {activeSubTab === "account" && (
-            <GlassCard animate={true} className="p-6 border-rose-500/25 dark:border-rose-950/25 bg-red-950/10 dark:bg-red-950/10 shadow-none">
+            <GlassCard animate={true} className={`border-rose-500/25 dark:border-rose-950/25 bg-red-950/10 dark:bg-red-950/10 shadow-none transition-all duration-200 ${
+              isKeyboardOpen ? "p-4" : "p-6"
+            }`}>
               <div className="flex items-center gap-2 mb-3 border-b border-rose-500/20 pb-2">
-                <Trash2 className="h-4.5 w-4.5 text-rose-500 animate-bounce" />
+                <Trash2 className="h-4 w-4 text-rose-500 animate-bounce" />
                 <h3 className="text-sm font-bold text-rose-500 uppercase tracking-wider">
                   Delete Account
                 </h3>
@@ -474,7 +560,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
 
               <div className="mt-5 space-y-4 text-left">
                 <div className="space-y-1.5">
-                  <label htmlFor="settings-delete-email" className="text-xs font-semibold text-zinc-300 pl-4">
+                  <label htmlFor="settings-delete-email" className="text-[10px] font-semibold text-zinc-300 pl-4">
                     To delete your account, enter your <span className="font-extrabold text-black dark:text-white">Email Address</span>:
                   </label>
                   <input
@@ -486,13 +572,13 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                     placeholder="user@example.com"
                     value={deleteEmail}
                     onChange={(e) => { setDeleteEmail(e.target.value); clearFieldError("deleteEmail"); }}
-                    className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-sm font-medium text-black dark:text-white focus:outline-none focus:border-rose-500 focus:bg-white dark:focus:bg-black transition-all"
+                    className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3 max-sm:py-2 px-4.5 max-sm:px-3.5 text-xs max-sm:text-[11px] font-medium text-black dark:text-white focus:outline-none focus:border-rose-500 focus:bg-white dark:focus:bg-black transition-all"
                   />
                   <ValidationMessage message={fieldErrors.deleteEmail} />
                 </div>
 
                 <div className="space-y-1.5 text-left">
-                  <label htmlFor="settings-delete-password" className="text-xs font-semibold text-zinc-300 pl-4">
+                  <label htmlFor="settings-delete-password" className="text-[10px] font-semibold text-zinc-300 pl-4">
                     And your current <span className="font-extrabold text-black dark:text-white">Password</span>:
                   </label>
                   <div className="relative">
@@ -504,12 +590,12 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                       placeholder="Enter password"
                       value={deletePassword}
                       onChange={(e) => { setDeletePassword(e.target.value); clearFieldError("deletePassword"); }}
-                      className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 pl-5 pr-12 text-sm font-medium text-black dark:text-white focus:outline-none focus:border-rose-500 focus:bg-white dark:focus:bg-black transition-all"
+                      className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3 max-sm:py-2 pl-4.5 max-sm:pl-3.5 pr-11 max-sm:pr-9 text-xs max-sm:text-[11px] font-medium text-black dark:text-white focus:outline-none focus:border-rose-500 focus:bg-white dark:focus:bg-black transition-all"
                     />
                     <button
                       type="button"
                       onClick={() => setShowDeletePassword(!showDeletePassword)}
-                      className="absolute right-4.5 top-3.5 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                      className="absolute right-4 top-3 text-zinc-400 hover:text-zinc-600 cursor-pointer"
                     >
                       {showDeletePassword ? (
                         <Eye className="h-4 w-4" />
@@ -525,7 +611,7 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
                   type="button"
                   onClick={handleDeleteAccount}
                   disabled={deletingAccount || !deleteEmail || !deletePassword}
-                  className="w-full rounded-full bg-rose-600 hover:bg-rose-700 py-3.5 text-xs font-bold uppercase tracking-widest text-white transition-all disabled:opacity-30 disabled:hover:bg-rose-600"
+                  className="w-full rounded-full bg-rose-600 hover:bg-rose-700 py-3 max-sm:py-2 text-[11px] max-sm:text-[10px] font-bold uppercase tracking-widest text-white transition-all disabled:opacity-30 disabled:hover:bg-rose-600"
                 >
                   {deletingAccount ? "Deleting account..." : "Permanently Delete Account"}
                 </button>
@@ -533,21 +619,25 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
             </GlassCard>
           )}
 
+          {activeSubTab === "audio" && (
+            <EchoTest />
+          )}
+
           {activeSubTab === "logout" && (
-            <GlassCard animate={true} className="p-8 text-center space-y-6 max-w-sm mx-auto my-6 border-red-500/20 dark:border-red-900/40">
-              <div className="mx-auto h-12 w-12 rounded-full bg-red-100 dark:bg-red-950/20 flex items-center justify-center text-red-600 dark:text-red-400 animate-pulse">
-                <LogOut className="h-6 w-6" />
+            <GlassCard animate={true} className="p-6 text-center space-y-5 max-w-sm mx-auto my-6 border-red-500/20 dark:border-red-900/40">
+              <div className="mx-auto h-10 w-10 rounded-full bg-red-100 dark:bg-red-950/20 flex items-center justify-center text-red-600 dark:text-red-400 animate-pulse">
+                <LogOut className="h-5 w-5" />
               </div>
-              <div className="space-y-2">
-                <h3 className="text-sm font-black uppercase tracking-widest text-black dark:text-white">
+              <div className="space-y-1.5">
+                <h3 className="text-xs font-black uppercase tracking-widest text-black dark:text-white">
                   Sign Out of Orbit
                 </h3>
-                <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 leading-normal max-w-xs mx-auto uppercase tracking-tight">
+                <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 leading-normal max-w-xs mx-auto uppercase tracking-tight">
                   Are you sure you want to sign out? You will need to sign back in to view your feeds and chat with friends.
                 </p>
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+              <div className="flex flex-col sm:flex-row gap-3 justify-center pt-1">
                 <button
                   type="button"
                   onClick={() => switchSubTab("profile")}
@@ -604,6 +694,18 @@ export default function Settings({ user, onUserUpdate, onLogout }: SettingsProps
             >
               <Shield className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Account</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => switchSubTab("audio")}
+              className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[11px] font-extrabold transition-all uppercase tracking-wider cursor-pointer ${activeSubTab === "audio"
+                ? "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm scale-102"
+                : "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
+                }`}
+            >
+              <Volume2 className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Audio</span>
             </button>
 
             <button

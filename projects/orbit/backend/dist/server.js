@@ -236,8 +236,8 @@ app.use((err, req, res, next) => {
         ...(env.NODE_ENV === "development" && { stack: err.stack }),
     });
 });
-(0, db_1.connectDB)().then(() => {
-    (0, socket_1.initSocket)(server);
+(0, db_1.connectDB)().then(async () => {
+    await (0, socket_1.initSocket)(server);
     server.listen(port, () => {
         logger_1.logger.info(`Server is running on PORT: ${port}`);
     });

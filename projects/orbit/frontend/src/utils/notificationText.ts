@@ -20,6 +20,8 @@ export const getNotificationText = (type: NotificationType): string => {
       return "mentioned you!";
     case "reaction":
       return "reacted to your comment!";
+    case "message_reply":
+      return "replied to your message!";
     default:
       return "interacted with you!";
   }
@@ -44,6 +46,8 @@ export const getFloatingToastText = (type: NotificationType): string => {
       return "mentioned your handle index!";
     case "reaction":
       return "reacted to your comment!";
+    case "message_reply":
+      return "replied to your chat message!";
     default:
       return "joined your orbit!";
   }

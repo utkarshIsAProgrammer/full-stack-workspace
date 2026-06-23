@@ -14,6 +14,9 @@ const envSchema = zod_1.z.object({
     UPSTASH_REDIS_REST_TOKEN: zod_1.z
         .string()
         .min(1, "UPSTASH_REDIS_REST_TOKEN is required"),
+    UPSTASH_REDIS_URL: zod_1.z
+        .string()
+        .optional(),
     CLOUDINARY_NAME: zod_1.z.string().min(1, "CLOUDINARY_NAME is required"),
     CLOUDINARY_API_KEY: zod_1.z.string().min(1, "CLOUDINARY_API_KEY is required"),
     CLOUDINARY_API_SECRET: zod_1.z.string().min(1, "CLOUDINARY_API_SECRET is required"),

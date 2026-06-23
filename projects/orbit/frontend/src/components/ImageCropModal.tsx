@@ -37,7 +37,6 @@ export default function ImageCropModal({
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [aspect, setAspect] = useState<number | undefined>(aspectRatio);
-  const [originalAspect, setOriginalAspect] = useState<number>(aspectRatio || 1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
 
   // Escape key + focus trap
@@ -178,9 +177,8 @@ export default function ImageCropModal({
               onCropComplete={handleCropComplete}
               onZoomChange={setZoom}
               onRotationChange={setRotation}
-              onMediaLoaded={(mediaSize) => {
-                const ratio = mediaSize.naturalWidth / mediaSize.naturalHeight;
-                setOriginalAspect(ratio);
+              onMediaLoaded={(_mediaSize) => {
+                // aspect ratio is controlled by preset buttons
               }}
               objectFit="contain"
             />
@@ -189,16 +187,7 @@ export default function ImageCropModal({
           {/* Dimension Selector Bar */}
           <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 bg-zinc-900/60 p-3 relative z-10 justify-start">
             <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mr-2">Dimensions:</span>
-            <button
-              type="button"
-              onClick={() => setAspect(originalAspect)}
-              className={`px-3 py-1 rounded-full text-xs font-bold tracking-tight transition cursor-pointer ${aspect === originalAspect
-                  ? "bg-white text-black dark:bg-white dark:text-black"
-                  : "bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800"
-                }`}
-            >
-              Original
-            </button>
+
             <button
               type="button"
               onClick={() => setAspect(1)}
@@ -229,21 +218,13 @@ export default function ImageCropModal({
             >
               16:9 Landscape
             </button>
-            <button
-              type="button"
-              onClick={() => setAspect(undefined)}
-              className={`px-3 py-1 rounded-full text-xs font-bold tracking-tight transition cursor-pointer ${aspect === undefined
-                  ? "bg-black text-white dark:bg-white dark:text-black"
-                  : "bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800"
-                }`}
-            >
-              Free Crop
-            </button>
+
           </div>
 
           {/* Controls Footer */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-zinc-800 bg-black p-4 sm:p-6 relative z-10">
             <div className="flex flex-col w-full sm:w-1/2 gap-3">
+              {/* Zoom slider */}
               <div className="flex items-center gap-4">
                 <span className="text-xs font-semibold text-zinc-500 w-12 text-left">Zoom</span>
                 <input
@@ -258,6 +239,7 @@ export default function ImageCropModal({
                   [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-black dark:[&::-webkit-slider-thumb]:bg-white"
                 />
               </div>
+              {/* Rotate slider */}
               <div className="flex items-center gap-4">
                 <span className="text-xs font-semibold text-zinc-500 w-12 text-left">Rotate</span>
                 <input

@@ -26,6 +26,7 @@ export interface Post {
   slug: string;
   content: string;
   image?: CloudinaryImage;
+  images?: CloudinaryImage[];
   likesCount: number;
   commentsCount: number;
   savesCount: number;
@@ -75,7 +76,7 @@ export interface Comment {
   reactions?: CommentReaction[];
 }
 
-export type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction";
+export type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message_reply";
 
 export interface Notification {
   _id: string;
@@ -123,15 +124,34 @@ export interface Message {
   };
   recipient: string;
   text: string;
+  replyTo?: ({
+    _id: string;
+    sender: {
+      _id: string;
+      username: string;
+      fullName: string;
+      profilePic?: CloudinaryImage;
+    };
+    text: string;
+    attachments?: {
+      url: string;
+      public_id?: string;
+      type: "voice_note" | "image" | "gif";
+      duration?: number;
+    }[];
+    createdAt: string;
+  }) | null;
   attachments?: {
     url: string;
     public_id?: string;
     type: "voice_note" | "image" | "gif";
+    duration?: number;
   }[];
   seen: boolean;
   seenAt?: string | null;
   isEdited?: boolean;
   isDeleted?: boolean;
+  deletedFor?: string[];
   reactions?: MessageReaction[];
   createdAt: string;
   updatedAt: string;

@@ -14,10 +14,10 @@ trackPageView('home');
 // Register Service Worker for PWA support
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then((registration) => {
-      console.log('SW registered: ', registration);
-    }).catch((registrationError) => {
-      console.log('SW registration failed: ', registrationError);
+    navigator.serviceWorker.register('/sw.js').then((_registration) => {
+      // console.log('SW registered: ', _registration);
+    }).catch((_registrationError) => {
+      // console.log('SW registration failed: ', _registrationError);
     });
   });
 }

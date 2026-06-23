@@ -25,11 +25,7 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    // Log to console in dev, could send to error monitoring in prod
-    if (import.meta.env.DEV) {
-      console.error("ErrorBoundary caught:", error, errorInfo);
-    }
-    // Always log errors for debugging
+    // Log errors through the logger (suppressed in production to avoid leaking internals)
     logger.error("ErrorBoundary caught an error", {
       error: error.message,
       stack: error.stack,

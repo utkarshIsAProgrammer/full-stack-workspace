@@ -26,6 +26,7 @@ router.post("/conversations/:conversationId/messages", ratelimit_middleware_1.in
 // Edit & delete routes
 router.put("/messages/:messageId", ratelimit_middleware_1.interactionLimiter, chat_controllers_1.editMessage);
 router.delete("/messages/:messageId", ratelimit_middleware_1.interactionLimiter, chat_controllers_1.deleteMessage);
+router.delete("/messages/:messageId/delete-for-me", ratelimit_middleware_1.interactionLimiter, chat_controllers_1.deleteMessageForMe);
 // Reaction route
 router.post("/messages/:messageId/reactions", ratelimit_middleware_1.interactionLimiter, reaction_controllers_1.toggleReaction);
 // Presence route

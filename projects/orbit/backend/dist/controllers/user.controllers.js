@@ -345,6 +345,8 @@ const deleteAccount = async (req, res) => {
         await (0, cache_1.deleteCache)(`posts:author:${user._id}`);
         await (0, cache_1.deleteCache)(`saves:user:${user._id}`);
         await (0, cache_1.deleteCache)(`user:username:${user.username}`);
+        // Emit account deletion event so connected clients can clean up in real-time
+        (0, socket_1.emitAccountDeleted)(user._id.toString());
         // send account deletion email
         (0, nodeMailer_1.sendDeletionMail)({
             email: user.email,
@@ -682,6 +684,8 @@ const pinPost = async (req, res) => {
         pinned.push(new mongoose_1.default.Types.ObjectId(postId));
         user.pinnedPosts = pinned;
         await user.save();
+        // Emit real-time pin event
+        (0, socket_1.emitPostPin)(postId, userId);
         return res.status(200).json({
             success: true,
             message: "Post pinned successfully!",
@@ -722,6 +726,8 @@ const unpinPost = async (req, res) => {
         }
         user.pinnedPosts = filtered;
         await user.save();
+        // Emit real-time unpin event
+        (0, socket_1.emitPostUnpin)(postId, userId);
         return res.status(200).json({
             success: true,
             message: "Post unpinned successfully!",
@@ -922,6 +928,19 @@ const updateProfile = async (req, res) => {
         }
         if (updatedUser?.username && updatedUser.username !== user.username) {
             await (0, cache_1.clearUserByUsernameCache)(updatedUser.username);
+        }
+        // Emit real-time profile update event so other users see changes instantly
+        if (updatedUser) {
+            (0, socket_1.emitUserUpdated)({
+                _id: updatedUser._id,
+                fullName: updatedUser.fullName,
+                username: updatedUser.username,
+                email: updatedUser.email,
+                gender: updatedUser.gender,
+                bio: updatedUser.bio,
+                profilePic: updatedUser.profilePic,
+                bannerImage: updatedUser.bannerImage,
+            });
         }
         return res.status(200).json({
             success: true,

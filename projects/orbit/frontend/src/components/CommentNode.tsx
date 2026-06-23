@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { User, Comment, CommentReaction } from "../types";
-import { Reply, Smile, Heart, Pencil, Trash2, Check, X as XIcon } from "lucide-react";
+import { Reply, Smile, Heart, Pencil, Trash2, Check, X as XIcon, Copy, CornerDownLeft } from "lucide-react";
+import UserAvatar from "./UserAvatar";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
+import { extractEmoji } from "../utils/validation";
 
 interface CommentNodeProps {
   key?: React.Key;
@@ -15,7 +18,7 @@ interface CommentNodeProps {
   renderFormattedContent: (content: string) => React.ReactNode;
 }
 
-const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "😠"];
+const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "😠", "🎉", "🔥", "💀", "🙏"];
 
 export default function CommentNode({
   comment,
@@ -262,34 +265,226 @@ export default function CommentNode({
       const data = await res.json();
       if (res.ok && data.success) {
         setShowDeleteConfirm(false);
+        setContextMenu(null);
+        // Notify parent to remove this comment from the list
+        window.dispatchEvent(
+          new CustomEvent("commentDeleted", {
+            detail: { commentId: comment._id },
+          })
+        );
       }
     } catch (e) {
       logger.error("Failed to delete comment", e);
     }
   };
 
-  // Group reactions by emoji
+  // Context menu state (like Chat.tsx)
+  const [contextMenu, setContextMenu] = useState<{
+    comment: Comment;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  // Mobile detection for responsive context menu
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 767px)");
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  // Close context menu on outside click
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    window.addEventListener("click", handleClick);
+    return () => window.removeEventListener("click", handleClick);
+  }, []);
+
+  // Swipe-to-reply state
+  const [showSwipeBadge, setShowSwipeBadge] = useState(false);
+  const swipeBarRef = useRef<HTMLDivElement>(null);
+  const swipeBadgeRef = useRef<HTMLDivElement>(null);
+  const swipeOffsetRef = useRef(0);
+  const touchStartXRef = useRef(0);
+  const touchStartYRef = useRef(0);
+  const isSwipingRef = useRef(false);
+
+  // Double-tap to like
+  const lastTapTimeRef = useRef(0);
+
+  // Long-press timer
+  const touchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleContextMenu = (e: React.MouseEvent | { clientX: number; clientY: number; preventDefault: () => void }, c: Comment) => {
+    e.preventDefault();
+    const x = Math.min(Math.max(10, (e as any).clientX || 0), window.innerWidth - 10);
+    const y = Math.min(Math.max(10, (e as any).clientY || 0), window.innerHeight - 10);
+    setContextMenu({ comment: c, x, y });
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    touchStartXRef.current = touch.clientX;
+    touchStartYRef.current = touch.clientY;
+    isSwipingRef.current = false;
+    swipeOffsetRef.current = 0;
+    setShowSwipeBadge(false);
+    if (swipeBarRef.current) swipeBarRef.current.style.transform = 'translateX(-6px)';
+
+    // Double-tap detection
+    const now = Date.now();
+    if (lastTapTimeRef.current && now - lastTapTimeRef.current < 300) {
+      // Double tap! Trigger like
+      handleLikeToggle();
+      lastTapTimeRef.current = 0;
+      return;
+    }
+    lastTapTimeRef.current = now;
+
+    touchTimerRef.current = setTimeout(() => {
+      // Long press context menu (only if not swiping)
+      if (!isSwipingRef.current) {
+        if (touch) {
+          const containerRect = containerRef.current?.getBoundingClientRect();
+          const x = containerRect ? containerRect.left : touch.clientX;
+          const y = containerRect ? containerRect.bottom + 4 : touch.clientY;
+          handleContextMenu(
+            { clientX: x, clientY: y, preventDefault: () => {} } as any,
+            comment
+          );
+        }
+      }
+    }, 500);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    const deltaX = touch.clientX - touchStartXRef.current;
+    const deltaY = touch.clientY - touchStartYRef.current;
+
+    // Only start swipe if horizontal movement exceeds vertical by enough margin
+    if (!isSwipingRef.current && Math.abs(deltaX) > 15 && Math.abs(deltaX) > Math.abs(deltaY) * 1.5) {
+      isSwipingRef.current = true;
+      if (touchTimerRef.current) {
+        clearTimeout(touchTimerRef.current);
+        touchTimerRef.current = null;
+      }
+    }
+
+    if (isSwipingRef.current) {
+      // Clamp swipe offset: rightwards only, max 100px
+      const offset = Math.min(Math.max(0, deltaX), 100);
+      swipeOffsetRef.current = offset;
+      // Direct CSS transform for 60fps — no React re-render, no transition lag
+      if (swipeBarRef.current) {
+        swipeBarRef.current.style.transition = 'none';
+        swipeBarRef.current.style.transform = `translateX(${offset - 6}px)`;
+        swipeBarRef.current.style.opacity = offset > 0 ? '1' : '0';
+      }
+      if (offset > 20 && !showSwipeBadge) {
+        setShowSwipeBadge(true);
+      } else if (offset <= 20 && showSwipeBadge) {
+        setShowSwipeBadge(false);
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (touchTimerRef.current) {
+      clearTimeout(touchTimerRef.current);
+      touchTimerRef.current = null;
+    }
+
+    if (isSwipingRef.current && swipeOffsetRef.current > 60) {
+      // Trigger reply
+      onReply(comment._id);
+    }
+
+    swipeOffsetRef.current = 0;
+    setShowSwipeBadge(false);
+    if (swipeBarRef.current) {
+      // Restore transition for smooth snap-back animation
+      swipeBarRef.current.style.transition = '';
+      swipeBarRef.current.style.transform = 'translateX(-6px)';
+      swipeBarRef.current.style.opacity = '0';
+    }
+    isSwipingRef.current = false;
+    touchStartXRef.current = 0;
+    touchStartYRef.current = 0;
+  };
+
+  // Copy comment text
+  const handleCopyText = async () => {
+    const text = comment.content || (comment as any).text || "";
+    if (text) {
+      await navigator.clipboard.writeText(text);
+    }
+    setContextMenu(null);
+  };
+
+  // Native emoji input ref
+  const emojiInputRef = useRef<HTMLInputElement>(null);
+  const [customEmojiInput, setCustomEmojiInput] = useState("");
+
+  // Group reactions by emoji (max 10 unique)
   const getGroupedReactions = (reacts?: CommentReaction[]) => {
     if (!reacts || reacts.length === 0) return {};
-    const grouped: Record<string, { count: number; hasReacted: boolean }> = {};
-    reacts.forEach(r => {
-      if (!grouped[r.emoji]) {
-        grouped[r.emoji] = { count: 0, hasReacted: false };
-      }
-      grouped[r.emoji].count++;
-      const sId = typeof r.sender === "string" ? r.sender : r.sender?._id;
-      if (sId === user?._id) {
-        grouped[r.emoji].hasReacted = true;
-      }
-    });
-    return grouped;
+    const entries = Object.entries(
+      reacts.reduce((acc, r) => {
+        if (!acc[r.emoji]) acc[r.emoji] = { count: 0, hasReacted: false };
+        acc[r.emoji].count++;
+        const sId = typeof r.sender === "string" ? r.sender : r.sender?._id;
+        if (sId === user?._id) acc[r.emoji].hasReacted = true;
+        return acc;
+      }, {} as Record<string, { count: number; hasReacted: boolean }>)
+    );
+    // Sort by most reacted first, limit to 10
+    return Object.fromEntries(entries.slice(0, 10));
   };
 
   const groupedReactions = getGroupedReactions(reactions);
 
   return (
-    <div className={`space-y-3 ${depth > 0 ? "ml-8 border-l-2 pl-4 border-zinc-700/50" : ""}`}>
-      <div className="rounded-2xl border border-white/10 bg-zinc-950/40 p-3 space-y-2 relative backdrop-blur-lg shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] hover:border-white/20 hover:bg-zinc-950/50 transition-all duration-300">
+    <div
+      ref={containerRef}
+      className={`relative overflow-hidden space-y-3 ${depth > 0 ? "ml-8 border-l-2 pl-4 border-zinc-700/50" : ""}`}
+      onContextMenu={(e) => {
+        const containerRect = containerRef.current?.getBoundingClientRect();
+        const x = containerRect ? containerRect.left : e.clientX;
+        const y = containerRect ? containerRect.bottom + 4 : e.clientY;
+        handleContextMenu(
+          { clientX: x, clientY: y, preventDefault: () => e.preventDefault() } as any,
+          comment
+        );
+      }}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchMove}
+    >
+      {/* Swipe-to-reply visual indicator — uses CSS transform for 60fps performance */}
+      <div
+        ref={swipeBarRef}
+        className="absolute inset-y-0 left-0 w-1.5 bg-indigo-500/50 rounded-r-full pointer-events-none"
+        style={{ transform: 'translateX(-6px)', opacity: 0, transition: 'transform 200ms ease-out, opacity 200ms ease-out' }}
+      />
+      {/* Reply icon that slides in on swipe */}
+      {showSwipeBadge && (
+        <div
+          ref={swipeBadgeRef}
+          className="absolute left-2 top-1/2 -translate-y-1/2 z-10 pointer-events-none"
+        >
+          <div className="flex items-center gap-1.5 bg-indigo-500/20 backdrop-blur-sm rounded-full px-2.5 py-1 border border-indigo-400/30">
+            <CornerDownLeft className="h-3 w-3 text-indigo-300" />
+            <span className="text-[9px] font-bold text-indigo-300 uppercase tracking-wider">Reply</span>
+          </div>
+        </div>
+      )}
+      <div className="rounded-2xl border border-white/10 bg-zinc-950/40 p-2.5 space-y-1.5 relative backdrop-blur-lg shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] hover:border-white/20 hover:bg-zinc-950/50 transition-all duration-300">
         {/* Delete Confirmation Overlay */}
         {showDeleteConfirm && (
           <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-zinc-950/90 backdrop-blur-sm">
@@ -314,20 +509,20 @@ export default function CommentNode({
         )}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img loading="lazy"
-              src={comment.author.profilePic?.url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"}
+            <UserAvatar
+              src={comment.author.profilePic?.url}
               alt={comment.author.fullName}
               onClick={() => onUserSelected(comment.author.username)}
-              className="h-6 w-6 rounded-full object-cover border border-zinc-800 cursor-pointer shadow-sm"
+              className="h-5 w-5 rounded-full object-cover border border-zinc-800 cursor-pointer shadow-sm"
             />
             <div>
               <h5
                 onClick={() => onUserSelected(comment.author.username)}
-                className="font-sans text-xs font-semibold text-slate-900 dark:text-zinc-100 leading-none cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                className="font-sans text-[11px] font-semibold text-slate-900 dark:text-zinc-100 leading-none cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
               >
                 {comment.author.fullName}
               </h5>
-              <span className="text-[10px] text-slate-500 dark:text-zinc-500 font-medium">@{comment.author.username}</span>
+              <span className="text-[9px] text-slate-500 dark:text-zinc-500 font-medium">@{comment.author.username}</span>
             </div>
           </div>
 
@@ -350,7 +545,7 @@ export default function CommentNode({
                 </button>
               </>
             )}
-            <span className="text-[10px] text-slate-400 dark:text-zinc-500 font-medium">
+            <span className="text-[9px] text-slate-400 dark:text-zinc-500 font-medium">
               {getRelativeDate(comment.createdAt)}
               {comment.isEdited && (
                 <span className="ml-1 italic opacity-60">(edited)</span>
@@ -392,10 +587,14 @@ export default function CommentNode({
 
         {/* Emoji Reactions Row */}
         {Object.keys(groupedReactions).length > 0 && (
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <motion.div className="flex items-center gap-1.5 flex-wrap" layout>
             {Object.entries(groupedReactions).map(([emoji, data]) => (
-              <button
+              <motion.button
                 key={emoji}
+                layout
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ type: "spring", stiffness: 400, damping: 25 }}
                 onClick={() => handleReaction(emoji)}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border transition-colors ${data.hasReacted
                   ? "bg-indigo-500/20 border-indigo-400/30 text-indigo-300"
@@ -404,9 +603,9 @@ export default function CommentNode({
               >
                 <span>{emoji}</span>
                 <span className="text-[10px] font-medium">{data.count}</span>
-              </button>
+              </motion.button>
             ))}
-          </div>
+          </motion.div>
         )}
 
         {/* Action Bar */}
@@ -416,12 +615,19 @@ export default function CommentNode({
               onClick={handleLikeToggle}
               className="flex items-center gap-1.5 text-xs font-medium transition-colors group"
             >
-              <Heart
-                className={`h-3.5 w-3.5 transition-colors ${likedByMe
-                  ? "fill-red-500 text-red-500"
-                  : "text-slate-500 dark:text-zinc-400 group-hover:text-red-400"
-                  }`}
-              />
+              <motion.span
+                key={likedByMe ? 'liked' : 'unliked'}
+                initial={{ scale: likedByMe ? 1.3 : 1 }}
+                animate={{ scale: 1 }}
+                transition={{ type: "spring", stiffness: 400, damping: 15 }}
+              >
+                <Heart
+                  className={`h-3.5 w-3.5 transition-colors ${likedByMe
+                    ? "fill-red-500 text-red-500"
+                    : "text-slate-500 dark:text-zinc-400 group-hover:text-red-400"
+                    }`}
+                />
+              </motion.span>
               <span className={`${likedByMe ? "text-red-400 font-semibold" : "text-slate-500 dark:text-zinc-400 group-hover:text-red-400"}`}>
                 {likesCount}
               </span>
@@ -438,28 +644,19 @@ export default function CommentNode({
           )}
 
           {user && (
-            <div className="relative">
-              <button
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-indigo-400 transition-colors"
-              >
-                <Smile className="h-3 w-3" /> React
-              </button>
-
-              {showEmojiPicker && (
-                <div className="absolute bottom-full left-0 mb-2 flex gap-1 p-2 rounded-2xl border border-zinc-700 bg-zinc-900 shadow-xl z-50">
-                  {QUICK_EMOJIS.map((emoji) => (
-                    <button
-                      key={emoji}
-                      onClick={() => handleReaction(emoji)}
-                      className="w-6 h-6 rounded-lg flex items-center justify-center text-sm hover:bg-zinc-700 transition-all hover:scale-110"
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const btnRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                handleContextMenu(
+                  { clientX: btnRect.left, clientY: btnRect.bottom + 4, preventDefault: () => {} } as any,
+                  comment
+                );
+              }}
+              className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-indigo-400 transition-colors"
+            >
+              <Smile className="h-3 w-3" /> React
+            </button>
           )}
 
           {(showReplies || hasReplies) && (
@@ -503,6 +700,245 @@ export default function CommentNode({
           )}
         </div>
       )}
+
+      {/* Context Menu — mobile bottom sheet or desktop popover */}
+      <AnimatePresence>
+        {contextMenu && contextMenu.comment._id === comment._id && (
+          <>
+            {isMobile ? (
+              <>
+                {/* Mobile Backdrop */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 pointer-events-auto"
+                  onClick={() => setContextMenu(null)}
+                />
+                {/* Mobile Bottom Sheet */}
+                <motion.div
+                  initial={{ y: "100%" }}
+                  animate={{ y: 0 }}
+                  exit={{ y: "100%" }}
+                  transition={{ type: "spring", damping: 25, stiffness: 250 }}
+                  className="fixed bottom-0 inset-x-0 bg-zinc-900/95 backdrop-blur-xl border-t border-zinc-800 rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-50 overflow-hidden pb-8 max-w-md mx-auto pointer-events-auto"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Drag Handle */}
+                  <div className="w-12 h-1 bg-zinc-700 rounded-full mx-auto my-3" />
+
+                  {/* Emoji reactions row */}
+                  <div className="flex justify-between px-4 py-1.5 border-b border-zinc-800/60 overflow-x-auto gap-2 scrollbar-none">
+                    {["👍", "❤️", "😂", "😮", "😢", "😠"].map((emoji) => (
+                      <button
+                        key={emoji}
+                        onClick={() => {
+                          handleReaction(emoji);
+                          setContextMenu(null);
+                        }}
+                        className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl hover:bg-zinc-800 active:scale-90 transition-all shrink-0 cursor-pointer"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => {
+                        setShowEmojiPicker(true);
+                        setContextMenu(null);
+                      }}
+                      className="w-10 h-10 rounded-2xl flex items-center justify-center text-lg hover:bg-zinc-800 active:scale-90 transition-all shrink-0 bg-zinc-800/40 border border-zinc-700/30 cursor-pointer"
+                    >
+                      <Smile className="h-4.5 w-4.5 text-zinc-300" />
+                    </button>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="p-3 space-y-0.5">
+                    <button
+                      onClick={() => { onReply(comment._id); setContextMenu(null); }}
+                      className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer"
+                    >
+                      <CornerDownLeft className="h-3.5 w-3.5 text-zinc-400" />
+                      Reply
+                    </button>
+                    <button
+                      onClick={handleCopyText}
+                      className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer"
+                    >
+                      <Copy className="h-3.5 w-3.5 text-zinc-400" />
+                      Copy Text
+                    </button>
+                    {user && comment.author._id === user._id && (
+                      <>
+                        <button
+                          onClick={() => { setIsEditing(true); setEditText(comment.content); setContextMenu(null); }}
+                          className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer"
+                        >
+                          <Pencil className="h-3.5 w-3.5 text-zinc-400" />
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => { setShowDeleteConfirm(true); setContextMenu(null); }}
+                          className="w-full px-3 py-2.5 text-left text-xs font-bold text-red-400 hover:bg-red-500/10 rounded-xl flex items-center gap-2.5 cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                          Delete
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => setContextMenu(null)}
+                      className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-400 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 border border-zinc-800/50 mt-1.5 cursor-pointer"
+                    >
+                      <XIcon className="h-3.5 w-3.5 text-zinc-400" />
+                      Cancel
+                    </button>
+                  </div>
+                </motion.div>
+              </>
+            ) : (
+              /* Desktop Context Menu */
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                style={{
+                  position: "fixed",
+                  left: Math.min(Math.max(20, contextMenu.x), window.innerWidth - 340),
+                  top: Math.min(Math.max(20, contextMenu.y - 120), window.innerHeight - 260),
+                  zIndex: 1000,
+                }}
+                className="bg-zinc-900/95 backdrop-blur-xl border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden pointer-events-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex flex-wrap gap-1 p-2 border-b border-zinc-800">
+                  {["👍", "❤️", "😂", "😮", "😢", "😠"].map((emoji) => (
+                    <button
+                      key={emoji}
+                      onClick={() => { handleReaction(emoji); setContextMenu(null); }}
+                      className="w-10 h-10 rounded-xl flex items-center justify-center text-xl hover:bg-zinc-800 transition-all cursor-pointer"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => { setShowEmojiPicker(true); setContextMenu(null); }}
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-xl hover:bg-zinc-800 transition-all cursor-pointer"
+                  >
+                    <Smile className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="p-1">
+                  <button
+                    onClick={() => { onReply(comment._id); setContextMenu(null); }}
+                    className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer"
+                  >
+                    <CornerDownLeft className="h-3.5 w-3.5" />
+                    Reply
+                  </button>
+                  <button
+                    onClick={handleCopyText}
+                    className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    Copy Text
+                  </button>
+                  {user && comment.author._id === user._id && (
+                    <>
+                      <button
+                        onClick={() => { setIsEditing(true); setEditText(comment.content); setContextMenu(null); }}
+                        className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => { setShowDeleteConfirm(true); setContextMenu(null); }}
+                        className="w-full px-3 py-2.5 text-left text-xs font-bold text-red-400 hover:bg-red-500/10 rounded-xl flex items-center gap-2 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={() => setContextMenu(null)}
+                    className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-400 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer"
+                  >
+                    <XIcon className="h-3.5 w-3.5" />
+                    Cancel
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Native Emoji Picker (for the "more emojis" button) */}
+      <AnimatePresence>
+        {showEmojiPicker && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/50 flex items-end sm:items-center justify-center p-4"
+            onClick={() => { setShowEmojiPicker(false); setCustomEmojiInput(""); }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-zinc-900/95 backdrop-blur-xl border border-zinc-800 rounded-2xl p-3 w-full max-w-xs shadow-2xl"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-[11px] font-bold text-zinc-200 uppercase tracking-widest">Pick an Emoji</h4>
+                <button onClick={() => { setShowEmojiPicker(false); setCustomEmojiInput(""); }}>
+                  <XIcon className="h-3 w-3 text-zinc-500 hover:text-white" />
+                </button>
+              </div>
+              <input
+                ref={emojiInputRef}
+                type="text"
+                // @ts-ignore-next-line - emoji is valid HTML but missing from React types
+                inputMode="emoji"
+                value={customEmojiInput}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setCustomEmojiInput(val);
+                  if (val.trim()) {
+                    const emoji = extractEmoji(val) || val.trim().charAt(0);
+                    handleReaction(emoji);
+                    setShowEmojiPicker(false);
+                    setCustomEmojiInput("");
+                  }
+                }}
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs text-white outline-none focus:border-white text-center"
+                autoFocus
+                autoComplete="off"
+                placeholder="Tap for emoji"
+              />
+              <div className="mt-2">
+                <p className="text-[8px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5 text-center">Or pick one</p>
+                <div className="flex flex-wrap gap-1 justify-center">
+                  {QUICK_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      onClick={() => { handleReaction(emoji); setShowEmojiPicker(false); }}
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-base hover:bg-zinc-800 transition-all hover:scale-110 cursor-pointer"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -92,7 +92,7 @@ class WebSocketReconnect {
         if (!this.manualClose && this.shouldReconnect && this.retryCount < this.options.maxRetries) {
           const delay = this.calculateDelay();
           this.retryCount++;
-          console.log(`WebSocket disconnected, retrying in ${Math.round(delay)}ms (attempt ${this.retryCount}/${this.options.maxRetries})`);
+          // console.log(`WebSocket disconnected, retrying in ${Math.round(delay)}ms (attempt ${this.retryCount}/${this.options.maxRetries})`);
           
           this.reconnectTimeout = setTimeout(() => {
             this.attemptConnection();
@@ -105,7 +105,7 @@ class WebSocketReconnect {
       };
 
     } catch (error) {
-      console.error('WebSocket connection error:', error);
+      // console.error('WebSocket connection error:', error);
       this.options.onError(error as Event);
       
       if (!this.manualClose && this.shouldReconnect && this.retryCount < this.options.maxRetries) {
@@ -143,7 +143,7 @@ class WebSocketReconnect {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(typeof data === 'string' ? data : JSON.stringify(data));
     } else {
-      console.warn('WebSocket is not connected, cannot send data');
+      // console.warn('WebSocket is not connected, cannot send data');
     }
   }
 

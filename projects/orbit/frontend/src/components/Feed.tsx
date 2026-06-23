@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useKeyboardOpen } from "../hooks/useKeyboardOpen";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Sparkles,
@@ -14,9 +16,13 @@ import {
   AlertCircle,
   X,
   MessageCircle,
+  Pencil,
+  RotateCcw,
 } from "lucide-react";
 import { Post, Comment, User } from "../types";
 import GlassCard from "./GlassCard";
+import ImageCarousel from "./ImageCarousel";
+import UserAvatar from "./UserAvatar";
 import ImageCropModal from "./ImageCropModal";
 import CommentNode from "./CommentNode";
 import Skeleton from "./Skeleton";
@@ -37,6 +43,8 @@ interface FeedProps {
   followingStates: Record<string, boolean>;
   autoOpenComments?: boolean;
   onClearAutoOpenComments?: () => void;
+  onCommentsOpenChange?: (open: boolean) => void;
+  readOnly?: boolean;
 }
 
 export default function Feed({
@@ -50,7 +58,11 @@ export default function Feed({
   followingStates,
   autoOpenComments = false,
   onClearAutoOpenComments,
+  onCommentsOpenChange,
+  readOnly = false,
 }: FeedProps) {
+  const isKeyboardOpen = useKeyboardOpen();
+
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.innerWidth < 768 || window.matchMedia("(pointer: coarse)").matches;
@@ -73,13 +85,108 @@ export default function Feed({
   // New Post Composer State
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
-  const [postImageFile, setPostImageFile] = useState<File | null>(null);
-  const [postImagePreview, setPostImagePreview] = useState("");
+  const [postImageFiles, setPostImageFiles] = useState<File[]>([]);
+  const [postImagePreviews, setPostImagePreviews] = useState<string[]>([]);
   const [submittingPost, setSubmittingPost] = useState(false);
 
-  // Crop states
+  // Crop queue for sequential multi-image cropping
+  const [cropQueue, setCropQueue] = useState<string[]>([]);
+  const [cropQueueNames, setCropQueueNames] = useState<string[]>([]);
   const [cropModalOpen, setCropModalOpen] = useState(false);
-  const [cropImageSrc, setCropImageSrc] = useState("");
+  const [currentCropSrc, setCurrentCropSrc] = useState("");
+
+  // Re-crop/replace state for individual images in the preview
+  const [reCropIndex, setReCropIndex] = useState<number>(-1);
+  const replaceFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Process next image in crop queue
+  const processNextCrop = useCallback(() => {
+    setCropQueue((prev) => {
+      if (prev.length === 0) return prev;
+      const [nextSrc, ...rest] = prev;
+      setCurrentCropSrc(nextSrc);
+      setCropModalOpen(true);
+      setCropQueueNames((names) => {
+        // Keep names in sync — take the first off
+        const [, ...restNames] = names;
+        return restNames;
+      });
+      return rest;
+    });
+  }, []);
+
+  // Handle crop complete — either replace at index (re-crop/replace) or append (new image)
+  const handleCropComplete = useCallback((blob: Blob) => {
+    if (reCropIndex >= 0) {
+      // Replacing an existing image (re-crop or replace)
+      const fileName = cropQueueNames[0] || `cropped_image_${Date.now()}.jpg`;
+      const file = new File([blob], fileName, { type: "image/jpeg" });
+      setPostImageFiles((prev) => {
+        const next = [...prev];
+        next[reCropIndex] = file;
+        return next;
+      });
+      // Revoke the old preview URL
+      setPostImagePreviews((prev) => {
+        const next = [...prev];
+        if (next[reCropIndex]) URL.revokeObjectURL(next[reCropIndex]);
+        next[reCropIndex] = URL.createObjectURL(file);
+        return next;
+      });
+      if (currentCropSrc) URL.revokeObjectURL(currentCropSrc);
+      // Clear queue state to prevent stale names affecting future sequential crops
+      setCropQueue([]);
+      setCropQueueNames([]);
+      setReCropIndex(-1);
+      setCropModalOpen(false);
+    } else {
+      // Adding a new image (normal sequential crop flow)
+      const fileName = cropQueueNames[0] || `cropped_image_${Date.now()}.jpg`;
+      const file = new File([blob], fileName, { type: "image/jpeg" });
+      setPostImageFiles((prev) => [...prev, file]);
+      if (currentCropSrc) URL.revokeObjectURL(currentCropSrc);
+      setCropModalOpen(false);
+      setTimeout(() => processNextCrop(), 100);
+    }
+  }, [cropQueueNames, processNextCrop, currentCropSrc, reCropIndex]);
+
+  // When crop queue finishes, generate previews
+  useEffect(() => {
+    if (cropQueue.length === 0 && !cropModalOpen && postImageFiles.length > 0) {
+      // All crops done — generate previews from actual file list
+      const previews = postImageFiles.map((f) => URL.createObjectURL(f));
+      setPostImagePreviews(previews);
+    }
+  }, [cropQueue, cropModalOpen, postImageFiles]);
+
+  // Re-crop an existing image from the preview — re-opens the crop modal
+  const handleReCrop = (idx: number) => {
+    const file = postImageFiles[idx];
+    if (!file) return;
+    // Store the original file name for the cropped result
+    setCropQueueNames([file.name]);
+    const url = URL.createObjectURL(file);
+    setCurrentCropSrc(url);
+    setReCropIndex(idx);
+    setCropModalOpen(true);
+  };
+
+  // Trigger file picker for replacing an existing image
+  const handleReplaceTrigger = (idx: number) => {
+    setReCropIndex(idx);
+    replaceFileInputRef.current?.click();
+  };
+
+  // Revoke all preview object URLs on unmount to prevent memory leaks
+  const postImagePreviewsRef = useRef<string[]>([]);
+  postImagePreviewsRef.current = postImagePreviews;
+  useEffect(() => {
+    return () => {
+      postImagePreviewsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
+
+  
 
   // Mentions autocomplete dropdown state
   const [mentionQuery, setMentionQuery] = useState("");
@@ -89,6 +196,18 @@ export default function Feed({
 
   // Active expanded Post for comments Modal/Drawer
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  
+  // Notify parent when comments open/close
+  useEffect(() => {
+    onCommentsOpenChange?.(selectedPost !== null);
+  }, [selectedPost, onCommentsOpenChange]);
+
+  // Listen for closeComments event from App.tsx back button
+  useEffect(() => {
+    const handleCloseComments = () => setSelectedPost(null);
+    window.addEventListener("closeComments", handleCloseComments);
+    return () => window.removeEventListener("closeComments", handleCloseComments);
+  }, []);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [newCommentText, setNewCommentText] = useState("");
@@ -115,6 +234,13 @@ export default function Feed({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const touchStartRef = useRef(0);
   const isPullingRef = useRef(false);
+
+  // Post card swipe-to-like/repost state (one card at a time)
+  const [swipingPostId, setSwipingPostId] = useState<string | null>(null);
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const swipeStartXRef = useRef(0);
+  const swipeStartYRef = useRef(0);
+  const isSwipingCardRef = useRef(false);
 
   // Handle touch pull-to-refresh
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -147,6 +273,54 @@ export default function Feed({
     } else {
       setPullDistance(0);
     }
+  };
+
+  // Post card swipe handlers (per-card, triggered from each post element)
+  const handleCardTouchStart = (e: React.TouchEvent, _postId: string) => {
+    const touch = e.touches[0];
+    swipeStartXRef.current = touch.clientX;
+    swipeStartYRef.current = touch.clientY;
+    isSwipingCardRef.current = false;
+    setSwipingPostId(null);
+    setSwipeOffset(0);
+  };
+
+  const handleCardTouchMove = (e: React.TouchEvent, postId: string) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    const deltaX = touch.clientX - swipeStartXRef.current;
+    const deltaY = touch.clientY - swipeStartYRef.current;
+
+    if (!isSwipingCardRef.current && Math.abs(deltaX) > 15 && Math.abs(deltaX) > Math.abs(deltaY) * 1.5) {
+      isSwipingCardRef.current = true;
+      setSwipingPostId(postId);
+    }
+
+    if (isSwipingCardRef.current) {
+      const offset = Math.min(Math.max(-80, deltaX), 80);
+      setSwipeOffset(offset);
+    }
+  };
+
+  const handleCardTouchEnd = (_e: React.TouchEvent, post: Post) => {
+    if (!isSwipingCardRef.current) return;
+    isSwipingCardRef.current = false;
+    const absOffset = Math.abs(swipeOffset);
+
+    if (absOffset > 40) {
+      if (swipeOffset > 0) {
+        // Swipe right → like
+        handleLikeToggle(post._id, !!post.likedByMe);
+      } else {
+        // Swipe left → repost
+        handleRepostToggle(post._id, !!post.repostedByMe);
+      }
+    }
+
+    setSwipingPostId(null);
+    setSwipeOffset(0);
+    swipeStartXRef.current = 0;
+    swipeStartYRef.current = 0;
   };
 
   // Fetch posts (with support for optional search query or singular slug view)
@@ -250,14 +424,15 @@ export default function Feed({
   const followingStatesRef = useRef(followingStates);
   followingStatesRef.current = followingStates;
 
-  // Listen for realtime new posts from followed users
+  // Listen for realtime new posts from other users
   useEffect(() => {
     const handleNewPost = (e: CustomEvent<{ post: Post }>) => {
       const { post } = e.detail;
       // Only prepend on the main home feed (not search, saves-only, reposts-only, or single post)
       if (searchQuery || showSavesOnly || showRepostsOnly || singlePostSlug) return;
-      // Only show posts from users we follow
-      if (user && followingStatesRef.current[post.author?._id]) {
+      // Show all posts from other users in real-time (not just followed ones)
+      // Own posts are already handled by the createPost response
+      if (user && post.author?._id !== user._id) {
         setPosts((prev) => {
           if (prev.some((p) => p._id === post._id)) return prev; // deduplicate
           return [{ ...post, likedByMe: false, savedByMe: false, repostedByMe: false } as Post, ...prev];
@@ -565,7 +740,7 @@ export default function Feed({
   // Submit Post
   const handleCreatePostSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const errors = validatePost({ title, content });
+    const errors = validatePost({ title, content, hasImages: postImageFiles.length > 0 });
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       setError(null);
@@ -579,9 +754,9 @@ export default function Feed({
     const formData = new FormData();
     formData.append("title", title);
     formData.append("content", content);
-    if (postImageFile) {
-      formData.append("image", postImageFile);
-    }
+    postImageFiles.forEach((file) => {
+      formData.append("images", file);
+    });
 
     try {
       const res = await apiFetch("/api/posts", {
@@ -597,8 +772,8 @@ export default function Feed({
         // Reset inputs
         setTitle("");
         setContent("");
-        setPostImageFile(null);
-        setPostImagePreview("");
+        setPostImageFiles([]);
+        setPostImagePreviews([]);
 
         window.dispatchEvent(new CustomEvent("showToast", { detail: { message: "Your post was successfully published!", type: "success" } }));
       } else {
@@ -931,14 +1106,20 @@ export default function Feed({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           content: newCommentText,
-          parent: replyToCommentId,
+          ...(replyToCommentId ? { parent: replyToCommentId } : {}),
         }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
         setNewCommentText("");
         setReplyToCommentId(null);
-        loadComments(selectedPost._id); // Reload replies
+        // Directly prepend the returned comment for instant feedback
+        if (data.comment) {
+          setComments((prev) => {
+            if (prev.some((c) => c._id === data.comment._id)) return prev;
+            return [data.comment, ...prev];
+          });
+        }
       } else {
         // Rollback on failure
         setPosts((prev) =>
@@ -1003,7 +1184,7 @@ export default function Feed({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      className="relative w-full px-2 pb-24 pt-6 content-visibility-auto"
+      className="relative w-full px-2 pt-6 content-visibility-auto"
       style={{ transform: `translateY(${pullDistance}px)`, transition: isPullingRef.current ? 'none' : 'transform 0.3s ease-out' }}
     >
       {/* Pull-to-refresh indicator */}
@@ -1019,7 +1200,7 @@ export default function Feed({
       )}
       {/* Title */}
       <div className="mb-6 px-1.5 flex items-center justify-between">
-        <div>                  <h2 className="font-sans text-2xl md:text-4xl font-bold tracking-tight text-slate-900 dark:text-zinc-100">
+        <div>                          <h2 className="font-sans text-xl md:text-3xl font-bold tracking-tight text-slate-900 dark:text-zinc-100">
             {searchQuery ? `Search Results: "${searchQuery}"` : showSavesOnly ? "Saved Posts" : showRepostsOnly ? "Your Reposts" : "Home Feed"}
           </h2>
           <p className="text-sm text-slate-500 dark:text-zinc-400">
@@ -1052,16 +1233,18 @@ export default function Feed({
         <div className="space-y-6 max-w-2xl mx-auto w-full">
           <div className="space-y-6">
 
-            {/* Post Composer Card */}
-            {user && (
+            {/* Post Composer Card — hidden on mobile per user request */}
+            {user && !isMobile && (
               <GlassCard className="shadow-sm rounded-4xl border-white/5 bg-zinc-950/20 backdrop-blur-xl">
-                <form onSubmit={handleCreatePostSubmit} noValidate className="space-y-4">
+                <form onSubmit={handleCreatePostSubmit} noValidate className={`transition-all duration-200 ${
+                  isKeyboardOpen ? "space-y-2.5" : "space-y-4"
+                }`}>
                   <div className="flex gap-4">
-                    <img loading="lazy"
-                      src={user.profilePic?.url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"}
+                    <UserAvatar
+                      src={user.profilePic?.url}
                       alt="user avatar"
                       onClick={() => onUserSelected(user.username)}
-                      className="h-10 w-10 shrink-0 rounded-full object-cover border border-zinc-800 shadow-sm cursor-pointer hover:opacity-80 transition-opacity"
+                      className="h-9 w-9 shrink-0 rounded-full object-cover border border-zinc-800 shadow-sm cursor-pointer hover:opacity-80 transition-opacity"
                     />
 
                     <div className="w-full space-y-3">
@@ -1069,12 +1252,11 @@ export default function Feed({
                       <div className="flex items-center gap-2">
                         <input
                           type="text"
-                          required
                           maxLength={500}
-                          placeholder="Add a title..."
+                          placeholder="Add a title... (optional)"
                           value={title}
                           onChange={(e) => { setTitle(e.target.value); clearFieldError("title"); }}
-                          className="flex-1 bg-transparent text-sm font-bold text-white placeholder-zinc-500 outline-none focus:placeholder-zinc-400"
+                          className="flex-1 bg-transparent text-xs font-bold text-white placeholder-zinc-500 outline-none focus:placeholder-zinc-400"
                         />
                         <CharCounter current={title.length} max={500} />
                       </div>
@@ -1084,11 +1266,10 @@ export default function Feed({
                       <div className="relative">
                         <textarea
                           rows={3}
-                          required
-                          placeholder="Share your thoughts... Use #hashtags and @mentions"
+                          placeholder="Share your thoughts... Use #hashtags and @mentions (optional)"
                           value={content}
                           onChange={handleContentChange}
-                          className="w-full bg-transparent text-xs text-zinc-300 placeholder-zinc-500 outline-none resize-none leading-relaxed focus:placeholder-zinc-400 relative"
+                          className="w-full bg-transparent text-[11px] text-zinc-300 placeholder-zinc-500 outline-none resize-none leading-relaxed focus:placeholder-zinc-400 relative"
                         />
                         <div className="flex items-center justify-end">
                           <CharCounter current={content.length} max={5000} />
@@ -1108,8 +1289,8 @@ export default function Feed({
                                   onClick={() => selectMentionCandidate(u.username)}
                                   className="flex items-center gap-2.5 rounded-full px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
                                 >
-                                  <img loading="lazy"
-                                    src={u.profilePic?.url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"}
+                                  <UserAvatar
+                                    src={u.profilePic?.url}
                                     alt=""
                                     className="h-5.5 w-5.5 rounded-full object-cover border border-zinc-800"
                                   />
@@ -1125,41 +1306,88 @@ export default function Feed({
                       </div>
                     </div>
                   </div>
-
-                  {/* Upload preview image display */}
-                  {postImagePreview && (
-                    <div className="relative mt-2 overflow-hidden rounded-3xl border border-zinc-800">
-                      <img loading="lazy" src={postImagePreview} alt="upload preview" className="w-full h-auto max-h-125 object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPostImageFile(null);
-                          setPostImagePreview("");
-                        }}
-                        className="absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
+                    {/* Upload preview image display — multiple images */}
+                  {postImagePreviews.length > 0 && (
+                    <div className="mt-2 flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
+                      {postImagePreviews.map((preview, idx) => (
+                        <div key={idx} className="relative shrink-0 overflow-hidden rounded-2xl border border-zinc-800 w-28 h-28">
+                          <img loading="lazy" src={preview} alt="" className="w-full h-full object-cover" />
+                          {/* Overlay actions on hover */}
+                          <div className="absolute inset-0 flex items-center justify-center gap-1 opacity-0 hover:opacity-100 bg-black/50 transition-opacity">
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleReCrop(idx); }}
+                              className="flex h-6 w-6 items-center justify-center rounded-full bg-white/20 hover:bg-white/40 text-white transition-all"
+                              title="Re-crop image"
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleReplaceTrigger(idx); }}
+                              className="flex h-6 w-6 items-center justify-center rounded-full bg-white/20 hover:bg-white/40 text-white transition-all"
+                              title="Replace image"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // Revoke the preview URL to prevent leaks
+                              URL.revokeObjectURL(preview);
+                              setPostImageFiles((prev) => prev.filter((_, i) => i !== idx));
+                              setPostImagePreviews((prev) => prev.filter((_, i) => i !== idx));
+                            }}
+                            className="absolute top-2 right-2 flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black z-20"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
 
                   {/* Bottom Actions of Composer */}
-                  <div className="flex items-center justify-between border-t border-zinc-800 pt-3.5">
+                  <div className={`flex items-center justify-between border-t border-zinc-800 transition-all duration-200 ${
+                    isKeyboardOpen ? "pt-2.5" : "pt-3.5"
+                  }`}>
                     <div className="relative">
                       <input
                         type="file"
                         accept="image/*"
                         multiple
+                        disabled={postImageFiles.length >= 5}
                         onChange={(e) => {
                           const files = Array.from(e.target.files || []);
-                          if (files.length > 0) {
-                            const file = files[0];
-                            setCropImageSrc(URL.createObjectURL(file));
+                          const remaining = 5 - postImageFiles.length;
+                          const toAdd = files.slice(0, remaining);
+                          // Reset any leftover re-crop state from previous replace attempt
+                          setReCropIndex(-1);
+                          // GIFs bypass cropping — add directly with previews
+                          const gifFiles = toAdd.filter((f) => f.type === "image/gif");
+                          const cropFiles = toAdd.filter((f) => f.type !== "image/gif");
+                          if (gifFiles.length > 0) {
+                            setPostImageFiles((prev) => [...prev, ...gifFiles]);
+                            const gifPreviews = gifFiles.map((f) => URL.createObjectURL(f));
+                            setPostImagePreviews((prev) => [...prev, ...gifPreviews]);
+                          }
+                          // Queue files for sequential cropping
+                          const newUrls = cropFiles.map((f) => URL.createObjectURL(f));
+                          const newNames = cropFiles.map((f) => f.name);
+                          setCropQueue((prev) => [...prev, ...newUrls]);
+                          setCropQueueNames((prev) => [...prev, ...newNames]);
+                          if (cropQueue.length === 0 && !cropModalOpen && newUrls.length > 0) {
+                            setCurrentCropSrc(newUrls[0]);
                             setCropModalOpen(true);
+                            setCropQueue((prev) => {
+                              const [, ...rest] = prev;
+                              return rest;
+                            });
                           }
                           e.target.value = '';
                         }}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
+                        className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
                       />
                       <button
                         type="button"
@@ -1167,12 +1395,17 @@ export default function Feed({
                       >
                         <Image className="h-4.5 w-4.5" />
                       </button>
+                      {postImageFiles.length > 0 && !isKeyboardOpen && (
+                        <span className="text-[9px] text-zinc-500 ml-1">{postImageFiles.length}/5</span>
+                      )}
                     </div>
 
                     <button
                       type="submit"
                       disabled={submittingPost}
-                      className="flex items-center gap-1.5 rounded-full bg-white px-5 py-2.5 text-xs font-bold text-black hover:bg-zinc-100 transition-all disabled:opacity-40 cursor-pointer shadow-sm animate-none"
+                      className={`flex items-center gap-1.5 rounded-full bg-white text-xs font-bold text-black hover:bg-zinc-100 transition-all disabled:opacity-40 cursor-pointer shadow-sm animate-none ${
+                        isKeyboardOpen ? "px-4 py-2" : "px-5 py-2.5"
+                      }`}
                     >
                       {submittingPost ? "Posting..." : "Post"}{" "}
                       <Send className="h-3.5 w-3.5" />
@@ -1220,7 +1453,28 @@ export default function Feed({
                       exit={isMobile ? undefined : { opacity: 0, y: -15 }}
                       whileHover={isMobile ? undefined : { y: -3, transition: { duration: 0.2, ease: "easeOut" } }}
                       transition={isMobile ? { duration: 0 } : { duration: 0.3 }}
+                      onTouchStart={(e) => handleCardTouchStart(e, post._id)}
+                      onTouchMove={(e) => handleCardTouchMove(e, post._id)}
+                      onTouchEnd={(e) => handleCardTouchEnd(e, post)}
+                      className="relative overflow-hidden"
                     >
+                      {/* Swipe indicator bar */}
+                      {swipingPostId === post._id && swipeOffset !== 0 && (
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          className={`absolute inset-y-0 w-1 z-10 pointer-events-none ${swipeOffset > 0 ? "left-0 bg-gradient-to-r from-red-500/60 to-transparent" : "right-0 bg-gradient-to-l from-green-500/60 to-transparent"}`}
+                        >
+                          <div className={`absolute top-1/2 -translate-y-1/2 flex items-center gap-1 ${swipeOffset > 0 ? "left-2" : "right-2"}`}>
+                            <span className="text-[18px]">{swipeOffset > 0 ? '❤️' : '🔄'}</span>
+                            <span className={`text-[9px] font-bold uppercase tracking-wider ${swipeOffset > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                              {swipeOffset > 0 ? 'Like' : 'Repost'}
+                            </span>
+                          </div>
+                        </motion.div>
+                      )}
+                      {/* Translate the card content on swipe */}
+                      <div style={swipingPostId === post._id ? { transform: `translateX(${swipeOffset * 0.3}px)`, transition: 'none' } : {}}>
                       <GlassCard
                         className="shadow-sm border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all rounded-4xl"
                         animate={false}
@@ -1229,11 +1483,11 @@ export default function Feed({
                         {/* Author context line */}
                         <div className="mb-4 flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <img loading="lazy" 
-                              src={post.author.profilePic?.url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"}
+                            <UserAvatar
+                              src={post.author.profilePic?.url}
                               alt={post.author.fullName}
                               onClick={() => onUserSelected(post.author.username)}
-                              className="h-10 w-10 cursor-pointer rounded-full object-cover border border-zinc-800 shadow-sm"
+                              className="h-9 w-9 cursor-pointer rounded-full object-cover border border-zinc-800 shadow-sm"
                               role="button"
                               tabIndex={0}
                               onKeyPress={(e) => e.key === 'Enter' && onUserSelected(post.author.username)}
@@ -1241,7 +1495,7 @@ export default function Feed({
                             <div>
                               <h4
                                 onClick={() => onUserSelected(post.author.username)}
-                                className="font-sans text-sm font-bold text-white cursor-pointer hover:underline"
+                                className="font-sans text-xs font-bold text-white cursor-pointer hover:underline"
                                 role="button"
                                 tabIndex={0}
                                 onKeyPress={(e) => e.key === 'Enter' && onUserSelected(post.author.username)}
@@ -1252,23 +1506,33 @@ export default function Feed({
                             </div>
                           </div>
 
-                          <span className="text-[10px] font-medium text-zinc-500" aria-label={`Posted ${getRelativeDate(post.createdAt)}`}>
+                          <span className="text-[9px] font-medium text-zinc-500" aria-label={`Posted ${getRelativeDate(post.createdAt)}`}>
                             {getRelativeDate(post.createdAt)}
                           </span>
                         </div>
 
                         {/* Content block */}
                         <div className="space-y-2.5">
-                          <h3 className="font-sans text-base md:text-lg font-bold text-zinc-100 tracking-tight leading-snug">
+                          <h3 className="font-sans text-sm md:text-base font-bold text-zinc-100 tracking-tight leading-snug">
                             {post.title}
                           </h3>
-                          <p className="text-sm md:text-base text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">
+                          <p className="text-xs md:text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">
                             {renderFormattedContent(post.content)}
                           </p>
                         </div>
 
-                        {/* Context Image media attachment */}
-                        {post.image?.url && (
+                        {/* Context Image media attachment — single or multi-image carousel */}
+                        {(post.images && post.images.length > 0) ? (
+                          <div className="mt-4 group/image">
+                            <ImageCarousel
+                              images={post.images}
+                              onImageLoad={() => registerViewCount(post._id)}
+                              onImageClick={(url) => {
+                                window.dispatchEvent(new CustomEvent("openImagePreview", { detail: url }));
+                              }}
+                            />
+                          </div>
+                        ) : post.image?.url ? (
                           <div
                             className="mt-4 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950/20 cursor-pointer group/image"
                             onClick={() => {
@@ -1282,23 +1546,23 @@ export default function Feed({
                               className="w-full object-cover aspect-4/5 max-h-200 transition-transform duration-500 group-hover/image:scale-[1.02]"
                             />
                           </div>
-                        )}
+                        ) : null}
 
                         {/* Bottom stats rail / Interactivity buttons with spring pops */}
                         <div className="mt-5 flex items-center justify-between border-t border-zinc-800 pt-3.5 text-zinc-400">
                           {/* Likes button */}
                           <button
-                            onClick={() => handleLikeToggle(post._id, !!post.likedByMe)}
-                            className="flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none cursor-pointer"
+                            onClick={() => !readOnly && handleLikeToggle(post._id, !!post.likedByMe)}
+                            className={`flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
                             aria-label={`${post.likedByMe ? 'Unlike' : 'Like'} post (${post.likesCount} likes)`}
                           >
-                            <motion.span whileTap={{ scale: 1.4 }} whileHover={{ scale: 1.1 }} className="flex">
+                            <motion.span whileTap={!readOnly ? { scale: 1.4 } : undefined} whileHover={!readOnly ? { scale: 1.1 } : undefined} className="flex">
                               <Heart
-                                className={`h-4 w-4 transition-colors group-hover:text-red-500 ${post.likedByMe ? "fill-red-500 text-red-500" : "text-zinc-500"
+                                className={`h-4 w-4 transition-colors ${readOnly ? "text-zinc-500" : "group-hover:text-red-500"} ${post.likedByMe ? "fill-red-500 text-red-500" : "text-zinc-500"
                                   }`}
                               />
                             </motion.span>
-                            <span className={post.likedByMe ? "text-red-400 font-bold" : "group-hover:text-red-400 text-zinc-400"}>
+                            <span className={post.likedByMe ? "text-red-400 font-bold" : "text-zinc-400"}>
                               {post.likesCount}
                             </span>
                           </button>
@@ -1306,48 +1570,49 @@ export default function Feed({
                           {/* Comment trigger */}
                           <button
                             onClick={() => {
+                              if (readOnly) return;
                               setSelectedPost(post);
                               loadComments(post._id);
                             }}
-                            className="flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none cursor-pointer"
+                            className={`flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
                             aria-label={`View comments (${post.commentsCount} comments)`}
                           >
-                            <motion.span whileHover={{ scale: 1.1 }}>
-                              <MessageSquare className="h-4 w-4 text-zinc-500 group-hover:text-white" />
+                            <motion.span whileHover={!readOnly ? { scale: 1.1 } : undefined}>
+                              <MessageSquare className={`h-4 w-4 ${readOnly ? "text-zinc-500" : "text-zinc-500 group-hover:text-white"}`} />
                             </motion.span>
-                            <span className="group-hover:text-white text-zinc-400">{post.commentsCount}</span>
+                            <span className="text-zinc-400">{post.commentsCount}</span>
                           </button>
 
                           {/* Repost trigger */}
                           <button
-                            onClick={() => handleRepostToggle(post._id, !!post.repostedByMe)}
-                            className="flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none cursor-pointer"
+                            onClick={() => !readOnly && handleRepostToggle(post._id, !!post.repostedByMe)}
+                            className={`flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
                             aria-label={`${post.repostedByMe ? 'Undo repost' : 'Repost'} post (${post.repostsCount} reposts)`}
                           >
-                            <motion.span whileTap={{ rotate: 180 }} whileHover={{ scale: 1.1 }} className="flex">
+                            <motion.span whileTap={!readOnly ? { rotate: 180 } : undefined} whileHover={!readOnly ? { scale: 1.1 } : undefined} className="flex">
                               <Repeat2
-                                className={`h-4 w-4 ${post.repostedByMe ? "text-green-500 font-bold" : "text-zinc-500 group-hover:text-white"
+                                className={`h-4 w-4 ${readOnly ? "text-zinc-500" : ""} ${post.repostedByMe ? "text-green-500 font-bold" : readOnly ? "text-zinc-500" : "text-zinc-500 group-hover:text-white"
                                   }`}
                               />
                             </motion.span>
-                            <span className={post.repostedByMe ? "text-green-500 font-bold" : "group-hover:text-white text-zinc-400"}>
+                            <span className={post.repostedByMe ? "text-green-500 font-bold" : "text-zinc-400"}>
                               {post.repostsCount}
                             </span>
                           </button>
 
                           {/* Save trigger */}
                           <button
-                            onClick={() => handleSaveToggle(post._id, !!post.savedByMe)}
-                            className="flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none cursor-pointer"
+                            onClick={() => !readOnly && handleSaveToggle(post._id, !!post.savedByMe)}
+                            className={`flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
                             aria-label={`${post.savedByMe ? 'Remove from saved' : 'Save post'} (${post.savesCount} saves)`}
                           >
-                            <motion.span whileTap={{ scale: 1.3 }} whileHover={{ scale: 1.1 }} className="flex">
+                            <motion.span whileTap={!readOnly ? { scale: 1.3 } : undefined} whileHover={!readOnly ? { scale: 1.1 } : undefined} className="flex">
                               <Bookmark
-                                className={`h-4 w-4 transition-colors ${post.savedByMe ? "fill-yellow-500 text-yellow-500" : "text-zinc-500 group-hover:text-white"
+                                className={`h-4 w-4 transition-colors ${readOnly ? "text-zinc-500" : ""} ${post.savedByMe ? "fill-yellow-500 text-yellow-500" : "text-zinc-500"
                                   }`}
                               />
                             </motion.span>
-                            <span className={post.savedByMe ? "text-yellow-500 font-medium" : "text-zinc-400 group-hover:text-white"}>
+                            <span className={post.savedByMe ? "text-yellow-500 font-medium" : "text-zinc-400"}>
                               {post.savesCount}
                             </span>
                           </button>
@@ -1360,14 +1625,15 @@ export default function Feed({
 
                           {/* Share trigger icon */}
                           <button
-                            onClick={() => handleSharePost(post._id)}
-                            className="flex h-7.5 w-7.5 items-center justify-center rounded-full hover:bg-zinc-800 transition-colors cursor-pointer text-zinc-500 hover:text-white"
+                            onClick={() => !readOnly && handleSharePost(post._id)}
+                            className={`flex h-7.5 w-7.5 items-center justify-center rounded-full transition-colors ${readOnly ? "cursor-default text-zinc-500" : "cursor-pointer hover:bg-zinc-800 text-zinc-500 hover:text-white"}`}
                             aria-label="Share post"
                           >
                             <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         </div>
                       </GlassCard>
+                      </div>
                     </motion.div>
                   ))}
                 </AnimatePresence>
@@ -1411,7 +1677,28 @@ export default function Feed({
                     exit={isMobile ? undefined : { opacity: 0, y: -15 }}
                     whileHover={isMobile ? undefined : { y: -3, transition: { duration: 0.2, ease: "easeOut" } }}
                     transition={isMobile ? { duration: 0 } : { duration: 0.3 }}
+                    onTouchStart={(e) => handleCardTouchStart(e, post._id)}
+                    onTouchMove={(e) => handleCardTouchMove(e, post._id)}
+                    onTouchEnd={(e) => handleCardTouchEnd(e, post)}
+                    className="relative overflow-hidden"
                   >
+                      {/* Swipe indicator bar */}
+                      {swipingPostId === post._id && swipeOffset !== 0 && (
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          className={`absolute inset-y-0 w-1 z-10 pointer-events-none ${swipeOffset > 0 ? "left-0 bg-gradient-to-r from-red-500/60 to-transparent" : "right-0 bg-gradient-to-l from-green-500/60 to-transparent"}`}
+                        >
+                          <div className={`absolute top-1/2 -translate-y-1/2 flex items-center gap-1 ${swipeOffset > 0 ? "left-2" : "right-2"}`}>
+                            <span className="text-[18px]">{swipeOffset > 0 ? '❤️' : '🔄'}</span>
+                            <span className={`text-[9px] font-bold uppercase tracking-wider ${swipeOffset > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                              {swipeOffset > 0 ? 'Like' : 'Repost'}
+                            </span>
+                          </div>
+                        </motion.div>
+                      )}
+                      {/* Translate the card content on swipe */}
+                      <div style={swipingPostId === post._id ? { transform: `translateX(${swipeOffset * 0.3}px)`, transition: 'none' } : {}}>
                     <GlassCard
                       className="shadow-sm border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all rounded-4xl"
                       animate={false}
@@ -1420,16 +1707,15 @@ export default function Feed({
                       {/* Author context line */}
                       <div className="mb-4 flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <img loading="lazy"
-                            src={post.author.profilePic?.url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"}
+                          <UserAvatar
+                            src={post.author.profilePic?.url}
                             alt={post.author.fullName}
-                            onClick={() => onUserSelected(post.author.username)}
-                            className="h-10 w-10 cursor-pointer rounded-full object-cover border border-zinc-800 shadow-sm"
+                            onClick={() => onUserSelected(post.author.username)}                              className="h-9 w-9 cursor-pointer rounded-full object-cover border border-zinc-800 shadow-sm"
                           />
                           <div>
                             <h4
                               onClick={() => onUserSelected(post.author.username)}
-                              className="font-sans text-sm font-bold text-white cursor-pointer hover:underline"
+                              className="font-sans text-xs font-bold text-white cursor-pointer hover:underline"
                             >
                               {post.author.fullName}
                             </h4>
@@ -1444,7 +1730,7 @@ export default function Feed({
 
                       {/* Content block */}
                       <div className="space-y-2.5">
-                        <h3 className="font-sans text-base md:text-lg font-bold text-zinc-100 tracking-tight leading-snug">
+                        <h3 className="font-sans text-sm md:text-base font-bold text-zinc-100 tracking-tight leading-snug">
                           {post.title}
                         </h3>
                         <p className="text-sm md:text-base text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">
@@ -1452,8 +1738,18 @@ export default function Feed({
                         </p>
                       </div>
 
-                      {/* Context Image media attachment */}
-                      {post.image?.url && (
+                      {/* Context Image media attachment — single or multi-image carousel */}
+                      {(post.images && post.images.length > 0) ? (
+                        <div className="mt-4 group/image">
+                          <ImageCarousel
+                            images={post.images}
+                            onImageLoad={() => registerViewCount(post._id)}
+                            onImageClick={(url) => {
+                              window.dispatchEvent(new CustomEvent("openImagePreview", { detail: url }));
+                            }}
+                          />
+                        </div>
+                      ) : post.image?.url ? (
                         <div
                           className="mt-4 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950/20 cursor-pointer group/image"
                           onClick={() => {
@@ -1467,7 +1763,7 @@ export default function Feed({
                             className="w-full object-cover aspect-4/5 max-h-200 transition-transform duration-500 group-hover/image:scale-[1.02]"
                           />
                         </div>
-                      )}
+                      ) : null}
 
                       {/* Bottom stats rail / Interactivity buttons with spring pops */}
                       <div className="mt-5 flex items-center justify-between border-t border-zinc-800 pt-3.5 text-zinc-400">
@@ -1548,6 +1844,7 @@ export default function Feed({
                         </button>
                       </div>
                     </GlassCard>
+                      </div>
                   </motion.div>
                 ))}
               </AnimatePresence>
@@ -1557,21 +1854,25 @@ export default function Feed({
       )}
     </div>
 
-      {/* Floating sliding drawer for Comments Thread details - outside transform container */}
-      <AnimatePresence>
+      {/* Floating sliding drawer for Comments Thread details - rendered at document.body via portal to avoid stacking context issues with motion transforms */}
+      {typeof document !== "undefined" && createPortal(
+        <AnimatePresence>
         {selectedPost && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/75 backdrop-blur-sm">
             <div className="absolute inset-0" onClick={() => setSelectedPost(null)} />
 
             <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 28, stiffness: 220 }}
+              initial={isMobile ? { y: "100%" } : { opacity: 0, scale: 0.95 }}
+              animate={isMobile ? { y: 0 } : { opacity: 1, scale: 1 }}
+              exit={isMobile ? { y: "100%" } : { opacity: 0, scale: 0.95 }}
+              transition={isMobile ? { type: "spring" as const, damping: 28, stiffness: 220 } : { type: "tween" as const, duration: 0.2, ease: "easeOut" as const }}
               className="relative z-10 w-full max-w-4xl h-[85vh] md:h-[70vh] rounded-4xl border border-white/10 bg-zinc-950/90 backdrop-blur-2xl p-5 md:p-7 shadow-[0_-25px_60px_-15px_rgba(0,0,0,0.9)] flex flex-col justify-between"
             >
-              {/* Drag handle bar */}
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 h-1 w-10 rounded-full bg-white/20" />
               <div className="mb-6 flex items-center justify-between shrink-0 border-b border-white/10 pb-5">
                 <div>
                   <h3 className="font-sans text-lg font-semibold text-zinc-100">Comments</h3>
@@ -1636,10 +1937,10 @@ export default function Feed({
                       type="text"
                       required
                       maxLength={1000}
-                      placeholder="Write a comment... (use @username)"
+                      placeholder="write a comment....."
                       value={newCommentText}
                       onChange={(e) => { setNewCommentText(e.target.value); clearFieldError("comment"); }}
-                      className="w-full rounded-full border border-white/10 bg-zinc-950/60 px-5.5 py-3 text-sm text-white placeholder-zinc-500 outline-none focus:border-white/20 focus:bg-zinc-950/80 transition-all pr-16"
+                      className="w-full rounded-full border border-white/10 bg-zinc-950/60 px-5.5 py-3 text-xs text-white placeholder-zinc-500 outline-none focus:border-white/20 focus:bg-zinc-950/80 transition-all pr-16"
                     />
                     <div className="absolute right-3 top-1/2 -translate-y-1/2">
                       <CharCounter current={newCommentText.length} max={1000} />
@@ -1657,21 +1958,46 @@ export default function Feed({
                 </form>
               )}
             </motion.div>
-          </div>
+          </motion.div>
         )}
-      </AnimatePresence>
+      </AnimatePresence>,
+      document.body
+      )}
+
+      {/* Hidden file input for replacing an existing image */}
+      <input
+        ref={replaceFileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={(e) => {
+          const files = Array.from(e.target.files || []);
+          if (files.length === 0) return;
+          const file = files[0];
+          setCropQueueNames([file.name]);
+          const url = URL.createObjectURL(file);
+          setCurrentCropSrc(url);
+          setCropModalOpen(true);
+          e.target.value = '';
+        }}
+        className="hidden"
+      />
 
       <ImageCropModal
         isOpen={cropModalOpen}
-        onClose={() => setCropModalOpen(false)}
-        imageSrc={cropImageSrc}
-        aspectRatio={undefined}
-        title="Crop Photo Layout"
-        onCropComplete={(blob) => {
-          const file = new File([blob], `post_cropped.jpg`, { type: "image/jpeg" });
-          setPostImageFile(file);
-          setPostImagePreview(URL.createObjectURL(blob));
+        onClose={() => {
+          setCropModalOpen(false);
+          setReCropIndex(-1);
+          // Clear remaining queue on cancel
+          setCropQueue([]);
+          setCropQueueNames([]);
+          cropQueue.forEach((url) => URL.revokeObjectURL(url));
+          if (currentCropSrc) URL.revokeObjectURL(currentCropSrc);
+          setCurrentCropSrc("");
         }}
+        imageSrc={currentCropSrc}
+        aspectRatio={undefined}
+        title="Crop Photo"
+        onCropComplete={handleCropComplete}
       />
     </>
   );

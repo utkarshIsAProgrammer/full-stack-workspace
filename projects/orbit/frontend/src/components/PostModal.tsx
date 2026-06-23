@@ -1,12 +1,12 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X, Image, Loader2 } from "lucide-react";
-import ImageCropModal from "./ImageCropModal";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 import { validatePost } from "../utils/validation";
 import ValidationMessage from "./ValidationMessage";
 import CharCounter from "./CharCounter";
+import ImageCropModal from "./ImageCropModal";
 
 interface PostModalProps {
   isOpen: boolean;
@@ -17,12 +17,45 @@ interface PostModalProps {
 export default function PostModal({ isOpen, onClose, onPostCreated }: PostModalProps) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
-  const [postImageFile, setPostImageFile] = useState<File | null>(null);
-  const [postImagePreview, setPostImagePreview] = useState("");
+  const [postImageFiles, setPostImageFiles] = useState<File[]>([]);
+  const [postImagePreviews, setPostImagePreviews] = useState<string[]>([]);
   const [submittingPost, setSubmittingPost] = useState(false);
 
+  // Crop queue for sequential multi-image cropping
+  const [cropQueue, setCropQueue] = useState<string[]>([]);
+  const [cropQueueNames, setCropQueueNames] = useState<string[]>([]);
   const [cropModalOpen, setCropModalOpen] = useState(false);
-  const [cropImageSrc, setCropImageSrc] = useState("");
+  const [currentCropSrc, setCurrentCropSrc] = useState("");
+
+  const processNextCrop = useCallback(() => {
+    setCropQueue((prev) => {
+      if (prev.length === 0) return prev;
+      const [nextSrc, ...rest] = prev;
+      setCurrentCropSrc(nextSrc);
+      setCropModalOpen(true);
+      setCropQueueNames((names) => {
+        const [, ...restNames] = names;
+        return restNames;
+      });
+      return rest;
+    });
+  }, []);
+
+  const handleCropComplete = useCallback((blob: Blob) => {
+    const fileName = cropQueueNames[0] || `cropped_image_${Date.now()}.jpg`;
+    const file = new File([blob], fileName, { type: "image/jpeg" });
+    setPostImageFiles((prev) => [...prev, file]);
+    if (currentCropSrc) URL.revokeObjectURL(currentCropSrc);
+    setCropModalOpen(false);
+    setTimeout(() => processNextCrop(), 100);
+  }, [cropQueueNames, processNextCrop, currentCropSrc]);
+
+  useEffect(() => {
+    if (cropQueue.length === 0 && !cropModalOpen && postImageFiles.length > 0) {
+      const previews = postImageFiles.map((f) => URL.createObjectURL(f));
+      setPostImagePreviews(previews);
+    }
+  }, [cropQueue, cropModalOpen, postImageFiles]);
 
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
@@ -80,7 +113,7 @@ export default function PostModal({ isOpen, onClose, onPostCreated }: PostModalP
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const errors = validatePost({ title, content });
+    const errors = validatePost({ title, content, hasImages: postImageFiles.length > 0 });
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
@@ -92,9 +125,9 @@ export default function PostModal({ isOpen, onClose, onPostCreated }: PostModalP
       const formData = new FormData();
       formData.append("title", title);
       formData.append("content", content);
-      if (postImageFile) {
-        formData.append("image", postImageFile);
-      }
+      postImageFiles.forEach((file) => {
+        formData.append("images", file);
+      });
 
       const res = await apiFetch("/api/posts", {
         method: "POST",
@@ -106,12 +139,12 @@ export default function PostModal({ isOpen, onClose, onPostCreated }: PostModalP
         throw new Error(data.message || "Failed to create post");
       }
 
-      // Revoke previous preview URL to prevent memory leaks
-      if (postImagePreview) URL.revokeObjectURL(postImagePreview);
+      // Revoke previous preview URLs to prevent memory leaks
+      postImagePreviews.forEach((url) => URL.revokeObjectURL(url));
       setTitle("");
       setContent("");
-      setPostImageFile(null);
-      setPostImagePreview("");
+      setPostImageFiles([]);
+      setPostImagePreviews([]);
       onPostCreated();
     } catch (err: any) {
       logger.error(err);
@@ -146,8 +179,8 @@ export default function PostModal({ isOpen, onClose, onPostCreated }: PostModalP
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
           className="relative w-full max-w-lg bg-zinc-950/45 backdrop-blur-xl rounded-2xl shadow-xl overflow-hidden border border-zinc-800/50"
         >
-          <div className="flex items-center justify-between p-4 border-b border-zinc-100 dark:border-zinc-900">
-            <h2 className="text-lg font-bold text-black dark:text-white">Create Post</h2>
+          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 dark:border-zinc-900">
+            <h2 className="text-base font-bold text-black dark:text-white">Create Post</h2>
             <button onClick={onClose} className="p-2 bg-zinc-100 dark:bg-zinc-900 rounded-full hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-500">
               <X className="w-5 h-5" />
             </button>
@@ -158,11 +191,11 @@ export default function PostModal({ isOpen, onClose, onPostCreated }: PostModalP
                 <input
                   type="text"
                   maxLength={500}
-                  placeholder="Give your post a title..."
+                  placeholder="Give your post a title... (optional)"
                   value={title}
                   onChange={(e) => { setTitle(e.target.value); clearFieldError("title"); }}
                   autoFocus
-                  className="flex-1 bg-transparent text-xl font-bold text-slate-900 dark:text-zinc-100 placeholder-slate-400 dark:placeholder-zinc-600 outline-none"
+                  className="flex-1 bg-transparent text-xs font-bold text-slate-900 dark:text-zinc-100 placeholder-slate-400 dark:placeholder-zinc-600 outline-none"
                 />
                 <CharCounter current={title.length} max={500} />
               </div>
@@ -173,43 +206,68 @@ export default function PostModal({ isOpen, onClose, onPostCreated }: PostModalP
                 value={content}
                 onChange={(e) => { setContent(e.target.value); clearFieldError("content"); }}
                 maxLength={5000}
-                className="w-full resize-none bg-transparent text-sm text-slate-800 dark:text-zinc-300 placeholder-slate-500 dark:placeholder-zinc-500 outline-none"
+                className="w-full resize-none bg-transparent text-xs text-slate-800 dark:text-zinc-300 placeholder-slate-500 dark:placeholder-zinc-500 outline-none"
               />
               <div className="flex items-center justify-end mt-1">
                 <CharCounter current={content.length} max={5000} />
               </div>
               <ValidationMessage message={fieldErrors.content} />
-              {postImagePreview && (
-                <div className="relative mt-3 rounded-xl border border-zinc-800 overflow-hidden">
-                  <img loading="lazy" src={postImagePreview} alt="" className="w-full h-auto max-h-125 object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPostImageFile(null);
-                      setPostImagePreview("");
-                    }}
-                    className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-md hover:bg-black/80 transition-colors"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+
+              {/* Multiple image previews */}
+              {postImagePreviews.length > 0 && (
+                <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
+                  {postImagePreviews.map((preview, idx) => (
+                    <div key={idx} className="relative shrink-0 overflow-hidden rounded-xl border border-zinc-800 w-20 h-20">
+                      <img loading="lazy" src={preview} alt="" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPostImageFiles((prev) => prev.filter((_, i) => i !== idx));
+                          setPostImagePreviews((prev) => prev.filter((_, i) => i !== idx));
+                        }}
+                        className="absolute top-1.5 right-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black z-20"
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
+
               <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-zinc-900">
                 <div className="relative">
                   <input
                     type="file"
                     accept="image/*"
+                    multiple
+                    disabled={postImageFiles.length >= 5}
                     onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        // Revoke previous crop image URL to prevent leaks
-                        if (cropImageSrc) URL.revokeObjectURL(cropImageSrc);
-                        setCropImageSrc(URL.createObjectURL(file));
+                      const files = Array.from(e.target.files || []);
+                      const remaining = 5 - postImageFiles.length;
+                      const toAdd = files.slice(0, remaining);
+                      // GIFs bypass cropping — add directly with previews
+                      const gifFiles = toAdd.filter((f) => f.type === "image/gif");
+                      const cropFiles = toAdd.filter((f) => f.type !== "image/gif");
+                      if (gifFiles.length > 0) {
+                        setPostImageFiles((prev) => [...prev, ...gifFiles]);
+                        const gifPreviews = gifFiles.map((f) => URL.createObjectURL(f));
+                        setPostImagePreviews((prev) => [...prev, ...gifPreviews]);
+                      }
+                      const newUrls = cropFiles.map((f) => URL.createObjectURL(f));
+                      const newNames = cropFiles.map((f) => f.name);
+                      setCropQueue((prev) => [...prev, ...newUrls]);
+                      setCropQueueNames((prev) => [...prev, ...newNames]);
+                      if (cropQueue.length === 0 && !cropModalOpen && newUrls.length > 0) {
+                        setCurrentCropSrc(newUrls[0]);
                         setCropModalOpen(true);
+                        setCropQueue((prev) => {
+                          const [, ...rest] = prev;
+                          return rest;
+                        });
                       }
                       e.target.value = '';
                     }}
-                    className="absolute inset-0 opacity-0 cursor-pointer"
+                    className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
                   />
                   <button
                     type="button"
@@ -217,10 +275,13 @@ export default function PostModal({ isOpen, onClose, onPostCreated }: PostModalP
                   >
                     <Image className="h-5 w-5" />
                   </button>
+                  {postImageFiles.length > 0 && (
+                    <span className="text-[9px] text-zinc-500 ml-1">{postImageFiles.length}/5</span>
+                  )}
                 </div>
                 <button
                   type="submit"
-                  disabled={!title || !content || submittingPost}
+                  disabled={submittingPost}
                   className="rounded-full bg-white text-black hover:bg-zinc-200 border border-white/20 px-6 py-2 text-sm font-bold disabled:opacity-50 transition-all font-sans cursor-pointer"
                 >
                   {submittingPost ? <Loader2 className="h-4 w-4 animate-spin" /> : "Post"}
@@ -230,19 +291,20 @@ export default function PostModal({ isOpen, onClose, onPostCreated }: PostModalP
           </div>
         </motion.div>
       </div>
-
       <ImageCropModal
-        key="post-crop-modal"
         isOpen={cropModalOpen}
-        onClose={() => setCropModalOpen(false)}
-        imageSrc={cropImageSrc}
-        aspectRatio={undefined}
-        title="Crop Photo Layout"
-        onCropComplete={(blob) => {
-          const file = new File([blob], `post_cropped.jpg`, { type: "image/jpeg" });
-          setPostImageFile(file);
-          setPostImagePreview(URL.createObjectURL(blob));
+        onClose={() => {
+          setCropModalOpen(false);
+          setCropQueue([]);
+          setCropQueueNames([]);
+          cropQueue.forEach((url) => URL.revokeObjectURL(url));
+          if (currentCropSrc) URL.revokeObjectURL(currentCropSrc);
+          setCurrentCropSrc("");
         }}
+        imageSrc={currentCropSrc}
+        aspectRatio={undefined}
+        title="Crop Photo"
+        onCropComplete={handleCropComplete}
       />
     </AnimatePresence>
   );

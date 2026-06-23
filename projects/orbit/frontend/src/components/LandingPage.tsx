@@ -18,9 +18,11 @@ const LandingSpaceBackdrop = lazy(() => import("./LandingSpaceBackdrop"));
 
 interface LandingPageProps {
   onScrollToAuth: () => void;
+  onScrollToSignup?: () => void;
+  onExplorePublicFeed?: () => void;
 }
 
-export default function LandingPage({ onScrollToAuth }: LandingPageProps) {
+export default function LandingPage({ onScrollToAuth, onScrollToSignup, onExplorePublicFeed }: LandingPageProps) {
   const subtitleRef = useRef<HTMLParagraphElement>(null);
   const ctaRef = useRef<HTMLDivElement>(null);
   const infoRef = useRef<HTMLDivElement>(null);
@@ -60,7 +62,7 @@ export default function LandingPage({ onScrollToAuth }: LandingPageProps) {
       <div className="absolute inset-x-0 -top-40 h-[70vh] bg-linear-to-b from-white/5 via-transparent to-transparent blur-[140px] pointer-events-none -z-10" />
 
       {/* 2. Top Navigation Bar */}
-      <nav className="relative z-20 w-full max-w-7xl mx-auto px-6 py-6 flex items-center justify-between pointer-events-auto">
+      <nav className="relative z-20 w-full max-w-7xl mx-auto px-6 py-4 flex items-center justify-between pointer-events-auto">
         <motion.div 
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
           whileHover={{ scale: 1.05 }}
@@ -73,8 +75,8 @@ export default function LandingPage({ onScrollToAuth }: LandingPageProps) {
 
         <div className="flex items-center gap-4">
           <button
-            onClick={onScrollToAuth}
-            className="rounded-full bg-white text-black hover:bg-zinc-200 px-4 py-2 text-[10px] font-black transition-all cursor-pointer shadow-md hover:scale-105 active:scale-95 uppercase tracking-wider border border-white/25 font-sans"
+            onClick={onScrollToSignup || onScrollToAuth}
+            className="rounded-full bg-white text-black hover:bg-zinc-200 px-3.5 py-1.5 text-[9px] font-black transition-all cursor-pointer shadow-md hover:scale-105 active:scale-95 uppercase tracking-wider border border-white/25 font-sans"
           >
             Get Started
           </button>
@@ -93,14 +95,14 @@ export default function LandingPage({ onScrollToAuth }: LandingPageProps) {
         <div className="space-y-6">
           {/* Title letter reveal with ReactBits SplitText component */}
           <div className="overflow-hidden py-2 select-none">
-            <h1 className="text-7xl md:text-[9.5rem] font-light tracking-wider text-white leading-none relative uppercase select-none">
+            <h1 className="text-6xl md:text-8xl font-light tracking-wider text-white leading-none relative uppercase select-none">
               <SplitText text="ORBIT" delay={0.1} staggerDelay={0.08} />
             </h1>
           </div>
 
           <p
             ref={subtitleRef}
-            className="text-xs md:text-sm font-semibold tracking-[0.2em] text-zinc-300 max-w-xl mx-auto leading-relaxed uppercase border-t border-b border-white/10 py-5.5 font-sans"
+            className="text-[10px] md:text-xs font-semibold tracking-[0.2em] text-zinc-300 max-w-xl mx-auto leading-relaxed uppercase border-t border-b border-white/10 py-4 font-sans"
           >
             The Simpler Social Feed. Share thoughts, meet friends, and participate in lively discussions without the noise.
           </p>
@@ -109,20 +111,20 @@ export default function LandingPage({ onScrollToAuth }: LandingPageProps) {
         {/* Action button trigger area */}
         <div ref={ctaRef} className="mt-10 flex flex-col sm:flex-row items-center gap-4.5 pointer-events-auto">
           <motion.button
-            onClick={onScrollToAuth}
+            onClick={onScrollToSignup || onScrollToAuth}
             whileHover={{ scale: 1.05, boxShadow: "0 0 35px rgba(255,255,255,0.25)" }}
             whileTap={{ scale: 1.02 }}
-            className="group flex items-center gap-2.5 rounded-full bg-white px-9 py-4.5 text-[11px] font-black uppercase tracking-widest text-black shadow-2xl transition-all duration-300 cursor-pointer"
+            className="group flex items-center gap-2 rounded-full bg-white px-7 py-3.5 text-[10px] font-black uppercase tracking-widest text-black shadow-2xl transition-all duration-300 cursor-pointer"
           >
             Enter Social Hub
             <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
           </motion.button>
           
           <motion.button
-            onClick={onScrollToAuth}
+            onClick={onExplorePublicFeed || onScrollToAuth}
             whileHover={{ scale: 1.05, backgroundColor: "rgba(255, 255, 255, 0.45)" }}
             whileTap={{ scale: 0.95 }}
-            className="flex items-center gap-2 rounded-full bg-white/40 dark:bg-zinc-950/20 px-8 py-4.5 text-[11px] font-black uppercase tracking-widest text-zinc-100 dark:text-zinc-300 hover:text-white border border-zinc-800/20 backdrop-blur-md transition-all cursor-pointer font-sans"
+            className="flex items-center gap-2 rounded-full bg-white/40 dark:bg-zinc-950/20 px-6 py-3.5 text-[10px] font-black uppercase tracking-widest text-zinc-100 dark:text-zinc-300 hover:text-white border border-zinc-800/20 backdrop-blur-md transition-all cursor-pointer font-sans"
           >
             <Compass className="h-4 w-4 text-zinc-400 animate-spin-slow shrink-0" />
             Explore Public Feed
@@ -141,10 +143,10 @@ export default function LandingPage({ onScrollToAuth }: LandingPageProps) {
             viewport={{ once: false, amount: 0.2 }}
             className="text-center space-y-2 mb-12"
           >
-            <span className="text-[10px] font-mono font-black text-zinc-400 uppercase tracking-[0.35em] flex items-center justify-center gap-2">
+            <span className="text-[9px] font-mono font-black text-zinc-400 uppercase tracking-[0.35em] flex items-center justify-center gap-2">
               <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" /> Designed for Connection • Simple & Beautiful
             </span>
-            <h2 className="text-3xl md:text-4xl font-normal text-white uppercase tracking-[0.2em] font-display">
+            <h2 className="text-2xl md:text-3xl font-normal text-white uppercase tracking-[0.2em] font-display">
               <ShinyText text="Social Experience Simplified" speed={5} />
             </h2>
           </motion.div>
@@ -162,16 +164,16 @@ export default function LandingPage({ onScrollToAuth }: LandingPageProps) {
               viewport={{ once: false, amount: 0.15 }}
               transition={{ type: "spring", stiffness: 100, damping: 15 }}
               whileHover={{ scale: 1.03, y: -8 }}
-              className="md:col-span-3 p-8 group flex flex-col justify-between min-h-55"
+              className="md:col-span-3 p-6 group flex flex-col justify-between min-h-48"
             >
               <div>
-                <div className="h-9 w-9 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-6 group-hover:scale-110 group-hover:rotate-6 transition-transform">
-                  <Globe className="h-4.5 w-4.5" />
+                <div className="h-8 w-8 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-4 group-hover:scale-110 group-hover:rotate-6 transition-transform">
+                  <Globe className="h-4 w-4" />
                 </div>
-                <h3 className="text-xs font-black text-white uppercase tracking-widest mb-2.5 flex items-center justify-between font-display">
+                <h3 className="text-[10px] font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
                   Sovereign Profiles <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
                 </h3>
-                <p className="text-[11px] text-zinc-400 leading-normal font-bold uppercase tracking-tight font-sans">
+                <p className="text-[10px] text-zinc-400 leading-normal font-bold uppercase tracking-tight font-sans">
                   Express yourself clearly. Create a custom profile card, update your full name, set a custom bio, and declare your active status icon seamlessly.
                 </p>
               </div>
@@ -186,16 +188,16 @@ export default function LandingPage({ onScrollToAuth }: LandingPageProps) {
               viewport={{ once: false, amount: 0.15 }}
               transition={{ type: "spring", stiffness: 100, damping: 15, delay: 0.1 }}
               whileHover={{ scale: 1.03, y: -8 }}
-              className="md:col-span-3 p-8 group flex flex-col justify-between min-h-55"
+              className="md:col-span-3 p-6 group flex flex-col justify-between min-h-48"
             >
               <div>
-                <div className="h-9 w-9 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-6 group-hover:scale-110 group-hover:rotate-6 transition-transform">
-                  <Activity className="h-4.5 w-4.5 text-zinc-350" />
+                <div className="h-8 w-8 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-4 group-hover:scale-110 group-hover:rotate-6 transition-transform">
+                  <Activity className="h-4 w-4 text-zinc-350" />
                 </div>
-                <h3 className="text-xs font-black text-white uppercase tracking-widest mb-2.5 flex items-center justify-between font-display">
+                <h3 className="text-[10px] font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
                   Living Social Feed <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
                 </h3>
-                <p className="text-[11px] text-zinc-400 leading-normal font-bold uppercase tracking-tight font-sans">
+                <p className="text-[10px] text-zinc-400 leading-normal font-bold uppercase tracking-tight font-sans">
                   A high-contrast shared feed where you can view posts, upload photos with a fully integrated cropper, and like posts instantaneously. Always synced, always clean.
                 </p>
               </div>
@@ -210,16 +212,16 @@ export default function LandingPage({ onScrollToAuth }: LandingPageProps) {
               viewport={{ once: false, amount: 0.15 }}
               transition={{ type: "spring", stiffness: 100, damping: 15 }}
               whileHover={{ scale: 1.03, y: -8 }}
-              className="md:col-span-2 p-7 group flex flex-col justify-between min-h-50"
+              className="md:col-span-2 p-6 group flex flex-col justify-between min-h-44"
             >
               <div>
-                <div className="h-8.5 w-8.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-5 group-hover:scale-110 group-hover:rotate-6 transition-transform">
-                  <MessageSquare className="h-4 w-4" />
+                <div className="h-7 w-7 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-3.5 group-hover:scale-110 group-hover:rotate-6 transition-transform">
+                  <MessageSquare className="h-3.5 w-3.5" />
                 </div>
-                <h3 className="text-sm font-semibold text-slate-900 dark:text-zinc-100 mb-2 font-display">
+                <h3 className="text-[11px] font-semibold text-slate-900 dark:text-zinc-100 mb-1.5 font-display">
                   Comments
                 </h3>
-                <p className="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed font-medium font-sans">
+                <p className="text-[11px] text-slate-500 dark:text-zinc-400 leading-relaxed font-medium font-sans">
                   Join conversations and share your thoughts on posts.
                 </p>
               </div>
@@ -234,16 +236,16 @@ export default function LandingPage({ onScrollToAuth }: LandingPageProps) {
               viewport={{ once: false, amount: 0.15 }}
               transition={{ type: "spring", stiffness: 100, damping: 15, delay: 0.1 }}
               whileHover={{ scale: 1.03, y: -8 }}
-              className="md:col-span-2 p-7 group flex flex-col justify-between min-h-50"
+              className="md:col-span-2 p-6 group flex flex-col justify-between min-h-44"
             >
               <div>
                 <div className="h-8.5 w-8.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-5 group-hover:scale-110 group-hover:rotate-6 transition-transform">
                   <MessageSquare className="h-4 w-4" />
                 </div>
-                <h3 className="text-xs font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
+                <h3 className="text-[10px] font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
                   Direct Messages <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
                 </h3>
-                <p className="text-[11px] text-zinc-400 leading-relaxed font-bold uppercase tracking-tight font-sans">
+                <p className="text-[10px] text-zinc-400 leading-relaxed font-bold uppercase tracking-tight font-sans">
                   Private direct conversations to connect straight with other users, featuring responsive text, instant message listeners, and interactive chat sheets.
                 </p>
               </div>
@@ -258,16 +260,16 @@ export default function LandingPage({ onScrollToAuth }: LandingPageProps) {
               viewport={{ once: false, amount: 0.15 }}
               transition={{ type: "spring", stiffness: 100, damping: 15, delay: 0.2 }}
               whileHover={{ scale: 1.03, y: -8 }}
-              className="md:col-span-2 p-7 group flex flex-col justify-between min-h-50"
+              className="md:col-span-2 p-6 group flex flex-col justify-between min-h-44"
             >
               <div>
-                <div className="h-8.5 w-8.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-5 group-hover:scale-110 group-hover:rotate-6 transition-transform">
-                  <Bookmark className="h-4 w-4" />
+                <div className="h-7 w-7 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-3.5 group-hover:scale-110 group-hover:rotate-6 transition-transform">
+                  <Bookmark className="h-3.5 w-3.5" />
                 </div>
-                <h3 className="text-xs font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
+                <h3 className="text-[10px] font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
                   Saved Bookmarks <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
                 </h3>
-                <p className="text-[11px] text-zinc-400 leading-relaxed font-bold uppercase tracking-tight font-sans">
+                <p className="text-[10px] text-zinc-400 leading-relaxed font-bold uppercase tracking-tight font-sans">
                   Keep your favorite posts safe. Bookmark any post and view them securely inside a designated bookmarks shelf for quick and easy reference anytime.
                 </p>
               </div>

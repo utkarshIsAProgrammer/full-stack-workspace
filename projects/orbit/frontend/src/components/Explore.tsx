@@ -4,6 +4,7 @@ import { Search, Hash, Users, Compass, Heart, MessageSquare, Bookmark, Repeat2, 
 import { User, Post } from "../types";
 import GlassCard from "./GlassCard";
 import Skeleton from "./Skeleton";
+import UserAvatar from "./UserAvatar";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 
@@ -272,14 +273,14 @@ export default function Explore({
   };
 
   return (
-    <div className="w-full px-2 pb-24 pt-6 content-visibility-auto">
+    <div className="w-full px-2 pt-6 content-visibility-auto">
       {/* Search Header */}
       <div className="mb-6 px-1.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <span className="text-[9px] font-mono tracking-[0.25em] font-black text-zinc-400 uppercase flex items-center gap-1.5">
             <Compass className="h-6 w-6 text-white shrink-0" /> EXPLORE
           </span>
-          <h2 className="font-sans text-2xl font-black uppercase tracking-tight text-slate-900 dark:text-zinc-100 md:text-3xl mt-1">
+          <h2 className="font-sans text-xl font-black uppercase tracking-tight text-slate-900 dark:text-zinc-100 md:text-2xl mt-1">
             Discover
           </h2>
         </div>
@@ -292,7 +293,7 @@ export default function Explore({
           placeholder={`Search ${activeSegment === "users" ? "users" : "posts"}`}
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          className="w-full rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur-xl py-3.5 pl-14 pr-24 text-sm font-medium text-slate-850 dark:text-zinc-100 placeholder-slate-400 dark:placeholder-zinc-550 outline-none focus:border-white focus:ring-2 focus:ring-white/20 transition-all shadow-md relative z-10"
+          className="w-full rounded-2xl border border-zinc-800 bg-zinc-950/60 backdrop-blur-xl py-3.5 pl-14 pr-24 text-xs font-medium text-slate-850 dark:text-zinc-100 placeholder-slate-400 dark:placeholder-zinc-550 outline-none focus:border-white focus:ring-2 focus:ring-white/20 transition-all shadow-md relative z-10"
         />
         <Search className="absolute left-5 top-1/2 -translate-y-1/2 h-5 w-5 text-zinc-400 z-10" />
         <button
@@ -362,8 +363,8 @@ export default function Explore({
                   >
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
-                        <img loading="lazy"
-                          src={usr.profilePic?.url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"}
+                        <UserAvatar
+                          src={usr.profilePic?.url}
                           alt={usr.fullName}
                           className="h-8 w-8 shrink-0 rounded-full object-cover border border-zinc-800 shadow-sm cursor-pointer"
                           onClick={() => onUserSelected(usr.username)}
@@ -417,8 +418,8 @@ export default function Explore({
                   {/* Author context line */}
                   <div className="mb-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <img loading="lazy"
-                        src={(pst as any).author?.profilePic?.url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"}
+                      <UserAvatar
+                        src={(pst as any).author?.profilePic?.url}
                         alt={(pst as any).author?.fullName}
                         onClick={(e) => {
                           e.stopPropagation();

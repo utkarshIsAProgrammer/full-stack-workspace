@@ -79,11 +79,22 @@ const messageSchema = new mongoose_1.default.Schema({
         type: Boolean,
         default: false,
     },
+    replyTo: {
+        type: mongoose_1.default.Schema.Types.ObjectId,
+        ref: "Message",
+        default: null,
+    },
     isDeleted: {
         type: Boolean,
         default: false,
     },
+    deletedFor: [{
+            type: mongoose_1.default.Schema.Types.ObjectId,
+            ref: "User",
+        }],
 }, { timestamps: true });
+// Index for replyTo lookups
+messageSchema.index({ replyTo: 1 });
 // Indexes for optimal query performance
 messageSchema.index({ conversation: 1, createdAt: -1 });
 messageSchema.index({ sender: 1, createdAt: -1 });

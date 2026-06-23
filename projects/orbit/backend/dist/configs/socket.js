@@ -26,10 +26,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.emitChatNotification = exports.emitMessageDelete = exports.emitMessageEdit = exports.emitNewMessage = exports.getUserPresenceStatus = exports.isRecipientActiveInConversation = exports.emitPostUnpin = exports.emitPostPin = exports.emitUserView = exports.emitPostView = exports.emitMessageReaction = exports.emitCommentReaction = exports.emitUserShare = exports.emitPostShare = exports.emitUnfollowUser = exports.emitFollowUser = exports.emitCommentDeleted = exports.emitCommentUpdated = exports.emitPostUpdated = exports.emitPostDeleted = exports.emitPostCreated = exports.emitCommentUnlike = exports.emitCommentLike = exports.emitCommentReply = exports.emitPostComment = exports.emitPostUnrepost = exports.emitPostRepost = exports.emitPostUnsave = exports.emitPostSave = exports.emitPostUnlike = exports.emitPostLike = exports.sendNotification = exports.getIO = exports.initSocket = void 0;
+exports.shutdownSocket = exports.emitChatNotification = exports.emitMessageDeleteForMe = exports.emitMessageDelete = exports.emitMessageEdit = exports.emitNewMessage = exports.emitAccountDeleted = exports.emitUserUpdated = exports.getUserPresenceStatus = exports.isRecipientActiveInConversation = exports.emitPostUnpin = exports.emitPostPin = exports.emitUserView = exports.emitPostView = exports.emitMessageReaction = exports.emitCommentReaction = exports.emitUserShare = exports.emitPostShare = exports.emitUnfollowUser = exports.emitFollowUser = exports.emitCommentDeleted = exports.emitCommentUpdated = exports.emitPostUpdated = exports.emitPostDeleted = exports.emitPostCreated = exports.emitCommentUnlike = exports.emitCommentLike = exports.emitCommentReply = exports.emitPostComment = exports.emitPostUnrepost = exports.emitPostRepost = exports.emitPostUnsave = exports.emitPostSave = exports.emitPostUnlike = exports.emitPostLike = exports.sendNotification = exports.getIO = exports.initSocket = void 0;
 const socket_io_1 = require("socket.io");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const cookie = __importStar(require("cookie"));
+const ioredis_1 = require("ioredis");
+const redis_adapter_1 = require("@socket.io/redis-adapter");
 const env_1 = require("./env");
 const logger_1 = require("../utilities/logger");
 const cache_1 = require("./cache");
@@ -37,6 +39,11 @@ const redis_1 = require("./redis");
 const conversation_model_1 = require("../models/conversation.model");
 const message_model_1 = require("../models/message.model");
 let io;
+// Track online users in-memory for reliable presence broadcasts
+const onlineUsers = new Set();
+// Module-level references for Redis adapter clients (needed for graceful shutdown)
+let redisPubClient = null;
+let redisSubClient = null;
 // Track connection attempts for rate limiting using Redis for distributed systems
 const checkConnectionRateLimit = async (ip) => {
     try {
@@ -61,7 +68,7 @@ const checkConnectionRateLimit = async (ip) => {
         return true;
     }
 };
-const initSocket = (server) => {
+const initSocket = async (server) => {
     const allowedOrigins = [
         env_1.env.CLIENT_URL,
         env_1.env.CLIENT_URL.replace(/\/$/, ""),
@@ -91,6 +98,36 @@ const initSocket = (server) => {
         },
         connectTimeout: 10000,
     });
+    // ── Redis adapter for multi-instance support ─────────────
+    // Allows Socket.io events to broadcast across multiple server instances
+    // via Redis pub/sub. Falls back gracefully if Redis URL is not configured.
+    try {
+        const redisUrl = env_1.env.UPSTASH_REDIS_URL || (env_1.env.UPSTASH_REDIS_REST_URL
+            ? `rediss://default:${env_1.env.UPSTASH_REDIS_REST_TOKEN}@${new URL(env_1.env.UPSTASH_REDIS_REST_URL).hostname}:6379`
+            : null);
+        if (redisUrl) {
+            redisPubClient = new ioredis_1.Redis(redisUrl, {
+                tls: { rejectUnauthorized: false },
+                enableReadyCheck: true,
+                lazyConnect: true,
+                connectTimeout: 10000,
+                maxRetriesPerRequest: 3,
+                retryStrategy: (times) => Math.min(times * 200, 3000),
+            });
+            redisSubClient = redisPubClient.duplicate();
+            await Promise.all([redisPubClient.connect(), redisSubClient.connect()]);
+            io.adapter((0, redis_adapter_1.createAdapter)(redisPubClient, redisSubClient));
+            logger_1.logger.info("Socket.io Redis adapter initialized for multi-instance support");
+        }
+        else {
+            logger_1.logger.info("Socket.io running in single-instance mode (no Redis URL configured)");
+        }
+    }
+    catch (error) {
+        logger_1.logger.warn("Failed to initialize Socket.io Redis adapter, falling back to single-instance mode", {
+            error: error.message,
+        });
+    }
     io.use(async (socket, next) => {
         const s = socket;
         const clientIp = socket.handshake.headers["x-forwarded-for"] ||
@@ -141,14 +178,17 @@ const initSocket = (server) => {
         });
         if (s.userId) {
             socket.join(`user:${s.userId}`);
-            // Update presence to online in Redis and notify other users
+            onlineUsers.add(s.userId);
+            // Broadcast this user's online status to all currently online conversation partners
+            // (async — fetches conversations but the user is already in their room, so events will arrive)
             (0, cache_1.setCache)(`presence:user:${s.userId}`, "online", 86400).then(async () => {
                 try {
                     const conversations = await conversation_model_1.Conversation.find({ participants: s.userId }).select("participants").lean();
                     for (const conv of conversations) {
                         const otherParticipant = conv.participants.find((p) => p.toString() !== s.userId);
                         if (otherParticipant) {
-                            io.to(`user:${otherParticipant.toString()}`).emit("user:presence", {
+                            const otherId = otherParticipant.toString();
+                            io.to(`user:${otherId}`).emit("user:presence", {
                                 userId: s.userId,
                                 status: "online",
                             });
@@ -156,17 +196,41 @@ const initSocket = (server) => {
                     }
                 }
                 catch (error) {
-                    logger_1.logger.error("Error broadcasting online presence", { error, userId: s.userId });
+                    logger_1.logger.error("Error broadcasting online presence", { error: error.message, userId: s.userId });
                 }
             }).catch(err => {
-                logger_1.logger.error("Failed to set user presence in Redis", { error: err.message, userId: s.userId });
+                logger_1.logger.error("Failed to set user presence in Redis", { error: err instanceof Error ? err.message : String(err), userId: s.userId });
+            });
+            // Synchronously emit presence of all currently online conversation partners to the new user.
+            // This avoids the race condition of the async setCache().then() vs client connect event timing.
+            (0, cache_1.setCache)(`presence:user:${s.userId}`, "online", 86400).then(async () => {
+                try {
+                    const conversations = await conversation_model_1.Conversation.find({ participants: s.userId }).select("participants").lean();
+                    for (const conv of conversations) {
+                        const otherParticipant = conv.participants.find((p) => p.toString() !== s.userId);
+                        if (otherParticipant) {
+                            const otherId = otherParticipant.toString();
+                            if (onlineUsers.has(otherId)) {
+                                io.to(`user:${s.userId}`).emit("user:presence", {
+                                    userId: otherId,
+                                    status: "online",
+                                });
+                            }
+                        }
+                    }
+                }
+                catch (error) {
+                    logger_1.logger.error("Error broadcasting partner presence to new user", { error: error.message, userId: s.userId });
+                }
+            }).catch(err => {
+                logger_1.logger.error("Failed to set user presence in Redis (partner check)", { error: err instanceof Error ? err.message : String(err), userId: s.userId });
             });
         }
         // Join conversation room
         socket.on("chat:join", async ({ conversationId }) => {
             if (!s.userId || !conversationId)
                 return;
-            s.activeConversationId = conversationId;
+            s.data.activeConversationId = conversationId;
             socket.join(`conversation:${conversationId}`);
             logger_1.logger.info("Socket joined conversation", { userId: s.userId, conversationId });
             try {
@@ -189,7 +253,7 @@ const initSocket = (server) => {
         });
         // Leave conversation room
         socket.on("chat:leave", ({ conversationId }) => {
-            s.activeConversationId = undefined;
+            s.data.activeConversationId = undefined;
             socket.leave(`conversation:${conversationId}`);
             logger_1.logger.info("Socket left conversation", { userId: s.userId, conversationId });
         });
@@ -210,6 +274,8 @@ const initSocket = (server) => {
                 reason
             });
             if (s.userId) {
+                // Remove from in-memory tracking
+                onlineUsers.delete(s.userId);
                 // Clear presence in Redis and notify other users
                 (0, cache_1.deleteCache)(`presence:user:${s.userId}`).then(async () => {
                     try {
@@ -282,6 +348,7 @@ const IMMEDIATE_EVENTS = new Set([
     "user:unfollow",
     "post:pin",
     "post:unpin",
+    "user:updated",
 ]);
 const batchEmit = (event, data, room) => {
     if (IMMEDIATE_EVENTS.has(event)) {
@@ -562,7 +629,7 @@ const isRecipientActiveInConversation = async (conversationId, recipientId) => {
     try {
         const sockets = await io.in(`user:${recipientId}`).fetchSockets();
         for (const s of sockets) {
-            if (s.activeConversationId === conversationId) {
+            if (s.data?.activeConversationId === conversationId) {
                 return true;
             }
         }
@@ -594,6 +661,41 @@ const getUserPresenceStatus = async (userId) => {
     }
 };
 exports.getUserPresenceStatus = getUserPresenceStatus;
+/**
+ * Emits a user profile update event to notify all connected clients.
+ * Also emits to all of the user's conversation rooms so participant data
+ * (name, profile pic, etc.) is updated in real-time for chat partners.
+ */
+const emitUserUpdated = async (user) => {
+    try {
+        // 1. Broadcast to all connected clients (for profile views, etc.)
+        batchEmit("user:updated", user);
+        // 2. Also emit to each conversation the user is in, so chat partners
+        //    see updated name/profile pic immediately
+        if (user._id) {
+            const conversations = await conversation_model_1.Conversation.find({ participants: user._id }).select("_id").lean();
+            for (const conv of conversations) {
+                io.to(`conversation:${conv._id.toString()}`).emit("user:updated", user);
+            }
+        }
+    }
+    catch (error) {
+        logger_1.logger.error("Failed to emit user:updated", { error: error.message });
+    }
+};
+exports.emitUserUpdated = emitUserUpdated;
+/**
+ * Emits an account deletion event so other clients know to clean up.
+ */
+const emitAccountDeleted = (userId) => {
+    try {
+        io.emit("account:deleted", { userId });
+    }
+    catch (error) {
+        logger_1.logger.error("Failed to emit account:deleted", { error: error.message });
+    }
+};
+exports.emitAccountDeleted = emitAccountDeleted;
 /**
  * Emits a new message event to the conversation room.
  */
@@ -631,6 +733,18 @@ const emitMessageDelete = (conversationId, messageId) => {
 };
 exports.emitMessageDelete = emitMessageDelete;
 /**
+ * Emits a delete-for-me event so the deleting user's client hides the message.
+ */
+const emitMessageDeleteForMe = (conversationId, messageId, deletedByUserId) => {
+    try {
+        io.to(`conversation:${conversationId}`).emit("message:delete-for-me", { messageId, deletedByUserId });
+    }
+    catch (error) {
+        logger_1.logger.error("Failed to emit message:delete-for-me", { error: error.message, conversationId, messageId });
+    }
+};
+exports.emitMessageDeleteForMe = emitMessageDeleteForMe;
+/**
  * Emits a live chat notification to a user's personal room when they are not viewing the active chat.
  */
 const emitChatNotification = (recipientId, payload) => {
@@ -642,4 +756,36 @@ const emitChatNotification = (recipientId, payload) => {
     }
 };
 exports.emitChatNotification = emitChatNotification;
+// ─── Graceful shutdown ───────────────────────────────────────────────
+const shutdownSocket = async () => {
+    logger_1.logger.info("Shutting down Socket.io...");
+    // Disconnect Redis adapter clients
+    if (redisPubClient) {
+        try {
+            await redisPubClient.quit();
+            logger_1.logger.info("Redis pubClient disconnected.");
+        }
+        catch (err) {
+            logger_1.logger.warn("Error disconnecting Redis pubClient:", { error: err instanceof Error ? err.message : String(err) });
+        }
+        redisPubClient = null;
+    }
+    if (redisSubClient) {
+        try {
+            await redisSubClient.quit();
+            logger_1.logger.info("Redis subClient disconnected.");
+        }
+        catch (err) {
+            logger_1.logger.warn("Error disconnecting Redis subClient:", { error: err instanceof Error ? err.message : String(err) });
+        }
+        redisSubClient = null;
+    }
+    // Close Socket.io server
+    if (io) {
+        io.close(() => {
+            logger_1.logger.info("Socket.io server closed.");
+        });
+    }
+};
+exports.shutdownSocket = shutdownSocket;
 //# sourceMappingURL=socket.js.map

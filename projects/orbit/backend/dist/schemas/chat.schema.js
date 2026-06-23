@@ -8,6 +8,7 @@ const zod_1 = __importDefault(require("zod"));
 exports.sendMessageSchema = zod_1.default
     .object({
     text: zod_1.default.string().optional(),
+    replyTo: zod_1.default.string().optional(),
     attachments: zod_1.default
         .array(zod_1.default.object({
         url: zod_1.default.string().url("Attachment URL must be valid"),

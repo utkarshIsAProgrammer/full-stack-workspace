@@ -10,8 +10,7 @@ const postSchema = new mongoose_1.default.Schema({
     // post title
     title: {
         type: String,
-        required: [true, "title is required!"],
-        minlength: [5, "Title must be at least 5 characters long!"],
+        default: "",
         maxlength: [500, "Title must be less than 500 characters!"],
     },
     // post slug
@@ -24,8 +23,7 @@ const postSchema = new mongoose_1.default.Schema({
     // post content
     content: {
         type: String,
-        required: true,
-        minlength: [5, "Content must be at least 5 characters long!"],
+        default: "",
         maxlength: [5000, "Content must be less than 5000 characters!"],
     },
     // hashtags
@@ -112,7 +110,10 @@ postSchema.index({ author: 1, createdAt: -1, _id: -1 });
 postSchema.pre("validate", async function () {
     if (!this.isModified("title"))
         return;
-    const baseSlug = (0, slugify_1.default)(this.title, { lower: true, strict: true });
+    const title = this.title?.trim();
+    const baseSlug = title
+        ? (0, slugify_1.default)(title, { lower: true, strict: true })
+        : `post-${Date.now()}`;
     let slug = baseSlug;
     let counter = 1;
     const Model = this.constructor;

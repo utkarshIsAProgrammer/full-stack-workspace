@@ -114,28 +114,28 @@ export function validateLogin(data: LoginData): Record<string, string> {
 export interface PostData {
   title: string;
   content: string;
+  hasImages?: boolean;
 }
 
 export function validatePost(data: PostData): Record<string, string> {
   const errors: Record<string, string> = {};
 
-  // title: min 5, max 500
   const title = data.title?.trim() || "";
-  if (!title) {
-    errors.title = "Post title is required.";
-  } else if (title.length < 5) {
-    errors.title = "Title must be at least 5 characters long.";
-  } else if (title.length > 500) {
+  const content = data.content?.trim() || "";
+  const hasImages = data.hasImages || false;
+
+  // Require at least one of title, content, or images
+  if (!title && !content && !hasImages) {
+    errors.title = "Add a title, some content, or an image to create a post.";
+  }
+
+  // title: max 500 (optional)
+  if (title.length > 500) {
     errors.title = "Title must be less than 500 characters.";
   }
 
-  // content: min 5, max 5000
-  const content = data.content?.trim() || "";
-  if (!content) {
-    errors.content = "Post content is required.";
-  } else if (content.length < 5) {
-    errors.content = "Content must be at least 5 characters long.";
-  } else if (content.length > 5000) {
+  // content: max 5000 (optional)
+  if (content.length > 5000) {
     errors.content = "Content must be less than 5000 characters.";
   }
 
@@ -316,4 +316,19 @@ export function validateDeleteAccount(data: DeleteAccountData): Record<string, s
     errors.deletePassword = "Password is required to delete your account.";
   }
   return errors;
+}
+
+// ─── Emoji extraction ───────────────────────────────────────
+
+/**
+ * Extracts the first emoji character from a string.
+ * Uses a regex that matches common Unicode emoji ranges.
+ */
+export function extractEmoji(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  // Match first character in common emoji Unicode ranges
+  const emojiRe = /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{231A}-\u{231B}\u{23E9}-\u{23F3}\u{25AA}-\u{25AB}\u{25B6}\u{25C0}\u{25FB}-\u{25FE}\u{2611}\u{2614}-\u{2615}\u{261D}\u{263A}\u{2648}-\u{2653}\u{2660}\u{2663}\u{2665}-\u{2666}\u{2668}\u{267B}\u{267F}\u{2692}-\u{2694}\u{2696}-\u{2697}\u{2699}\u{269B}-\u{269C}\u{26A0}-\u{26A1}\u{26AA}-\u{26AB}\u{26B0}-\u{26B1}\u{26BD}-\u{26BE}\u{26C4}-\u{26C5}\u{26D4}\u{26EA}\u{26F2}-\u{26F3}\u{26F5}\u{26FA}\u{26FD}\u{2702}\u{2705}\u{2708}-\u{2709}\u{270A}-\u{270B}\u{270C}-\u{270D}\u{270F}\u{2712}\u{2714}\u{2716}\u{271D}\u{2721}\u{2728}\u{2733}-\u{2734}\u{2744}\u{2747}\u{274C}\u{274E}\u{2753}-\u{2755}\u{2757}\u{2763}-\u{2764}\u{2795}-\u{2797}\u{27A1}\u{27B0}\u{27BF}\u{2934}-\u{2935}\u{2B05}-\u{2B07}\u{2B1B}-\u{2B1C}\u{2B50}\u{2B55}\u{3030}\u{303D}\u{3297}\u{3299}]/u;
+  const match = trimmed.match(emojiRe);
+  return match ? match[0] : trimmed.charAt(0);
 }

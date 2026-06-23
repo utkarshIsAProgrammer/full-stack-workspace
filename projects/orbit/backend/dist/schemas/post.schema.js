@@ -8,24 +8,24 @@ const zod_1 = __importDefault(require("zod"));
 exports.createPostSchema = zod_1.default.object({
     title: zod_1.default
         .string()
-        .min(5, "Title must be at least 5 characters long!")
-        .max(500, "Title must be less than 500 characters!"),
+        .max(500, "Title must be less than 500 characters!")
+        .optional()
+        .default(""),
     content: zod_1.default
         .string()
-        .min(5, "Content must be at least 5 characters long!")
-        .max(5000, "Content must be less than 5000 characters!"),
+        .max(5000, "Content must be less than 5000 characters!")
+        .optional()
+        .default(""),
     image: zod_1.default.string().optional(),
 });
 exports.updatePostSchema = zod_1.default
     .object({
     title: zod_1.default
         .string()
-        .min(5, "Title must be at least 5 characters long!")
         .max(500, "Title must be less than 500 characters!")
         .optional(),
     content: zod_1.default
         .string()
-        .min(5, "Content must be at least 5 characters long!")
         .max(5000, "Content must be less than 5000 characters!")
         .optional(),
     image: zod_1.default.string().optional(),

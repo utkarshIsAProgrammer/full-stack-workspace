@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getUserPresence = exports.clearConversationMessages = exports.deleteConversation = exports.deleteMessage = exports.editMessage = exports.sendMessage = exports.getMessages = exports.getConversations = exports.getOrCreateConversation = void 0;
+exports.getUserPresence = exports.clearConversationMessages = exports.deleteConversation = exports.deleteMessageForMe = exports.deleteMessage = exports.editMessage = exports.sendMessage = exports.getMessages = exports.getConversations = exports.getOrCreateConversation = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const conversation_model_1 = require("../models/conversation.model");
 const message_model_1 = require("../models/message.model");
@@ -11,6 +11,7 @@ const user_model_1 = require("../models/user.model");
 const chat_schema_1 = require("../schemas/chat.schema");
 const errors_1 = require("../utilities/errors");
 const logger_1 = require("../utilities/logger");
+const notification_1 = require("../utilities/notification");
 const cache_1 = require("../configs/cache");
 const sanitize_1 = require("../configs/sanitize");
 const cloudinary_1 = __importDefault(require("../configs/cloudinary"));
@@ -229,6 +230,11 @@ const getMessages = async (req, res, next) => {
         // Fetch messages (limit + 1 to check for hasMore)
         const messages = await message_model_1.Message.find(query)
             .populate("sender", "username fullName profilePic")
+            .populate({
+            path: "replyTo",
+            select: "sender text attachments createdAt",
+            populate: { path: "sender", select: "username fullName profilePic" },
+        })
             .sort({ _id: -1 })
             .limit(limit + 1)
             .lean();
@@ -325,6 +331,7 @@ const sendMessage = async (req, res, next) => {
         const validation = chat_schema_1.sendMessageSchema.safeParse({
             text: req.body.text,
             attachments: attachments.length > 0 ? attachments : undefined,
+            replyTo: req.body.replyTo,
         });
         if (!validation.success) {
             return next(new errors_1.BadRequestError(validation.error.issues[0]?.message || "Validation failed"));
@@ -341,6 +348,7 @@ const sendMessage = async (req, res, next) => {
             recipient: recipientId,
             text: sanitizedText,
             attachments,
+            replyTo: validation.data.replyTo || null,
             seen: isRecipientActive,
             seenAt: isRecipientActive ? new Date() : null,
         });
@@ -354,9 +362,34 @@ const sendMessage = async (req, res, next) => {
         const updatedConversation = await conversation_model_1.Conversation.findByIdAndUpdate(conversationId, updateObj, { new: true });
         // Clear chat cache
         await (0, cache_1.clearChatCache)(conversationId, [currentUserId.toString(), recipientId.toString()]);
+        // If this is a reply, create a notification for the original message's sender
+        if (validation.data.replyTo) {
+            try {
+                const repliedMessage = await message_model_1.Message.findById(validation.data.replyTo).select("sender").lean();
+                if (repliedMessage && repliedMessage.sender) {
+                    const senderField = repliedMessage.sender;
+                    const originalSenderId = senderField._id
+                        ? senderField._id.toString()
+                        : senderField.toString();
+                    await (0, notification_1.createNotification)({
+                        recipient: originalSenderId,
+                        sender: currentUserId.toString(),
+                        type: "message_reply",
+                    });
+                }
+            }
+            catch (notifErr) {
+                logger_1.logger.error("Failed to create message_reply notification", { error: notifErr.message });
+            }
+        }
         // Populate sender info for the client response and socket emits
         const populatedMessage = await message_model_1.Message.findById(message._id)
             .populate("sender", "username fullName profilePic")
+            .populate({
+            path: "replyTo",
+            select: "sender text attachments createdAt",
+            populate: { path: "sender", select: "username fullName profilePic" },
+        })
             .lean();
         // Emit real-time message event to conversation room (active viewers)
         (0, socket_1.emitNewMessage)(conversationId, populatedMessage);
@@ -516,6 +549,59 @@ const deleteMessage = async (req, res, next) => {
     }
 };
 exports.deleteMessage = deleteMessage;
+/**
+ * Delete a message for the current user only (no time limit).
+ * The message remains visible to other participants.
+ */
+const deleteMessageForMe = async (req, res, next) => {
+    const { messageId } = req.params;
+    const currentUserId = req.user?._id;
+    try {
+        if (!currentUserId) {
+            return next(new errors_1.UnauthorizedError("Unauthorized!"));
+        }
+        if (!mongoose_1.default.Types.ObjectId.isValid(messageId)) {
+            return next(new errors_1.BadRequestError("Invalid message ID!"));
+        }
+        const message = await message_model_1.Message.findById(messageId);
+        if (!message) {
+            return next(new errors_1.NotFoundError("Message not found!"));
+        }
+        // Verify the user is a participant in the conversation (can always delete for themselves)
+        const conversation = await conversation_model_1.Conversation.findById(message.conversation);
+        if (!conversation) {
+            return next(new errors_1.NotFoundError("Conversation not found!"));
+        }
+        const participantsStr = conversation.participants.map((id) => id.toString());
+        if (!participantsStr.includes(currentUserId.toString())) {
+            return next(new errors_1.ForbiddenError("You are not a participant in this conversation!"));
+        }
+        // Add current user to deletedFor array if not already there
+        const userIdStr = currentUserId.toString();
+        const alreadyDeleted = (message.deletedFor || []).some((id) => id.toString() === userIdStr);
+        if (!alreadyDeleted) {
+            message.deletedFor.push(currentUserId);
+            await message.save();
+        }
+        // Clear chat cache
+        await (0, cache_1.clearChatCache)(message.conversation.toString(), participantsStr);
+        // Emit to conversation room so the deleting user's client hides the message
+        (0, socket_1.emitMessageDeleteForMe)(message.conversation.toString(), message._id.toString(), userIdStr);
+        return res.status(200).json({
+            success: true,
+            message: "Message deleted for you!",
+        });
+    }
+    catch (err) {
+        logger_1.logger.error("Error in deleteMessageForMe controller", {
+            error: err.message,
+        });
+        return next(err instanceof errors_1.AppError
+            ? err
+            : new errors_1.AppError("Internal server error!"));
+    }
+};
+exports.deleteMessageForMe = deleteMessageForMe;
 /**
  * Delete an entire conversation and its messages.
  */

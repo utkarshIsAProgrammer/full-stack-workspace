@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef, Suspense, useCallback } from "react";
+import LandingPage from "./components/LandingPage";
+import Auth from "./components/Auth";
+import ForgotPassword from "./components/ForgotPassword";
 import { motion, AnimatePresence } from "motion/react";
 import { io } from "socket.io-client";
 import {
@@ -14,6 +17,7 @@ import {
 import type { User, Notification, Conversation } from "./types";
 import BackgroundGradients from "./components/BackgroundGradients";
 import LeftSidebar from "./components/LeftSidebar";
+import UserAvatar from "./components/UserAvatar";
 import GlassCard from "./components/GlassCard";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { apiFetch } from "./utils/api";
@@ -21,9 +25,6 @@ import { getNotificationText, getFloatingToastText } from "./utils/notificationT
 import { logger } from "./utils/logger";
 
 // Lazy-loaded heavy components — only fetched when first rendered
-const LandingPage = React.lazy(() => import("./components/LandingPage"));
-const Auth = React.lazy(() => import("./components/Auth"));
-const ForgotPassword = React.lazy(() => import("./components/ForgotPassword"));
 const LiquidEther = React.lazy(() => import("./components/LiquidEther"));
 const Feed = React.lazy(() => import("./components/Feed"));
 const Explore = React.lazy(() => import("./components/Explore"));
@@ -34,13 +35,13 @@ const Chat = React.lazy(() => import("./components/Chat"));
 const ImagePreviewRenderer = React.lazy(() => import("./components/ImagePreviewRenderer"));
 const Dock = React.lazy(() => import("./components/Dock"));
 const PostModal = React.lazy(() => import("./components/PostModal"));
-
-export default function App() {
+const CallUI = React.lazy(() => import("./components/CallUI"));	export default function App() {
 	const [user, setUser] = useState<User | null>(null);
+	const [sessionChecked, setSessionChecked] = useState(false);
+	const [showAuthForm] = useState(true);
 	const [currentTab, setTab] = useState("home");
 	const [badgeCount, setBadgeCount] = useState(0);
 	const [chatBadgeCount, setChatBadgeCount] = useState(0);
-
 	// Preload all lazy components after mount to prevent Suspense flash on navigation
 	useEffect(() => {
 		const preloadComponents = async () => {
@@ -57,12 +58,26 @@ export default function App() {
 		preloadComponents();
 	}, []);
 
+	// WebRTC peer connection refs (shared between Chat initiation and CallUI display)
+	const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+	const localStreamRef = useRef<MediaStream | null>(null);
+	const remoteStreamRef = useRef<MediaStream | null>(null);
+	const pendingCallOfferRef = useRef<{
+		sdp: RTCSessionDescriptionInit;
+		type: "audio" | "video";
+		partnerId: string;
+		partnerName: string;
+	} | null>(null);
+
 	// Memoize socket connection to prevent unnecessary reconnections
 	const socketRef = useRef<ReturnType<typeof io> | null>(null);
 	const socketUserIdRef = useRef<string | null>(null);
 	const [socket, setSocket] = useState<ReturnType<typeof io> | null>(null);
 	const [conversations, setConversations] = useState<Conversation[]>([]);
 	const [composeOpen, setComposeOpen] = useState(false);
+	const [hasActiveConversation, setHasActiveConversation] = useState(false);
+	const [commentsOpen, setCommentsOpen] = useState(false);
+	const [settingsEditProfileOpen, setSettingsEditProfileOpen] = useState(false);
 	const [isMobileDevice, setIsMobileDevice] = useState(() => {
 		if (typeof window === "undefined") return false;
 		return window.innerWidth < 768 || window.matchMedia("(pointer: coarse)").matches;
@@ -138,6 +153,12 @@ export default function App() {
 	// Security Form View Controller
 	const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
 
+	// Signup-first mode (from Get Started / Enter Social Hub)
+	const [showSignupForm, setShowSignupForm] = useState(false);
+
+	// Public read-only feed mode (from Explore Public Feed)
+	const [publicFeedMode, setPublicFeedMode] = useState(false);
+
 	// In-app floating macOS alert banner lists
 	const [floatingAlerts, setFloatingAlerts] = useState<
 		(Notification & { id: string })[]
@@ -149,6 +170,27 @@ export default function App() {
 		Record<string, boolean>
 	>({});
 	const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+
+	// Call State (WebRTC audio/video calls)
+	const [callState, setCallState] = useState<{
+		type: "audio" | "video";
+		status: "outgoing" | "incoming" | "active";
+		partnerId: string;
+		partnerName: string;
+		partnerAvatar?: string;
+		callerId?: string;
+		calleeId?: string;
+	} | null>(null);
+
+	// ICE connection state for monitoring network handoffs (WiFi → cellular, etc.)
+	const [iceConnectionState, setIceConnectionState] = useState<
+		RTCIceConnectionState | "new"
+	>("new");
+
+	// Ref to track call partner ID for ICE restart signaling
+	const callPartnerIdRef = useRef<string | null>(null);
+	// Timer ref for delayed ICE restart on temporary disconnects
+	const iceRestartTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
 	// Global Toast Notification State
 	const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -204,6 +246,7 @@ export default function App() {
 			}
 		} catch (e) {
 			logger.warn("Session check failed", e);
+		} finally {
 		}
 	};
 
@@ -346,7 +389,7 @@ export default function App() {
 	const prevUserRef = useRef(user);
 
 	useEffect(() => {
-		checkSession();
+		checkSession().finally(() => setSessionChecked(true));
 		return () => {
 			if (socketRef.current?.connected) {
 				socketRef.current.disconnect();
@@ -391,30 +434,76 @@ export default function App() {
 		// In production, connect directly to the backend server
 		// In dev, connect to empty string (which Vite proxies)
 		const socketUrl = import.meta.env.PROD
-			? (import.meta.env.VITE_SOCKET_URL || "")
+			? (import.meta.env.VITE_SOCKET_URL || import.meta.env.VITE_API_URL || "")
 			: "";
+
+		// Skip socket connection if no socket URL configured (e.g. frontend-only Vercel deploy)
+		if (!socketUrl) {
+			logger.warn("[ORBIT SOCKET] No VITE_SOCKET_URL or VITE_API_URL configured — skipping connection. Real-time features disabled.");
+			return;
+		}
+
+		logger.info("[ORBIT SOCKET] Connecting to:", { socketUrl });
+
 		const socket = io(socketUrl, {
 			auth: token ? { token } : undefined,
 			transports: ["polling", "websocket"],
 			withCredentials: true,
 			reconnection: true,
-			reconnectionAttempts: 5,
+			reconnectionAttempts: Infinity,
 			reconnectionDelay: 1000,
+			reconnectionDelayMax: 30000,
 		});
 
 		socketRef.current = socket;
-		setSocket(socket);
+		setSocket(socket);			socket.on("connect", () => {
+			logger.info("[ORBIT SOCKET] Connected successfully", { socketId: socket.id, userId });
 
-		socket.on("connect", () => {
-			logger.info("Socket connected successfully", { socketId: socket.id, userId });
+			// If we were in a call with a broken ICE connection, re-attempt ICE restart now
+			// that the signaling channel is restored (network handoff recovery).
+			// Read state directly from refs/PC to avoid stale closure captures.
+			const currentPc = peerConnectionRef.current;
+			const currentPartnerId = callPartnerIdRef.current;
+			const pcIceState = currentPc?.iceConnectionState;
+			if (
+				currentPc &&
+				currentPartnerId &&
+				(pcIceState === "disconnected" || pcIceState === "failed")
+			) {
+				logger.info("Socket reconnected during call with broken ICE — initiating ICE restart");
+				if (iceRestartTimeoutRef.current) {
+					clearTimeout(iceRestartTimeoutRef.current);
+					iceRestartTimeoutRef.current = null;
+				}
+				initiateIceRestart(currentPc, currentPartnerId);
+			}
+
+			// Mobile: when user returns to tab after phone was locked / app was backgrounded,
+			// the WebSocket may have been killed. Visibility change forces proactive reconnect.
+			const handleVisibility = () => {
+				if (document.visibilityState === "visible" && socketRef.current && !socketRef.current.connected) {
+					logger.info("[ORBIT SOCKET] Tab became visible — reconnecting socket");
+					socketRef.current.connect();
+				}
+			};
+			document.addEventListener("visibilitychange", handleVisibility);
+
+			// Clean up the listener when socket disconnects
+			socket.once("disconnect", () => {
+				document.removeEventListener("visibilitychange", handleVisibility);
+			});
 		});
 
 		socket.on("disconnect", (reason) => {
-			logger.warn("Socket disconnected", { reason, userId });
+			logger.warn("[ORBIT SOCKET] Disconnected:", { reason, userId });
+		});
+
+		socket.on("reconnect_attempt", (attempt) => {
+			logger.warn("[ORBIT SOCKET] Reconnection attempt #" + attempt, { userId });
 		});
 
 		socket.on("connect_error", (error) => {
-			logger.error("Socket connection error:", error);
+			logger.error("[ORBIT SOCKET] Connection error:", error.message);
 		});
 
 		// ── Realtime message updates when Chat.tsx is not mounted ──
@@ -454,7 +543,7 @@ export default function App() {
 
 		// ── Realtime user presence status changes ──
 		socket.on("user:presence", ({ userId: presenceUserId, status }: { userId: string; status: "online" | "offline" }) => {
-			logger.info("Received user:presence event", { presenceUserId, status });
+			logger.info("[ORBIT DIAG] user:presence received", { presenceUserId, status, uid });
 			setConversations((prev) =>
 				prev.map((c) => {
 					const other = c.participants.find((p) => p && p._id === presenceUserId);
@@ -470,9 +559,23 @@ export default function App() {
 		});
 
 		// ── Realtime chat notifications & badge increments ──
-		socket.on("chat:notification", (payload: { conversationId: string; message: any; unreadCount: number }) => {
+		socket.on("chat:notification", (payload: { conversationId: string; message: any; unreadCount: number; conversation?: any }) => {
 			logger.info("Received chat:notification event", payload);
 			setConversations((prev) => {
+				const existing = prev.find((c) => c._id === payload.conversationId);
+				// If the conversation doesn't exist yet, add it from the payload data
+				if (!existing && payload.conversation) {
+					const newConv = {
+						...payload.conversation,
+						presence: "offline" as const,
+						unreadCounts: { [userId]: payload.unreadCount },
+						lastMessage: payload.message,
+					};
+					return [newConv, ...prev].sort((a, b) => 
+						new Date(b.lastMessage?.createdAt || b.updatedAt).getTime() - 
+						new Date(a.lastMessage?.createdAt || a.updatedAt).getTime()
+					);
+				}
 				const updated = prev.map((c) => {
 					if (c._id === payload.conversationId) {
 						return {
@@ -488,15 +591,6 @@ export default function App() {
 				});
 				return updated.sort((a, b) => new Date(b.lastMessage?.createdAt || b.updatedAt).getTime() - new Date(a.lastMessage?.createdAt || a.updatedAt).getTime());
 			});
-
-			window.dispatchEvent(
-				new CustomEvent("showToast", {
-					detail: {
-						message: `New message from ${payload.message.sender.fullName}: "${payload.message.text}"`,
-						type: "success",
-					},
-				})
-			);
 		});
 
 		// Listen for WebSocket events from server
@@ -593,7 +687,7 @@ export default function App() {
 		// ── Realtime new posts in feed (prepend to home feed) ──
 		// Skip own posts since they're already in the local state from createPost response
 		socket.on("post:created", (post: any) => {
-			logger.info("Received post:created event", post);
+			logger.info("[ORBIT DIAG] post:created received", { postId: post._id, authorId: post.author?._id, uid });
 			if (post.author?._id === uid) return;
 			window.dispatchEvent(new CustomEvent("newPostCreated", { detail: { post } }));
 		});
@@ -682,6 +776,102 @@ export default function App() {
 			logger.info("Received post:unpin event", data);
 			window.dispatchEvent(new CustomEvent("postUnpinned", { detail: { postId: data.postId, userId: data.userId } }));
 		});
+
+		// ── WebRTC Call Signaling ────────────────────────────────────────
+		socket.on("call:offer", (data: { callerId: string; sdp: any; type: "audio" | "video" }) => {
+			logger.info("Received call:offer", data);
+			// Store the offer SDP for when the user accepts the call
+			if (data.sdp) {
+				pendingCallOfferRef.current = {
+					sdp: data.sdp,
+					type: data.type,
+					partnerId: data.callerId,
+					partnerName: "Calling...",
+				};
+			}
+			setCallState({
+				type: data.type,
+				status: "incoming",
+				partnerId: data.callerId,
+				partnerName: "Calling...",
+			});
+		});
+
+		socket.on("call:answer", async (data: { calleeId: string; sdp: any }) => {
+			logger.info("Received call:answer", data);
+			const pc = peerConnectionRef.current;
+			if (pc && data.sdp) {
+				try {
+					await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+				} catch (err) {
+					logger.error("Failed to set remote description from answer", err);
+				}
+			}
+			setCallState((prev) => prev ? { ...prev, status: "active" } : prev);
+		});
+
+		socket.on("call:ice-candidate", async (data: { senderId: string; candidate: any }) => {
+			logger.info("Received call:ice-candidate", data);
+			const pc = peerConnectionRef.current;
+			if (pc && data.candidate) {
+				try {
+					await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+				} catch (err) {
+					logger.error("Failed to add ICE candidate", err);
+				}
+			}
+		});
+
+		// Handle ICE restart offer from the remote peer (network handoff recovery)
+		socket.on("call:ice-restart", async (data: { senderId: string; sdp: any }) => {
+			logger.info("Received call:ice-restart", data);
+			const pc = peerConnectionRef.current;
+			if (!pc || !data.sdp) return;
+			try {
+				await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+				const answer = await pc.createAnswer();
+				await pc.setLocalDescription(answer);
+				socket.emit("call:answer", {
+					targetUserId: data.senderId,
+					sdp: pc.localDescription,
+				});
+				logger.info("ICE restart: sent answer back");
+			} catch (err) {
+				logger.error("ICE restart: failed to handle remote offer", err);
+			}
+		});			socket.on("call:end", (data: { endedBy: string }) => {
+			logger.info("Received call:end", data);
+			// Clean up bitrate monitor first (stops polling before PC is closed)
+			cleanupBitrateMonitor(peerConnectionRef.current);
+			// Clean up peer connection and local stream
+			if (peerConnectionRef.current) {
+				peerConnectionRef.current.close();
+				peerConnectionRef.current = null;
+			}
+			if (localStreamRef.current) {
+				localStreamRef.current.getTracks().forEach((t) => t.stop());
+				localStreamRef.current = null;
+			}
+			pendingCallOfferRef.current = null;
+			callPartnerIdRef.current = null;
+			if (iceRestartTimeoutRef.current) {
+				clearTimeout(iceRestartTimeoutRef.current);
+				iceRestartTimeoutRef.current = null;
+			}
+			setIceConnectionState("closed");
+			setCallState(null);
+		});
+
+		socket.on("call:missed", (data: { callerId: string }) => {
+			logger.info("Received call:missed", data);
+			pendingCallOfferRef.current = null;
+			setCallState(null);
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: { message: "Missed call", type: "success" },
+				})
+			);
+		});
 	};
 
 	const handleAuthSuccess = useCallback((authUser: User, token?: string) => {
@@ -700,6 +890,319 @@ export default function App() {
 			Notification.requestPermission();
 		}
 	}, []);
+
+	// ─── OPUS Bitrate SDP Helper (Cross-Browser) ──────────────────────────
+	// Overrides OPUS codec parameters in the SDP to request 64kbps mono voice.
+	// Instead of hardcoding payload type 111 (Chrome), this looks up the OPUS
+	// payload type number from the rtpmap line so it works on all browsers.
+	const setOpusBitrate = (sdp: string): string => {
+		// Find OPUS payload type from rtpmap (e.g. "a=rtpmap:111 opus/48000/2")
+		const opusMatch = sdp.match(/a=rtpmap:(\d+) opus\/48000/i);
+		if (!opusMatch) return sdp; // No OPUS codec — return unmodified
+		const pt = opusMatch[1];
+		// Replace the fmtp line for that specific payload type
+		const regex = new RegExp(`a=fmtp:${pt} .*`, 'g');
+		return sdp.replace(regex, `a=fmtp:${pt} maxaveragebitrate=64000;useinbandfec=1`);
+	};
+
+	// ─── Video Codec & SVC Helpers ────────────────────────────────────
+	// Prioritises VP9 (which supports SVC for network adaptation) over H.264.
+	// Falls back gracefully if the browser/hardware doesn't support VP9.
+	const getPreferredVideoCodec = (): { mimeType: string } | null => {
+		const caps = RTCRtpSender.getCapabilities('video');
+		if (!caps) return null;
+		// VP9 is preferred for its SVC (scalable video coding) support
+		const vp9 = caps.codecs.find(c => c.mimeType === 'video/VP9');
+		if (vp9) return vp9;
+		// Fall back to VP8 (universal support)
+		return caps.codecs.find(c => c.mimeType === 'video/VP8') || null;
+	};
+
+	// Reusable cleanup helper for bitrate monitor stored on peer connections.
+	// Called before closing a PC to prevent the getStats polling interval from leaking.
+	const cleanupBitrateMonitor = (pc: RTCPeerConnection | null) => {
+		if (!pc) return;
+		try {
+			const cleanup = (pc as any).__bitrateMonitorCleanup;
+			if (typeof cleanup === 'function') {
+				cleanup();
+			}
+			delete (pc as any).__bitrateMonitorCleanup;
+		} catch { /* best-effort cleanup */ }
+	};
+
+	// Attempts to configure VP9 SVC (scalabilityMode L3T3) on the video sender.
+	// L3T3 = 3 temporal layers — allows the browser to drop frame rate
+	// gracefully when network bandwidth drops, avoiding complete freeze.
+	// Falls back silently on browsers/codecs that don't support it.
+	const tryConfigureVideoSvc = async (pc: RTCPeerConnection) => {
+		const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
+		if (!videoSender) return;
+
+		try {
+			const params = videoSender.getParameters();
+			if (!params.encodings || params.encodings.length === 0) {
+				params.encodings = [{}];
+			}
+			// Set temporal scalability — the browser will auto-adjust frame rate
+			// based on network congestion without needing manual bitrate tuning.
+			(params.encodings[0] as any).scalabilityMode = 'L3T3';
+			await videoSender.setParameters(params);
+			logger.info('[SVC] VP9 L3T3 scalability configured');
+		} catch (err) {
+			// SVC not supported — this is expected on older browsers or
+			// when the codec isn't VP9. The call will work with default settings.
+			logger.info('[SVC] Not supported, using browser defaults');
+		}
+	};
+
+	// Monitors video sender stats and adjusts maxBitrate based on the
+	// available bandwidth reported by WebRTC's internal congestion control.
+	// This provides an additional layer of adaptation beyond SVC temporal layers.
+	const startBitrateMonitor = (pc: RTCPeerConnection, type: 'audio' | 'video'): (() => void) => {
+		if (type !== 'video') return () => {};
+
+		let lastMaxBitrate = 0;
+
+		const timer = setInterval(async () => {
+			try {
+				const stats = await pc.getStats();
+				let availableBitrate = 0;
+
+				stats.forEach(report => {
+					// Use the remote candidate-pair's available outgoing bitrate
+					if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+						availableBitrate = report.availableOutgoingBitrate || 0;
+					}
+					// Also check for "bandwidth-estimation" type if available
+					if (report.type === 'bandwidth-estimation' && report.availableBitrate) {
+						availableBitrate = report.availableBitrate;
+					}
+				});
+
+				if (availableBitrate > 0) {
+					const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+					if (!sender) return;
+
+					const params = sender.getParameters();
+					if (!params.encodings || params.encodings.length === 0) return;
+
+					// Set maxBitrate to 90% of estimated bandwidth (leaving headroom for audio/retransmits)
+					const newMax = Math.floor(availableBitrate * 0.9);
+					// Only update if changed by more than 10% to avoid churn
+					if (Math.abs(newMax - lastMaxBitrate) > lastMaxBitrate * 0.1) {
+						params.encodings[0].maxBitrate = newMax;
+						await sender.setParameters(params);
+						logger.info(`[Bitrate] Adjusted to ${Math.round(newMax / 1000)} kbps (available: ${Math.round(availableBitrate / 1000)} kbps)`);
+						lastMaxBitrate = newMax;
+					}
+				}
+			} catch {
+				// Stats polling is best-effort
+			}
+		}, 3000);
+
+		return () => {
+			clearInterval(timer);
+			lastMaxBitrate = 0;
+		};
+	};
+
+	// ─── WebRTC Call Initiation ────────────────────────────────────────
+	const ICE_SERVERS: RTCIceServer[] = [
+		{ urls: "stun:stun.l.google.com:19302" },
+		{ urls: "stun:stun1.l.google.com:19302" },
+		{ urls: "stun:stun2.l.google.com:19302" },
+		{ urls: "stun:stun3.l.google.com:19302" },
+		{ urls: "stun:stun4.l.google.com:19302" },
+		// Free TURN server for NAT traversal on mobile/cellular networks
+		{
+			urls: "turn:openrelay.metered.ca:80",
+			username: "openrelayproject",
+			credential: "openrelayproject",
+		},
+		{
+			urls: "turn:openrelay.metered.ca:443",
+			username: "openrelayproject",
+			credential: "openrelayproject",
+		},
+	];
+
+	const handleStartCall = useCallback(async (partnerId: string, partnerName: string, type: "audio" | "video") => {
+		const sock = socketRef.current;
+		if (!sock) return;
+
+		// Clean up any previous call
+		if (peerConnectionRef.current) {
+			peerConnectionRef.current.close();
+		}
+		if (localStreamRef.current) {
+			localStreamRef.current.getTracks().forEach((t) => t.stop());
+		}
+
+		setCallState({ type, status: "outgoing", partnerId, partnerName });			try {
+			const stream = await navigator.mediaDevices.getUserMedia({
+				audio: {
+					echoCancellation: true,
+					noiseSuppression: true,
+					autoGainControl: true,
+					// ⚠️ Intentionally omitting sampleRate/channelCount.
+					// Letting the browser use its native audio format prevents
+					// AEC pipeline conflicts (resampling/downmixing) that cause echo.
+				},
+				video: type === "video",
+			});
+			localStreamRef.current = stream;
+
+			const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+			peerConnectionRef.current = pc;
+
+			// Add audio track (via addTrack — simple, no encodings needed)
+			stream.getAudioTracks().forEach((track) => pc.addTrack(track, stream));
+
+			// Add video track via addTransceiver for SVC encoding configuration
+			const videoTracks = stream.getVideoTracks();
+			if (type === 'video' && videoTracks.length > 0) {
+				const videoCodec = getPreferredVideoCodec();
+				const videoTransceiver = pc.addTransceiver(videoTracks[0], {
+					streams: [stream],
+					direction: 'sendrecv',
+					sendEncodings: [
+						{
+							rid: 'q',
+							active: true,
+							maxBitrate: 2_500_000, // 2.5 Mbps ceiling — plenty for HD
+						},
+					],
+				});
+				// Prefer VP9 (supports SVC) when available
+				if (videoCodec) {
+					try {
+						(videoTransceiver as any).setCodecPreferences([videoCodec]);
+					} catch { /* codec preference not supported */ }
+				}
+				// Also add any remaining video tracks (e.g. from secondary cameras)
+				for (let i = 1; i < videoTracks.length; i++) {
+					pc.addTrack(videoTracks[i], stream);
+				}
+			}
+
+			pc.onicecandidate = (e) => {
+				if (e.candidate) {
+					sock.emit("call:ice-candidate", {
+						targetUserId: partnerId,
+						candidate: e.candidate,
+					});
+				}
+			};
+
+			pc.ontrack = (e) => {
+				logger.info("Call: received remote track", { kind: e.track.kind });
+				// Store the remote stream immediately in the ref so CallUI can wire it
+				// even if the component hasn't mounted its ontrack handler yet.
+				const stream = e.streams[0];
+				if (stream) {
+					remoteStreamRef.current = stream;
+				} else if (!remoteStreamRef.current) {
+					remoteStreamRef.current = new MediaStream([e.track]);
+				} else {
+					remoteStreamRef.current.addTrack(e.track);
+				}
+			};
+
+			// ── ICE connection state monitoring ───────────────────────
+			callPartnerIdRef.current = partnerId;
+			pc.oniceconnectionstatechange = () => {
+				const state = pc.iceConnectionState;
+				logger.info("ICE connection state changed", { state, partnerId });
+				setIceConnectionState(state);
+
+				// Trigger ICE restart on network handoff events (WiFi ↔ cellular)
+				if (state === "disconnected") {
+					// Give the connection a few seconds to recover naturally
+					if (iceRestartTimeoutRef.current) clearTimeout(iceRestartTimeoutRef.current);
+					iceRestartTimeoutRef.current = setTimeout(() => {
+						initiateIceRestart(pc, partnerId);
+					}, 3000);
+				} else if (state === "failed") {
+					// Immediate restart on failure
+					if (iceRestartTimeoutRef.current) clearTimeout(iceRestartTimeoutRef.current);
+					initiateIceRestart(pc, partnerId);
+				} else if (state === "connected" || state === "completed") {
+					// Clear any pending restart timer if connection recovered
+					if (iceRestartTimeoutRef.current) {
+						clearTimeout(iceRestartTimeoutRef.current);
+						iceRestartTimeoutRef.current = null;
+					}
+				}
+			};
+
+			const offer = await pc.createOffer({
+				offerToReceiveAudio: true,
+				offerToReceiveVideo: type === "video",
+			});
+			offer.sdp = setOpusBitrate(offer.sdp || "");
+			await pc.setLocalDescription(offer);
+
+			// Configure VP9 SVC for adaptive video quality
+			if (type === 'video') {
+				tryConfigureVideoSvc(pc).catch(() => {});
+			}
+
+			sock.emit("call:offer", {
+				targetUserId: partnerId,
+				sdp: pc.localDescription,
+				type,
+			});
+
+			// Start bandwidth-aware bitrate monitor for video calls
+			// This polls getStats() every 3s and adjusts the video encoder's
+			// max bitrate based on the available bandwidth reported by WebRTC's
+			// internal congestion control (Google Congestion Control / GCC).
+			// Cleans up automatically when the peer connection is closed.
+			if (type === 'video') {
+				const stopMonitor = startBitrateMonitor(pc, type);
+				// Store the cleanup function on the pc for later disposal
+				(pc as any).__bitrateMonitorCleanup = stopMonitor;
+			}
+		} catch (err) {
+			logger.error("Failed to start call", err);
+			setCallState(null);
+			if (localStreamRef.current) {
+				localStreamRef.current.getTracks().forEach((t) => t.stop());
+				localStreamRef.current = null;
+			}
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: { message: "Failed to start call. Please check camera/microphone permissions.", type: "error" },
+				})
+			);
+		}
+	}, []);
+
+	// ─── ICE Restart Helper ────────────────────────────────────────
+	// Creates a new offer with iceRestart flag to re-establish the peer connection
+	// after a network handoff (e.g., WiFi → cellular on mobile).
+	const initiateIceRestart = useCallback(async (pc: RTCPeerConnection, partnerId: string) => {
+		const sock = socketRef.current;
+		if (!sock || !pc) return;
+		logger.info("ICE restart: initiating", { partnerId });
+		try {
+			const offer = await pc.createOffer({
+				iceRestart: true,
+				offerToReceiveAudio: true,
+				offerToReceiveVideo: callState?.type === "video",
+			});
+			await pc.setLocalDescription(offer);
+			sock.emit("call:ice-restart", {
+				targetUserId: partnerId,
+				sdp: pc.localDescription,
+			});
+			logger.info("ICE restart: offer sent");
+		} catch (err) {
+			logger.error("ICE restart: failed", err);
+		}
+	}, [callState?.type]);
 
 	const handleLogout = useCallback(async () => {
 		try {
@@ -743,6 +1246,23 @@ export default function App() {
 		}
 		if (tab === "home") {
 			setSinglePostSlug(null);
+		}
+		// Reset notification badge when navigating to notifications tab
+		if (tab === "notifications") {
+			setBadgeCount(0);
+		}
+		// Clear chat badge when navigating to chat tab — clear unread counts so badge stays clear
+		if (tab === "chat") {
+			setChatBadgeCount(0);
+			setConversations((prev) =>
+				prev.map((c) => ({
+					...c,
+					unreadCounts: {
+						...c.unreadCounts,
+						[user?._id || ""]: 0,
+					},
+				}))
+			);
 		}
 		navigateToTab(tab);
 	}, [user?.username, navigateToTab]);
@@ -822,6 +1342,15 @@ export default function App() {
 		}
 	}, [tabHistory, singlePostSlug, selectedUserUsername, user?.username]);
 
+	const scrollToAuthSection = useCallback(() => {
+		document.getElementById('auth-section')?.scrollIntoView({ behavior: 'smooth' });
+	}, []);
+
+	const scrollToSignupSection = useCallback(() => {
+		setShowSignupForm(true);
+		requestAnimationFrame(scrollToAuthSection);
+	}, []);
+
 	return (
 		<ErrorBoundary>
 			<div className="relative min-h-screen text-slate-800 dark:text-zinc-100 selection:bg-zinc-800/10 dark:selection:bg-white/10 antialiased font-ui flex flex-col justify-start bg-transparent transition-colors duration-500 overflow-x-hidden">
@@ -848,9 +1377,8 @@ export default function App() {
 				</Suspense>
 
 				<AnimatePresence mode="wait">
-					{!user ? (
-						<Suspense fallback={<div className="min-h-screen" />}>
-							<motion.div
+					{sessionChecked && !user && !publicFeedMode ? (
+						<motion.div
 								key="logged-out-section"
 								initial={{ opacity: 0 }}
 								animate={{ opacity: 1 }}
@@ -858,44 +1386,43 @@ export default function App() {
 								transition={{ duration: 0.5 }}
 								className="w-full flex flex-col justify-start overflow-y-auto scroll-smooth">
 								{/* Heavily Animated Landing Page with 3D components */}															<LandingPage
-																onScrollToAuth={() => {
-																	const target =
-																		document.getElementById("auth-section");
-																	if (target) {
-																		target.scrollIntoView({
-																			behavior: "smooth",
-																		});
-																	}
+																onScrollToAuth={scrollToAuthSection}
+																onScrollToSignup={scrollToSignupSection}
+																onExplorePublicFeed={() => {
+																	setPublicFeedMode(true);
 																}}
 															/>
 
-								{/* Auth form area (the scroll target) - perfectly centered and integrated without side animations */}
+								{/* Auth form area — only shown after user clicks "Get Started" or "Enter Social Hub" */}
+								{showAuthForm && (
 								<div
 									id="auth-section"
 									className="min-h-screen w-full flex flex-col items-center justify-center px-6 py-20 relative z-10 bg-transparent overflow-hidden">
 									<div className="absolute inset-0 w-full h-full pointer-events-none select-none z-0 opacity-40 mix-blend-screen">
 										{!isMobileDevice && (
-											<LiquidEther
-												colors={["#ffffff", "#a1a1aa", "#3f3f46"]}
-												mouseForce={20}
-												cursorSize={110}
-												isViscous={false}
-												viscous={30}
-												iterationsViscous={32}
-												iterationsPoisson={32}
-												resolution={0.5}
-												isBounce={false}
-												autoDemo={true}
-												autoSpeed={0.55}
-												autoIntensity={2.2}
-												takeoverDuration={0.25}
-												autoResumeDelay={2500}
-												autoRampDuration={0.6}
-											/>
+											<Suspense fallback={null}>
+												<LiquidEther
+													colors={["#ffffff", "#a1a1aa", "#3f3f46"]}
+													mouseForce={20}
+													cursorSize={110}
+													isViscous={false}
+													viscous={30}
+													iterationsViscous={32}
+													iterationsPoisson={32}
+													resolution={0.5}
+													isBounce={false}
+													autoDemo={true}
+													autoSpeed={0.55}
+													autoIntensity={2.2}
+													takeoverDuration={0.25}
+													autoResumeDelay={2500}
+													autoRampDuration={0.6}
+												/>
+											</Suspense>
 										)}
 									</div>
 									{/* Center Auth Card with super clean backplate */}
-									<div className="w-full max-w-md my-6 relative z-10 shrink-0">
+									<div className="w-full max-w-4xl my-6 relative z-10 shrink-0">
 										<AnimatePresence mode="wait">
 											{forgotPasswordOpen ? (
 												<motion.div
@@ -941,22 +1468,22 @@ export default function App() {
 														scale: 0.96,
 														y: -30,
 													}}
-													transition={{ duration: 0.25 }}>
-													<Auth
-														onAuthSuccess={
-															handleAuthSuccess
-														}
-														onForgotPasswordClick={() =>
-															setForgotPasswordOpen(true)
-														}
-													/>
+													transition={{ duration: 0.25 }}>													<Auth
+														initialShowSignup={showSignupForm}
+															onAuthSuccess={
+																handleAuthSuccess
+															}
+															onForgotPasswordClick={() =>
+																setForgotPasswordOpen(true)
+															}
+														/>
 												</motion.div>
 											)}
 										</AnimatePresence>
-									</div>
-								</div>
-							</motion.div>
-						</Suspense>
+							</div>
+						</div>
+						)}
+						</motion.div>
 					) : (
 						<motion.div
 							key="logged-in-section"
@@ -986,21 +1513,18 @@ export default function App() {
 											{/* Reflected glow sweep inside alert box */}
 											<div className="absolute inset-0 bg-linear-to-tr from-zinc-500/5 via-zinc-800/2 to-transparent -z-10" />
 
-											<img loading="lazy"
-												src={
-													alert.sender?.profilePic?.url ||
-													"https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"
+										<UserAvatar
+											src={alert.sender?.profilePic?.url}
+											alt=""
+											className="h-10 w-10 rounded-full object-cover border border-zinc-800 shrink-0 cursor-pointer shadow-sm"
+											onClick={() => {
+												if (alert.sender?.username) {
+													handleUserSelection(
+														alert.sender.username,
+													);
 												}
-												alt=""
-												className="h-10 w-10 rounded-full object-cover border border-zinc-800 shrink-0 cursor-pointer shadow-sm"
-												onClick={() => {
-													if (alert.sender?.username) {
-														handleUserSelection(
-															alert.sender.username,
-														);
-													}
-												}}
-											/>
+											}}
+										/>
 
 											<div className="space-y-1">
 												<span className="text-[9px] font-extrabold uppercase tracking-widest text-zinc-600 dark:text-zinc-400">
@@ -1037,12 +1561,35 @@ export default function App() {
 							</div>
 
 							{/* Main Content Area Routing with Global Full Widescreen Grid */}
+							{publicFeedMode && !user && (
+								<div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/50 bg-zinc-950/80 backdrop-blur-xl">
+									<div>
+										<h2 className="text-sm font-bold text-white">Explore Public Feed</h2>
+										<p className="text-[10px] text-zinc-400 mt-0.5">Browsing posts — sign in to interact</p>
+									</div>
+									<div className="flex items-center gap-3">
+										<button
+											onClick={() => { setPublicFeedMode(false); setShowSignupForm(false); scrollToAuthSection(); }}
+											className="rounded-full bg-white/10 hover:bg-white/20 border border-zinc-700/50 px-4 py-1.5 text-[10px] font-bold text-zinc-200 transition-all cursor-pointer"
+										>
+											Sign In
+										</button>
+										<button
+											onClick={() => { setPublicFeedMode(false); setShowSignupForm(true); scrollToSignupSection(); }}
+											className="rounded-full bg-white text-black hover:bg-zinc-200 px-4 py-1.5 text-[10px] font-bold transition-all cursor-pointer"
+										>
+											Create Account
+										</button>
+									</div>
+								</div>
+							)}
 							<main className="grow h-[calc(100vh-7rem)] overflow-hidden flex items-start justify-center py-6 w-full">
-								{user && (
+								{(user || publicFeedMode) && (
 									<div className="w-full h-full max-w-7xl px-4 sm:px-6 lg:px-8 mx-auto overflow-hidden">
 										<div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-7 items-start w-full h-full">
-											<div className="hidden lg:block lg:col-span-3 h-full overflow-hidden shrink-0 pb-12">
-												<LeftSidebar
+											{user && (
+												<div className="hidden lg:block lg:col-span-3 h-full overflow-hidden shrink-0 pb-12">
+													<LeftSidebar
 													user={user}
 													currentTab={currentTab}
 													setTab={(tab) => {
@@ -1062,24 +1609,56 @@ export default function App() {
 													chatBadgeCount={chatBadgeCount}
 												/>
 											</div>
-											{/* Middle Main Content Pane: Tab content scales fluidly */}
-											<div
-												className={`${currentTab === "chat"
-														? "lg:col-span-9 overflow-hidden"
-														: "lg:col-span-6 xl:col-span-6 overflow-y-auto"
-													} w-full h-full pb-32 xl:pb-12`}>
-												{canGoBack && (
-													<motion.button
-														initial={{ opacity: 0, x: -10 }}
-														animate={{ opacity: 1, x: 0 }}
-														exit={{ opacity: 0, x: -10 }}
-														onClick={handleGoBack}
-														className="mb-4 flex h-8 items-center gap-1.5 rounded-full border border-zinc-200/10 bg-white/5 hover:bg-white/10 px-3 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm text-xs font-bold uppercase tracking-wider select-none shrink-0"
-													>
-														<ArrowLeft className="h-3.5 w-3.5" />
-														<span>Back</span>
-													</motion.button>
-												)}
+											)}
+											{/* Middle Main Content Pane: Tab content scales fluidly */}							<div
+				className={`${currentTab === "chat"
+										? "lg:col-span-9 overflow-hidden"
+										: !user
+											? "lg:col-span-9 xl:col-span-9 overflow-y-auto"
+											: "lg:col-span-6 xl:col-span-6 overflow-y-auto"
+									} w-full h-full ${currentTab === "chat" ? "pb-0" : "pb-28 sm:pb-28 xl:pb-0"}`}>
+									{canGoBack && currentTab === "chat" && hasActiveConversation && (
+										<motion.button
+											initial={{ opacity: 0, x: -10 }}
+											animate={{ opacity: 1, x: 0 }}
+											exit={{ opacity: 0, x: -10 }}
+											onClick={handleGoBack}
+											className="mb-4 flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200/10 bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm shrink-0"
+											title="Go back"
+										>
+											<ArrowLeft className="h-3.5 w-3.5" />
+										</motion.button>
+									)}
+									{commentsOpen && (
+										<motion.button
+											initial={{ opacity: 0, x: -10 }}
+											animate={{ opacity: 1, x: 0 }}
+											exit={{ opacity: 0, x: -10 }}
+											onClick={() => window.dispatchEvent(new CustomEvent("closeComments"))}
+											className="mb-4 flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200/10 bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm shrink-0"
+											title="Close comments"
+										>
+											<ArrowLeft className="h-3.5 w-3.5" />
+										</motion.button>
+									)}
+									{currentTab === "settings" && (
+										<motion.button
+											initial={{ opacity: 0, x: -10 }}
+											animate={{ opacity: 1, x: 0 }}
+											exit={{ opacity: 0, x: -10 }}
+											onClick={() => {
+												if (tabHistory.length > 0) {
+													handleGoBack();
+												} else {
+													setTab("home");
+												}
+											}}
+											className="mb-4 flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200/10 bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm shrink-0"
+											title="Back to previous page"
+										>
+											<ArrowLeft className="h-3.5 w-3.5" />
+										</motion.button>
+									)}
 												<ErrorBoundary>
 													<Suspense fallback={<div className="h-32 animate-pulse rounded-3xl border border-zinc-800 bg-zinc-950/20" />}>
 														<AnimatePresence mode="wait">
@@ -1087,39 +1666,41 @@ export default function App() {
 																<motion.div
 																	key="home"
 																	className="relative min-h-[calc(100vh-2rem)]"
-																	initial={false}
-																	animate={{ opacity: 1 }}
-																	exit={{ opacity: 0, y: -15 }}
-																	transition={{ duration: 0.15 }}>
+														initial={{ opacity: 0, y: 20 }}
+														animate={{ opacity: 1, y: 0 }}
+														exit={{ opacity: 0, y: -15 }}
+														transition={{ duration: 0.35, ease: "easeOut" }}>
 																	<div className="relative z-10 w-full h-full">
-																		<Feed
-																			user={user}
-																			onUserSelected={
-																				handleUserSelection
-																			}
-																			singlePostSlug={
-																				singlePostSlug
-																			}
-																			autoOpenComments={
-																				autoOpenComments
-																			}
-																			onClearAutoOpenComments={() => {
-																				setAutoOpenComments(
-																					false,
-																				);
-																			}}
-																			onClearSinglePost={() => {
-																				setSinglePostSlug(
-																					null,
-																				);
-																				setAutoOpenComments(
-																					false,
-																				);
-																			}}
-																			followingStates={
-																				followingStates
-																			}
-																		/>
+												<Feed
+													user={user}
+													readOnly={publicFeedMode && !user}
+													onUserSelected={
+														handleUserSelection
+													}
+													singlePostSlug={
+														singlePostSlug
+													}
+													autoOpenComments={
+														autoOpenComments
+													}
+													onClearAutoOpenComments={() => {
+														setAutoOpenComments(
+															false,
+														);
+													}}
+													onClearSinglePost={() => {
+														setSinglePostSlug(
+															null,
+														);
+														setAutoOpenComments(
+															false,
+														);
+													}}
+													followingStates={
+														followingStates
+													}
+													onCommentsOpenChange={setCommentsOpen}
+												/>
 																	</div>
 																</motion.div>
 															)}
@@ -1127,10 +1708,10 @@ export default function App() {
 															{currentTab === "explore" && (
 																<motion.div
 																	key="explore"
-																	initial={false}
-																	animate={{ opacity: 1 }}
-																	exit={{ opacity: 0, y: -15 }}
-																	transition={{ duration: 0.15 }}>
+														initial={{ opacity: 0, y: 20 }}
+														animate={{ opacity: 1, y: 0 }}
+														exit={{ opacity: 0, y: -15 }}
+														transition={{ duration: 0.35, ease: "easeOut" }}>
 																	<Explore
 																		onUserSelected={
 																			handleUserSelection
@@ -1176,10 +1757,10 @@ export default function App() {
 															{currentTab === "saved" && (
 																<motion.div
 																	key="saved"
-																	initial={false}
-																	animate={{ opacity: 1 }}
-																	exit={{ opacity: 0, y: -15 }}
-																	transition={{ duration: 0.15 }}>
+														initial={{ opacity: 0, y: 20 }}
+														animate={{ opacity: 1, y: 0 }}
+														exit={{ opacity: 0, y: -15 }}
+														transition={{ duration: 0.35, ease: "easeOut" }}>
 																	<Feed
 																		user={user}
 																		onUserSelected={
@@ -1194,6 +1775,7 @@ export default function App() {
 																		followingStates={
 																			followingStates
 																		}
+																		onCommentsOpenChange={setCommentsOpen}
 																	/>
 																</motion.div>
 															)}
@@ -1201,10 +1783,10 @@ export default function App() {
 															{currentTab === "reposts" && (
 																<motion.div
 																	key="reposts"
-																	initial={false}
-																	animate={{ opacity: 1 }}
-																	exit={{ opacity: 0, y: -15 }}
-																	transition={{ duration: 0.15 }}>
+														initial={{ opacity: 0, y: 20 }}
+														animate={{ opacity: 1, y: 0 }}
+														exit={{ opacity: 0, y: -15 }}
+														transition={{ duration: 0.35, ease: "easeOut" }}>
 																	<Feed
 																		user={user}
 																		onUserSelected={
@@ -1221,17 +1803,18 @@ export default function App() {
 																		followingStates={
 																			followingStates
 																		}
+																		onCommentsOpenChange={setCommentsOpen}
 																	/>
 																</motion.div>
 															)}
 
-															{currentTab === "profile" && (
+															{user && currentTab === "profile" && (
 																<motion.div
 																	key="profile"
-																	initial={false}
-																	animate={{ opacity: 1 }}
-																	exit={{ opacity: 0, y: -15 }}
-																	transition={{ duration: 0.15 }}>
+														initial={{ opacity: 0, y: 20 }}
+														animate={{ opacity: 1, y: 0 }}
+														exit={{ opacity: 0, y: -15 }}
+														transition={{ duration: 0.35, ease: "easeOut" }}>
 																	<Profile
 																		user={user}
 																		targetUsername={
@@ -1261,13 +1844,13 @@ export default function App() {
 																</motion.div>
 															)}
 
-															{currentTab === "settings" && (
+															{user && currentTab === "settings" && (
 																<motion.div
 																	key="settings"
-																	initial={false}
-																	animate={{ opacity: 1 }}
-																	exit={{ opacity: 0, y: -15 }}
-																	transition={{ duration: 0.15 }}>
+														initial={{ opacity: 0, y: 20 }}
+														animate={{ opacity: 1, y: 0 }}
+														exit={{ opacity: 0, y: -15 }}
+														transition={{ duration: 0.35, ease: "easeOut" }}>
 																	<Settings
 																		user={user}
 																		onUserUpdate={(u) =>
@@ -1275,18 +1858,19 @@ export default function App() {
 																		}
 																		onLogout={
 																			handleLogout
-																		}
+																		}																		onEditProfileOpenChange={setSettingsEditProfileOpen}
 																	/>
 																</motion.div>
 															)}
 
-															{currentTab === "chat" && (
-																<motion.div
-																	key="chat"
-																	initial={false}
-																	animate={{ opacity: 1 }}
-																	exit={{ opacity: 0, y: -15 }}
-																	transition={{ duration: 0.15 }}>
+									{user && currentTab === "chat" && (
+										<motion.div
+											key="chat"
+								initial={{ opacity: 0, y: 20 }}
+								animate={{ opacity: 1, y: 0 }}
+								exit={{ opacity: 0, y: -15 }}
+								transition={{ duration: 0.35, ease: "easeOut" }}
+							className="h-full">
 																	<Chat
 																		user={user}
 																		socket={
@@ -1301,18 +1885,17 @@ export default function App() {
 																		onUserSelected={
 																			handleUserSelection
 																		}
-																		onBack={() =>
-																			setTab("home")
-																		}
-																	/>
+																	onBack={() =>
+																		setTab("home")
+																	}
+																	onChatConversationChange={setHasActiveConversation}
+																	onStartCall={handleStartCall}
+																/>
 																</motion.div>
-															)}
-														</AnimatePresence>
-													</Suspense>
-												</ErrorBoundary>
-											</div>{" "}
+															)}                        </AnimatePresence>											</Suspense>										</ErrorBoundary>
+										</div>{" "}
 											{/* Right Sidebar: Dual Liquid Glass Containers for Suggestions & Features */}
-											{currentTab !== "chat" && (
+											{user && currentTab !== "chat" && (
 												<div className="lg:col-span-3 w-full space-y-5 hidden lg:flex flex-col h-full overflow-hidden select-none shrink-0 pb-24">
 													{/* 1. People Recommendations Box with macOS spring animations */}
 													<GlassCard
@@ -1360,14 +1943,8 @@ export default function App() {
 																						sugUser.username,
 																					)
 																				}
-																				className="flex items-center gap-3 cursor-pointer hover:opacity-85 transition-opacity">
-																				<img
-																					src={
-																						sugUser
-																							.profilePic
-																							?.url ||
-																						"https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"
-																					}
+																				className="flex items-center gap-3 cursor-pointer hover:opacity-85 transition-opacity"><UserAvatar
+																					src={sugUser.profilePic?.url}
 																					alt=""
 																					className="h-9 w-9 rounded-full object-cover border border-zinc-800/60 shadow-sm shrink-0"
 																				/>
@@ -1496,16 +2073,19 @@ export default function App() {
 								)}
 							</main>
 
-			{/* Center Apple Dock (Fixed bottom overlay) */}
-							<Suspense fallback={null}>
-								<Dock
-									currentTab={currentTab}
-									setTab={handleTabChange}
-									user={user}
-									badgeCount={badgeCount}
-									chatBadgeCount={chatBadgeCount}
-								/>
+			{/* Center Apple Dock — hidden when chat or comments are open */}
+							{user && (
+								<Suspense fallback={null}>								{!(currentTab === "chat" && hasActiveConversation) && !commentsOpen && !settingsEditProfileOpen && (
+										<Dock
+											currentTab={currentTab}
+											setTab={handleTabChange}
+											user={user}
+											badgeCount={badgeCount}
+											chatBadgeCount={chatBadgeCount}
+										/>
+									)}
 							</Suspense>
+							)}
 						</motion.div>
 					)}
 				</AnimatePresence>
@@ -1529,6 +2109,193 @@ export default function App() {
 						</motion.div>
 					)}
 				</AnimatePresence>
+
+			{/* Call UI Overlay (outside main layout flow) */}
+			{callState && socket && (
+				<Suspense fallback={null}>
+					<CallUI
+						socket={socket}
+						user={{
+							_id: user?._id || "",
+							fullName: user?.fullName || "",
+							profilePic: user?.profilePic,
+						}}
+						callState={{
+							type: callState.type,
+							status: callState.status,
+							partnerId: callState.partnerId,
+							partnerName: callState.partnerName,
+							partnerAvatar: callState.partnerAvatar,
+						}}
+						onEndCall={() => {
+							socket.emit("call:end", { targetUserId: callState.partnerId });
+							// Stop bitrate monitor before closing PC
+							cleanupBitrateMonitor(peerConnectionRef.current);
+							if (peerConnectionRef.current) {
+								peerConnectionRef.current.close();
+								peerConnectionRef.current = null;
+							}
+							if (localStreamRef.current) {
+								localStreamRef.current.getTracks().forEach((t) => t.stop());
+								localStreamRef.current = null;
+							}
+							pendingCallOfferRef.current = null;
+							setCallState(null);
+						}}
+						onAcceptCall={async () => {
+							try {
+								// Clean up any existing PC/stream
+								if (peerConnectionRef.current) {
+									peerConnectionRef.current.close();
+								}
+								if (localStreamRef.current) {
+									localStreamRef.current.getTracks().forEach((t) => t.stop());
+								}							const stream = await navigator.mediaDevices.getUserMedia({
+								audio: {
+									echoCancellation: true,
+									noiseSuppression: true,
+									autoGainControl: true,
+								},
+								video: callState.type === "video",
+							});
+							localStreamRef.current = stream;
+
+				const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+								peerConnectionRef.current = pc;
+
+				// Add audio track
+				stream.getAudioTracks().forEach((track) => pc.addTrack(track, stream));
+
+				// Add video track via addTransceiver for SVC (same as caller setup)
+				const videoTracks = stream.getVideoTracks();
+				if (callState.type === 'video' && videoTracks.length > 0) {
+					const videoCodec = getPreferredVideoCodec();
+					const videoTransceiver = pc.addTransceiver(videoTracks[0], {
+						streams: [stream],
+						direction: 'sendrecv',
+						sendEncodings: [
+							{
+								rid: 'q',
+								active: true,
+								maxBitrate: 2_500_000,
+							},
+						],
+					});
+					if (videoCodec) {
+						try {
+							(videoTransceiver as any).setCodecPreferences([videoCodec]);
+						} catch { /* codec preference not supported */ }
+					}
+					for (let i = 1; i < videoTracks.length; i++) {
+						pc.addTrack(videoTracks[i], stream);
+					}
+				}
+
+								pc.onicecandidate = (e) => {
+									if (e.candidate) {
+										socket.emit("call:ice-candidate", {
+											targetUserId: callState.partnerId,
+											candidate: e.candidate,
+										});
+									}
+								};
+
+				pc.ontrack = (e) => {
+					logger.info("Call: received remote track (callee)", { kind: e.track.kind });
+					// Store the remote stream immediately in the ref so CallUI can wire it
+					const stream = e.streams[0];
+					if (stream) {
+						remoteStreamRef.current = stream;
+					} else if (!remoteStreamRef.current) {
+						remoteStreamRef.current = new MediaStream([e.track]);
+					} else {
+						remoteStreamRef.current.addTrack(e.track);
+					}
+				};
+
+								// ── ICE connection state monitoring (callee) ─────
+								callPartnerIdRef.current = callState.partnerId;
+								pc.oniceconnectionstatechange = () => {
+									const state = pc.iceConnectionState;
+									logger.info("ICE connection state changed (callee)", { state, partnerId: callState.partnerId });
+									setIceConnectionState(state);
+
+									if (state === "disconnected") {
+										if (iceRestartTimeoutRef.current) clearTimeout(iceRestartTimeoutRef.current);
+										iceRestartTimeoutRef.current = setTimeout(() => {
+											const currentPc = peerConnectionRef.current;
+											if (currentPc && callPartnerIdRef.current) {
+												initiateIceRestart(currentPc, callPartnerIdRef.current);
+											}
+										}, 3000);
+									} else if (state === "failed") {
+										if (iceRestartTimeoutRef.current) clearTimeout(iceRestartTimeoutRef.current);
+										setTimeout(() => {
+											const currentPc = peerConnectionRef.current;
+											if (currentPc && callPartnerIdRef.current) {
+												initiateIceRestart(currentPc, callPartnerIdRef.current);
+											}
+										}, 0);
+									} else if (state === "connected" || state === "completed") {
+										if (iceRestartTimeoutRef.current) {
+											clearTimeout(iceRestartTimeoutRef.current);
+											iceRestartTimeoutRef.current = null;
+										}
+									}
+								};
+
+								const offer = pendingCallOfferRef.current;
+								if (offer?.sdp) {
+									await pc.setRemoteDescription(new RTCSessionDescription(offer.sdp));
+									const answer = await pc.createAnswer();
+									answer.sdp = setOpusBitrate(answer.sdp || "");
+									await pc.setLocalDescription(answer);
+
+									// Configure VP9 SVC for adaptive video quality (callee side)
+									if (callState.type === 'video') {
+										tryConfigureVideoSvc(pc).catch(() => {});
+									}
+
+									socket.emit("call:answer", {
+										targetUserId: callState.partnerId,
+										sdp: pc.localDescription,
+									});
+								}
+
+								// Start bandwidth-aware bitrate monitor (callee side)
+								if (callState.type === 'video') {
+									const stopMonitor = startBitrateMonitor(pc, callState.type);
+									(pc as any).__bitrateMonitorCleanup = stopMonitor;
+								}
+
+								pendingCallOfferRef.current = null;
+								setCallState((prev) => prev ? { ...prev, status: "active" } : prev);
+							} catch (err) {
+								logger.error("Failed to accept call", err);
+								if (localStreamRef.current) {
+									localStreamRef.current.getTracks().forEach((t) => t.stop());
+									localStreamRef.current = null;
+								}
+								pendingCallOfferRef.current = null;
+								setCallState(null);
+								window.dispatchEvent(
+									new CustomEvent("showToast", {
+										detail: { message: "Failed to accept call.", type: "error" },
+									})
+								);
+							}
+						}}										onRejectCall={() => {
+							socket.emit("call:end", { targetUserId: callState.partnerId });
+							pendingCallOfferRef.current = null;
+							setCallState(null);
+						}}
+						localStreamRef={localStreamRef}
+						peerConnectionRef={peerConnectionRef}
+						remoteStreamRef={remoteStreamRef}
+						iceConnectionState={iceConnectionState}
+					/>
+				</Suspense>
+			)}
 			</div>
 		</ErrorBoundary>
 	);

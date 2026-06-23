@@ -12,11 +12,12 @@ import {
 	Bookmark,
 	Repeat2,
 	FileText,
-	ArrowLeft,
+	Image,
 } from "lucide-react";
 import { User as UserType, Post } from "../types";
 import GlassCard from "./GlassCard";
 import ImageCropModal from "./ImageCropModal";
+import UserAvatar from "./UserAvatar";
 import Skeleton from "./Skeleton";
 import ConfirmDialog from "./ConfirmDialog";
 import { apiFetch } from "../utils/api";
@@ -43,7 +44,7 @@ export default function Profile({
 	followingStates,
 	onToggleFollow,
 	onProfileLoaded,
-	onBack,
+	onBack: _onBack,
 }: ProfileProps) {
 	const [profile, setProfile] = useState<UserType | null>(null);
 	const [posts, setPosts] = useState<Post[]>([]);
@@ -105,9 +106,123 @@ export default function Profile({
 
 	const [editPostId, setEditPostId] = useState<string | null>(null);
 
+	// Responsive drawer animation: use fade+scale on desktop, slide-up on mobile
+	const [isDesktop, setIsDesktop] = useState(false);
+	useEffect(() => {
+		const mq = window.matchMedia("(min-width: 768px)");
+		setIsDesktop(mq.matches);
+		const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+		mq.addEventListener("change", handler);
+		return () => mq.removeEventListener("change", handler);
+	}, []);
+
+	const drawerInitial = isDesktop ? { opacity: 0, scale: 0.95 } : { y: "100%" };
+	const drawerAnimate = isDesktop ? { opacity: 1, scale: 1 } : { y: 0 };
+	const drawerExit = isDesktop ? { opacity: 0, scale: 0.95 } : { y: "100%" };
+	const drawerTransition = isDesktop
+		? { type: "tween" as const, duration: 0.2, ease: "easeOut" as const }
+		: { type: "spring" as const, damping: 28, stiffness: 220 };
+
+	const [editPostDrawerOpen, setEditPostDrawerOpen] = useState(false);
 	const [deleteConfirmPostId, setDeleteConfirmPostId] = useState<string | null>(null);
 	const [editPostTitle, setEditPostTitle] = useState("");
 	const [editPostContent, setEditPostContent] = useState("");
+	const [editPostExistingImages, setEditPostExistingImages] = useState<{ public_id: string; url: string }[]>([]);
+	const [editPostNewFiles, setEditPostNewFiles] = useState<File[]>([]);
+	const [editPostNewPreviews, setEditPostNewPreviews] = useState<string[]>([]);
+
+	// Edit post image crop
+	const [editPostCropOpen, setEditPostCropOpen] = useState(false);
+	const [editPostCropSrc, setEditPostCropSrc] = useState("");
+
+	const handleEditPostDrawerSave = async () => {
+		if (!editPostId) return;
+		try {
+			const formData = new FormData();
+			formData.append("title", editPostTitle);
+			formData.append("content", editPostContent);
+
+			// Send existing image public_ids to keep
+			if (editPostExistingImages.length > 0) {
+				editPostExistingImages.forEach((img) => {
+					formData.append("existingImages", img.public_id);
+				});
+			}
+
+			// Append new image files
+			editPostNewFiles.forEach((file) => {
+				formData.append("images", file);
+			});
+
+			const res = await apiFetch(`/api/posts/${editPostId}`, {
+				method: "PUT",
+				body: formData,
+			});
+			if (res.ok) {
+				// Revoke old preview URLs
+				editPostNewPreviews.forEach((url) => URL.revokeObjectURL(url));
+
+				// Re-fetch to get updated post with all fields
+				const fetchRes = await apiFetch(`/api/posts/${editPostId}`);
+				if (fetchRes.ok) {
+					const data = await fetchRes.json();
+					if (data.success && data.post) {
+						const updatedPost = data.post;
+						const updateFn = (p: any) =>
+							p._id === editPostId ? { ...p, ...updatedPost, likedByMe: p.likedByMe, savedByMe: p.savedByMe, repostedByMe: p.repostedByMe } : p;
+						setPosts((prev) => prev.map(updateFn));
+						setSavedPosts((prev) => prev.map(updateFn));
+						setRepostedPosts((prev) => prev.map(updateFn));
+					}
+				}
+
+				setEditPostDrawerOpen(false);
+				setEditPostId(null);
+				setEditPostExistingImages([]);
+				setEditPostNewFiles([]);
+				setEditPostNewPreviews([]);
+				window.dispatchEvent(new CustomEvent("showToast", {
+					detail: { message: "Post updated!", type: "success" },
+				}));
+			}
+		} catch (e) {
+			logger.error(e);
+		}
+	};
+
+	const handleEditPostRemoveExistingImage = (publicId: string) => {
+		setEditPostExistingImages((prev) => prev.filter((img) => img.public_id !== publicId));
+	};
+
+	const handleEditPostRemoveNewImage = (idx: number) => {
+		setEditPostNewFiles((prev) => prev.filter((_, i) => i !== idx));
+		setEditPostNewPreviews((prev) => {
+			URL.revokeObjectURL(prev[idx]);
+			return prev.filter((_, i) => i !== idx);
+		});
+	};
+
+	const handleEditPostAddImages = (e: React.ChangeEvent<HTMLInputElement>) => {
+		const files = Array.from(e.target.files || []);
+		if (files.length === 0) return;
+		const file = files[0];
+		// Revoke previous crop src to prevent memory leak
+		if (editPostCropSrc) URL.revokeObjectURL(editPostCropSrc);
+		const src = URL.createObjectURL(file);
+		setEditPostCropSrc(src);
+		setEditPostCropOpen(true);
+		e.target.value = "";
+	};
+
+	const handleEditPostCropComplete = (blob: Blob) => {
+		const file = new File([blob], `edit_image_${Date.now()}.jpg`, { type: "image/jpeg" });
+		const preview = URL.createObjectURL(blob);
+		setEditPostNewFiles((prev) => [...prev, file]);
+		setEditPostNewPreviews((prev) => [...prev, preview]);
+		setEditPostCropOpen(false);
+		if (editPostCropSrc) URL.revokeObjectURL(editPostCropSrc);
+		setEditPostCropSrc("");
+	};
 
 	// Pull-to-refresh state
 	const [pullDistance, setPullDistance] = useState(0);
@@ -240,36 +355,7 @@ export default function Profile({
 		}
 	};
 
-	const handleUpdatePost = async (e: React.FormEvent, postId: string) => {
-		e.preventDefault();
-		e.stopPropagation();
-		try {
-			const res = await apiFetch(`/api/posts/${postId}`, {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					title: editPostTitle,
-					content: editPostContent,
-				}),
-			});
-			if (res.ok) {
-				setPosts((prev) =>
-					prev.map((p) =>
-						p._id === postId
-							? {
-								...p,
-								title: editPostTitle,
-								content: editPostContent,
-							}
-							: p,
-					),
-				);
-				setEditPostId(null);
-			}
-		} catch (e) {
-			logger.error(e);
-		}
-	};
+
 
 	// Listen for realtime comment count updates from other users
 	useEffect(() => {
@@ -298,11 +384,10 @@ export default function Profile({
 	// Listen for realtime post edits (preserve interaction status for current user)
 	useEffect(() => {
 		const handlePostUpdated = (e: CustomEvent<{ post: Post }>) => {
-			const { post } = e.detail;
-			const updateFn = (p: Post) =>
-				p._id === post._id
-					? { ...p, ...post, likedByMe: p.likedByMe, savedByMe: p.savedByMe, repostedByMe: p.repostedByMe }
-					: p;
+			const { post } = e.detail;													const updateFn = (p: Post) =>
+														p._id === post._id
+															? { ...p, ...post, likedByMe: p.likedByMe, savedByMe: p.savedByMe, repostedByMe: p.repostedByMe }
+															: p;
 			setPosts((prev) => prev.map(updateFn));
 			setSavedPosts((prev) => prev.map(updateFn));
 			setRepostedPosts((prev) => prev.map(updateFn));
@@ -674,6 +759,13 @@ export default function Profile({
 		}
 	};
 
+	// Auto-clear error and success messages after timeout
+	useEffect(() => {
+		if (!error) return;
+		const timer = setTimeout(() => setError(null), 6000);
+		return () => clearTimeout(timer);
+	}, [error]);
+
 	useEffect(() => {
 		// Clear previous profile to prevent flash when switching users
 		setProfile(null);
@@ -959,8 +1051,16 @@ export default function Profile({
 		formData.append("fullName", fullName);
 		formData.append("bio", bio);
 
-		if (profilePicFile) formData.append("profilePic", profilePicFile);
-		if (bannerPicFile) formData.append("bannerImage", bannerPicFile);
+		if (profilePicFile) {
+			formData.append("profilePic", profilePicFile);
+		} else if (!profilePicPreview && profile?.profilePic?.url) {
+			formData.append("removeProfilePic", "true");
+		}
+		if (bannerPicFile) {
+			formData.append("bannerImage", bannerPicFile);
+		} else if (!bannerPicPreview && profile?.bannerImage?.url) {
+			formData.append("removeBannerImage", "true");
+		}
 
 		try {
 			const res = await apiFetch("/api/users/update-profile", {
@@ -1021,70 +1121,70 @@ export default function Profile({
 
 	return (
 		<>
-			{onBack && (
-				<button
-					onClick={onBack}
-					className="fixed top-4 left-4 z-50 flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200/10 bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm backdrop-blur-md"
-					title="Back"
-				>
-					<ArrowLeft className="h-4 w-4" />
-				</button>
-			)}
+
 			<div
 				ref={containerRef}
 				onTouchStart={handleTouchStart}
 				onTouchMove={handleTouchMove}
 				onTouchEnd={handleTouchEnd}
-				className="w-full px-2 pb-24 pt-6"
+				className="w-full px-2 pt-6"
 				style={{ transform: `translateY(${pullDistance}px)`, transition: isPullingRef.current ? 'none' : 'transform 0.3s ease-out' }}
 			>
 				{/* Banner */}
-				<div
-					className="group relative h-40 overflow-hidden rounded-3xl border border-white/20 bg-zinc-900 md:h-48 cursor-pointer"
-					onClick={() => {
-						window.dispatchEvent(
-							new CustomEvent("openImagePreview", {
-								detail:
-									bannerPicPreview ||
-									"https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=800",
-							}),
-						);
-					}}>
-					<img loading="lazy" 
-						src={
-							bannerPicPreview ||
-							"https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=800"
-						}
-						alt="User banner"
-						className="h-full w-full object-cover transition-transform duration-1000 group-hover:scale-102"
-					/>
-					<div className="absolute inset-0 bg-linear-to-t from-black/80 via-black/20 to-transparent pointer-events-none" />
-				</div>
+				{bannerPicPreview ? (
+					<div
+						className="group relative h-40 overflow-hidden rounded-3xl border border-white/20 bg-zinc-900 md:h-48 cursor-pointer"
+						onClick={() => {
+							window.dispatchEvent(
+								new CustomEvent("openImagePreview", {
+									detail: bannerPicPreview,
+								}),
+							);
+						}}>
+						<img loading="lazy"
+							src={bannerPicPreview}
+							alt="User banner"
+							className="h-full w-full object-cover transition-transform duration-1000 group-hover:scale-102"
+						/>
+						<div className="absolute inset-0 bg-linear-to-t from-black/80 via-black/20 to-transparent pointer-events-none" />
+					</div>
+				) : (
+					<div className="relative flex h-40 items-center justify-center rounded-3xl border border-zinc-800 bg-zinc-900/50 md:h-48 overflow-hidden">
+						{/* Subtle dots pattern */}
+						<div className="absolute inset-0 opacity-[0.04]" style={{
+							backgroundImage: `radial-gradient(circle, white 1px, transparent 1px)`,
+							backgroundSize: '20px 20px'
+						}} />
+						<div className="relative flex flex-col items-center gap-2">
+							<Image className="h-8 w-8 text-zinc-600" />
+							<span className="text-[10px] text-zinc-600 font-medium uppercase tracking-wider">No banner</span>
+						</div>
+					</div>
+				)}
 
 				{/* Profile Header Block */}
 				<div className="relative -mt-12 px-6 font-sans">
 					<div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-end">
 						<div className="relative">
-							<img loading="lazy"
-								src={
-									profilePicPreview ||
-									"https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200"
-								}
-								alt={profile.fullName}
-								className="h-24 w-24 rounded-full border-4 border-white dark:border-zinc-900 object-cover shadow-md cursor-pointer hover:opacity-90 transition-opacity"
-								onClick={() => {
+						<UserAvatar
+							src={
+								profilePicPreview ||
+								""
+							}
+							alt={profile.fullName}
+							className="h-20 w-20 rounded-full border-4 border-white dark:border-zinc-900 object-cover shadow-md cursor-pointer hover:opacity-90 transition-opacity"							onClick={() => {
+								if (profilePicPreview) {
 									window.dispatchEvent(
 										new CustomEvent("openImagePreview", {
-											detail:
-												profilePicPreview ||
-												"https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200",
+											detail: profilePicPreview,
 										}),
 									);
-								}}
-							/>
+								}
+							}}
+						/>
 						</div>
 
-						<div className="flex items-center gap-2.5">
+						<div className="flex items-center gap-2.5 self-end sm:self-auto">
 							<button
 								onClick={handleShareProfile}
 								className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-slate-800 dark:hover:text-zinc-150 transition-colors shadow-sm cursor-pointer">
@@ -1239,87 +1339,42 @@ export default function Profile({
 												key={post._id}
 												animate={true}
 												className="group relative flex flex-col justify-between overflow-hidden p-6 text-left rounded-4xl border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all"
-												showMacControls={false}>
-												{editPostId === post._id ? (
-													<form
-														onSubmit={(e) =>
-															handleUpdatePost(
-																e,
-																post._id,
-															)
-														}
-														className="space-y-3 z-10 block w-full relative">
-														<input
-															type="text"
-															value={editPostTitle}
-															onChange={(e) =>
-																setEditPostTitle(
-																	e.target.value,
-																)
-															}
-															onClick={(e) =>
-																e.stopPropagation()
-															}
-															className="w-full bg-zinc-900 border border-zinc-700 rounded-full py-2.5 px-4 text-sm text-white outline-none focus:border-zinc-600"
-														/>
-														<textarea
-															value={editPostContent}
-															onChange={(e) =>
-																setEditPostContent(
-																	e.target.value,
-																)
-															}
-															onClick={(e) =>
-																e.stopPropagation()
-															}
-															rows={3}
-															className="w-full bg-zinc-900 border border-zinc-700 rounded-3xl py-3 px-4 text-xs text-white outline-none focus:border-zinc-600 resize-none"
-														/>
-														<div className="flex items-center gap-2">
-															<button
-																type="button"
-																onClick={(e) => {
-																	e.stopPropagation();
-																	setEditPostId(
-																		null,
-																	);
-																}}
-																className="px-4 py-1.5 rounded-full border border-zinc-700 text-xs font-bold text-zinc-400">
-																Cancel
-															</button>
-															<button
-																type="submit"
-																onClick={(e) =>
-																	e.stopPropagation()
-																}
-																className="px-4 py-1.5 rounded-full bg-white dark:text-black text-white text-xs font-bold">
-																Save
-															</button>
-														</div>
-													</form>
-												) : (
-													<>
+												showMacControls={false}>																	<>
 														{user?._id ===
 															profile?._id && (
-																<div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 z-20">
-																	<button
-																		onClick={(
-																			e,
-																		) => {
-																			e.stopPropagation();
-																			setEditPostTitle(
-																				post.title,
-																			);
-																			setEditPostContent(
-																				post.content,
-																			);
-																			setEditPostId(
-																				post._id,
-																			);
-																		}}
-																		className="p-1.5 bg-zinc-800 border border-zinc-800 rounded-full text-zinc-400 hover:text-white shadow-sm cursor-pointer">
-																		<Edit3 className="h-3 w-3" />
-																	</button>
+																<div className="absolute top-4 right-4 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center gap-1.5 z-20">
+																<button
+																	onClick={(
+																		e,
+																	) => {
+																		e.stopPropagation();
+																		setEditPostTitle(
+																			post.title,
+																		);
+																		setEditPostContent(
+																			post.content,
+																		);
+																		setEditPostId(
+																			post._id,
+																		);
+																		// Store existing images for the edit draw
+																		const existingImgs: { public_id: string; url: string }[] = [];
+																		if (post.image?.public_id) {
+																			existingImgs.push({ public_id: post.image.public_id, url: post.image.url });
+																		}
+																		(post.images || []).forEach((img: any) => {
+																			if (img.public_id && !existingImgs.some((e) => e.public_id === img.public_id)) {
+																				existingImgs.push({ public_id: img.public_id, url: img.url });
+																			}
+																		});
+																		setEditPostExistingImages(existingImgs);
+																		setEditPostNewFiles([]);
+																		setEditPostNewPreviews([]);
+																		setEditPostDrawerOpen(true);
+																	}}
+																	className="p-1.5 bg-zinc-800 border border-zinc-800 rounded-full text-zinc-400 hover:text-white shadow-sm cursor-pointer">
+																	<Edit3 className="h-3 w-3" />
+																</button>
 																	<button
 																		onClick={(e) =>
 																			handleDeletePost(
@@ -1336,11 +1391,11 @@ export default function Profile({
 														{/* Author Context Line */}
 														<div className="mb-4 flex items-center justify-between">
 															<div className="flex items-center gap-3">
-																<img loading="lazy"
-																	src={profile.profilePic?.url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"}
-																	alt={profile.fullName}
-																	className="h-10 w-10 rounded-full object-cover border border-zinc-800 shadow-sm shrink-0"
-																/>
+															<UserAvatar
+																src={profile.profilePic?.url}
+																alt={profile.fullName}
+																className="h-10 w-10 rounded-full object-cover border border-zinc-800 shadow-sm shrink-0"
+															/>
 																<div className="text-left">
 																	<h4 className="text-sm font-semibold text-white">
 																		{profile.fullName}
@@ -1350,10 +1405,10 @@ export default function Profile({
 															</div>
 														</div>
 
-														<div onClick={() => onPostClick(post.slug)} className="cursor-pointer space-y-3">									<h4 className="font-sans text-lg md:text-xl font-bold text-white leading-tight text-left">
+														<div onClick={() => onPostClick(post.slug)} className="cursor-pointer space-y-3">									<h4 className="font-sans text-sm md:text-base font-bold text-white leading-tight text-left">
 									{post.title}
 								</h4>
-								<p className="text-sm md:text-base text-zinc-300 leading-relaxed whitespace-pre-wrap text-left select-text">
+								<p className="text-xs md:text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap text-left select-text">
 									{post.content}
 								</p>
 															{post.image && (
@@ -1398,11 +1453,9 @@ export default function Profile({
 																className="flex items-center gap-1.5 font-medium cursor-pointer hover:text-green-500 transition-colors"
 															>
 																<Repeat2 className={`h-4 w-4 ${post.repostedByMe ? "text-green-500" : "text-zinc-550"}`} /> {post.repostsCount || 0}
-															</button>
-														</div>
-													</>
-												)}
-											</GlassCard>
+															</button>																					</div>
+																	</>
+															</GlassCard>
 										))}
 									</AnimatePresence>
 									{/* Pagination sentinel + skeleton for posts */}
@@ -1464,8 +1517,8 @@ export default function Profile({
 											{/* Author Context Line */}
 											<div className="mb-4 flex items-center justify-between">
 												<div className="flex items-center gap-3">
-													<img loading="lazy"
-														src={(post as any).author?.profilePic?.url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"}
+													<UserAvatar
+														src={(post as any).author?.profilePic?.url}
 														alt=""
 														className="h-10 w-10 rounded-full object-cover border border-zinc-800 shadow-sm shrink-0 cursor-pointer"
 														onClick={() => onUserClick((post as any).author?.username)}
@@ -1604,8 +1657,8 @@ export default function Profile({
 											{/* Author Context Line */}
 											<div className="mb-4 flex items-center justify-between">
 												<div className="flex items-center gap-3">
-													<img loading="lazy"
-														src={(post as any).author?.profilePic?.url || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"}
+													<UserAvatar
+														src={(post as any).author?.profilePic?.url}
 														alt=""
 														className="h-10 w-10 rounded-full object-cover border border-zinc-800 shadow-sm shrink-0 cursor-pointer"
 														onClick={() => onUserClick((post as any).author?.username)}
@@ -1703,10 +1756,15 @@ export default function Profile({
 					)}
 				</div>
 
-				{/* Slide-Up macOS Panel for Profile Settings Edit */}
+				{/* Slide-Up macOS Panel for Profile Settings Edit — centered on large screens */}
 				<AnimatePresence>
 					{editOpen && (
-						<div className="fixed inset-0 z-50 flex items-end justify-center bg-black/75 backdrop-blur-sm">
+						<motion.div
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1 }}
+							exit={{ opacity: 0 }}
+							transition={{ duration: 0.15 }}
+							className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/75 backdrop-blur-sm">
 							{/* Click-out backdrop */}
 							<div
 								className="absolute inset-0"
@@ -1714,17 +1772,11 @@ export default function Profile({
 							/>
 
 							<motion.div
-								initial={{ y: "100%" }}
-								animate={{ y: 0 }}
-								exit={{ y: "100%" }}
-								transition={{
-									type: "spring",
-									damping: 28,
-									stiffness: 220,
-								}}
-								className="relative z-10 w-full max-w-xl rounded-4xl border border-white/10 bg-zinc-950/90 backdrop-blur-2xl p-6 shadow-[0_-25px_60px_-15px_rgba(0,0,0,0.9),0_25px_60px_-15px_rgba(0,0,0,0.5)]">
-								{/* Drag handle bar */}
-								<div className="absolute top-3 left-1/2 -translate-x-1/2 h-1 w-10 rounded-full bg-white/20" />
+								initial={drawerInitial}
+								animate={drawerAnimate}
+								exit={drawerExit}
+								transition={drawerTransition}
+								className="relative z-10 w-full max-w-xl rounded-4xl border border-white/10 bg-zinc-950/90 backdrop-blur-2xl p-6 shadow-[0_-25px_60px_-15px_rgba(0,0,0,0.9),0_25px_60px_-15px_rgba(0,0,0,0.5)] md:max-h-[85vh] md:overflow-y-auto">
 								<div className="mb-5 pb-5 flex items-center justify-between">
 									<div>
 										<h3 className="text-xl font-semibold text-white">
@@ -1753,64 +1805,105 @@ export default function Profile({
 									className="space-y-4">
 									<div className="grid grid-cols-2 gap-4">
 										{/* Avatar Upload */}
-										<div className="space-y-1.5">
-											<label className="text-xs font-medium text-zinc-400 pl-3">
-												Avatar
-											</label>
-											<div className="relative flex h-24 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800 transition-colors">
+									<div className="space-y-1.5 text-center">
+										<label className="text-xs font-medium text-zinc-400">
+											Profile Pic
+										</label>											<div className="relative flex h-20 w-20 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
 												<input
 													type="file"
 													accept="image/*"
-													onChange={(e) => {
-														const file =
-															e.target.files?.[0];
-														if (file) {
-															setCropImageSrc(
-																URL.createObjectURL(
-																	file,
-																),
-															);
-															setCropType("profile");
-															setCropModalOpen(true);
-														}
-														e.target.value = "";
-													}}
-													className="absolute inset-0 opacity-0 cursor-pointer animate-none"
-												/>
-												<div className="text-center space-y-1">
-													<Camera className="mx-auto h-5 w-5 text-zinc-500" />
-												</div>
+													onChange={(e) => {													const file =
+														e.target.files?.[0];
+												if (file) {
+													if (file.type === "image/gif") {
+														setProfilePicFile(file);
+														setProfilePicPreview(URL.createObjectURL(file));
+													} else {
+														setCropImageSrc(
+															URL.createObjectURL(
+																file,
+															),
+														);
+														setCropType("profile");
+														setCropModalOpen(true);
+													}
+												}
+												e.target.value = "";
+												}}
+												className="absolute inset-0 opacity-0 cursor-pointer animate-none z-10"
+											/>
+												{profilePicPreview ? (
+													<>
+													<img loading="lazy" src={profilePicPreview} alt="Avatar preview" className="absolute inset-0 h-full w-full rounded-full object-cover pointer-events-none" />
+													<button
+														type="button"
+														onClick={(e) => {
+															e.stopPropagation();
+															setProfilePicFile(null);
+															setProfilePicPreview("");
+														}}className="absolute top-3 right-3 h-4 w-4 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-md cursor-pointer transition-colors z-20"
+															title="Remove avatar"
+														>
+															<X className="h-2.5 w-2.5 text-white" />
+												</button>
+												</>
+												) : (
+													<div className="text-center space-y-1">
+														<Camera className="mx-auto h-5 w-5 text-zinc-500" />
+													</div>
+												)}
 											</div>
 										</div>
 
 										{/* Banner Upload */}
-										<div className="space-y-1.5">
-											<label className="text-xs font-medium text-zinc-400 pl-3">
-												Banner
-											</label>
-											<div className="relative flex h-24 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800 transition-colors">
+									<div className="space-y-1.5 text-center">
+										<label className="text-xs font-medium text-zinc-400">
+											Banner
+										</label>
+											<div className="relative flex h-20 w-full items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
 												<input
 													type="file"
 													accept="image/*"
-													onChange={(e) => {
-														const file =
-															e.target.files?.[0];
-														if (file) {
-															setCropImageSrc(
-																URL.createObjectURL(
-																	file,
-																),
-															);
-															setCropType("banner");
-															setCropModalOpen(true);
-														}
-														e.target.value = "";
+													onChange={(e) => {													const file =
+														e.target.files?.[0];
+												if (file) {
+													if (file.type === "image/gif") {
+														setBannerPicFile(file);
+														setBannerPicPreview(URL.createObjectURL(file));
+													} else {
+														setCropImageSrc(
+															URL.createObjectURL(
+																file,
+															),
+														);
+														setCropType("banner");
+														setCropModalOpen(true);
+													}
+												}
+												e.target.value = "";
 													}}
-													className="absolute inset-0 opacity-0 cursor-pointer animate-none"
+													className="absolute inset-0 opacity-0 cursor-pointer animate-none z-10"
 												/>
-												<div className="text-center space-y-1">
-													<Camera className="mx-auto h-5 w-5 text-zinc-500" />
-												</div>
+												{bannerPicPreview ? (
+													<>
+													<img loading="lazy" src={bannerPicPreview} alt="Banner preview" className="absolute inset-0 h-full w-full object-cover" />
+													<button
+														type="button"
+														onClick={(e) => {
+															e.stopPropagation();
+															setBannerPicFile(null);
+															setBannerPicPreview("");
+														}}className="absolute top-3 right-3 h-4 w-4 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-md cursor-pointer transition-colors z-20"
+															title="Remove banner"
+														>
+															<X className="h-2.5 w-2.5 text-white" />
+													</button>
+												</>
+												) : (
+													<div className="text-center space-y-1">
+														<Camera className="mx-auto h-5 w-5 text-zinc-500" />
+													</div>
+												)}
 											</div>
 										</div>
 									</div>
@@ -1864,9 +1957,130 @@ export default function Profile({
 									</div>
 								</form>
 							</motion.div>
-						</div>
+						</motion.div>
 					)}
 				</AnimatePresence>
+
+				{/* Slide-Up Edit Post Drawer — centered on large screens */}
+				<AnimatePresence>
+					{editPostDrawerOpen && (
+						<motion.div
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1 }}
+							exit={{ opacity: 0 }}
+							transition={{ duration: 0.15 }}
+							className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/75 backdrop-blur-sm">
+							<div className="absolute inset-0" onClick={() => { setEditPostDrawerOpen(false); setEditPostId(null); setEditPostNewPreviews((prev) => { prev.forEach((u) => URL.revokeObjectURL(u)); return []; }); setEditPostNewFiles([]); setEditPostExistingImages([]); }} />
+							<motion.div
+								initial={drawerInitial}
+								animate={drawerAnimate}
+								exit={drawerExit}
+								transition={drawerTransition}
+								className="relative z-10 w-full max-w-xl rounded-4xl border border-white/10 bg-zinc-950/90 backdrop-blur-2xl p-6 shadow-[0_-25px_60px_-15px_rgba(0,0,0,0.9)] md:max-h-[85vh] md:overflow-y-auto">
+								<div className="mb-5 flex items-center justify-between">
+									<div>
+										<h3 className="text-xl font-semibold text-white">Edit Post</h3>
+									</div>
+									<button onClick={() => { setEditPostDrawerOpen(false); setEditPostId(null); setEditPostNewPreviews((prev) => { prev.forEach((u) => URL.revokeObjectURL(u)); return []; }); setEditPostNewFiles([]); setEditPostExistingImages([]); }} className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white transition-colors cursor-pointer">
+										<X className="h-4 w-4" />
+									</button>
+								</div>
+								<div className="space-y-4">
+									<input
+										type="text"
+										value={editPostTitle}
+										onChange={(e) => setEditPostTitle(e.target.value)}
+										placeholder="Post title"
+										className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-sm text-white outline-none focus:border-zinc-600 transition-all"
+									/>
+									<textarea
+										value={editPostContent}
+										onChange={(e) => setEditPostContent(e.target.value)}
+										placeholder="Post content"
+										rows={5}
+										className="w-full rounded-xl border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-sm text-white outline-none focus:border-zinc-600 transition-all resize-none"
+									/>
+
+									{/* Existing images — show with remove button */}
+									{editPostExistingImages.length > 0 && (
+										<div>
+											<label className="text-xs font-medium text-zinc-400 pl-3 mb-2 block">Current Images</label>
+											<div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
+												{editPostExistingImages.map((img) => (
+													<div key={img.public_id} className="relative shrink-0 overflow-hidden rounded-xl border border-zinc-800 w-20 h-20 group">
+														<img loading="lazy" src={img.url} alt="" className="w-full h-full object-cover" />
+														<button
+															type="button"
+															onClick={() => handleEditPostRemoveExistingImage(img.public_id)}
+															className="absolute top-1.5 right-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/70 text-white opacity-0 group-hover:opacity-100 hover:bg-black transition-all z-20"
+														>
+															<X className="h-2.5 w-2.5" />
+														</button>
+													</div>
+												))}
+											</div>
+										</div>
+									)}
+
+									{/* New image previews */}
+									{editPostNewPreviews.length > 0 && (
+										<div>
+											<label className="text-xs font-medium text-zinc-400 pl-3 mb-2 block">New Images</label>
+											<div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
+												{editPostNewPreviews.map((preview, idx) => (
+													<div key={idx} className="relative shrink-0 overflow-hidden rounded-xl border border-zinc-800 w-20 h-20 group">
+														<img loading="lazy" src={preview} alt="" className="w-full h-full object-cover" />
+														<button
+															type="button"
+															onClick={() => handleEditPostRemoveNewImage(idx)}
+															className="absolute top-1.5 right-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/70 text-white opacity-0 group-hover:opacity-100 hover:bg-black transition-all z-20"
+														>
+															<X className="h-2.5 w-2.5" />
+														</button>
+													</div>
+												))}
+											</div>
+										</div>
+									)}
+
+									{/* Add image button */}
+									<div className="relative">
+										<input
+											type="file"
+											accept="image/*"
+											onChange={handleEditPostAddImages}
+											className="absolute inset-0 opacity-0 cursor-pointer"
+										/>
+										<button
+											type="button"
+											className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-700 py-3 text-sm font-medium text-zinc-400 hover:border-zinc-500 hover:text-zinc-300 transition-all pointer-events-none"
+										>
+											<Image className="h-4 w-4" /> Add Image
+										</button>
+									</div>
+								</div>
+								<div className="flex gap-3.5 pt-4">
+									<button onClick={() => { setEditPostDrawerOpen(false); setEditPostId(null); setEditPostNewPreviews((prev) => { prev.forEach((u) => URL.revokeObjectURL(u)); return []; }); setEditPostNewFiles([]); setEditPostExistingImages([]); }} className="flex-1 rounded-full border border-zinc-800 py-3.5 text-sm font-medium text-zinc-400 hover:bg-zinc-800 hover:text-white cursor-pointer">
+										Cancel
+									</button>
+									<button onClick={handleEditPostDrawerSave} className="flex-1 rounded-full bg-white py-3.5 text-sm font-semibold text-black hover:bg-zinc-200 cursor-pointer">
+										Save
+									</button>
+								</div>
+							</motion.div>
+						</motion.div>
+					)}
+				</AnimatePresence>
+
+				{/* Edit post image crop modal */}
+				<ImageCropModal
+					isOpen={editPostCropOpen}
+					onClose={() => { setEditPostCropOpen(false); if (editPostCropSrc) { URL.revokeObjectURL(editPostCropSrc); setEditPostCropSrc(""); } }}
+					imageSrc={editPostCropSrc}
+					aspectRatio={undefined}
+					title="Crop Image"
+					onCropComplete={handleEditPostCropComplete}
+				/>
 
 				<ImageCropModal
 					isOpen={cropModalOpen}
@@ -1942,15 +2156,14 @@ export default function Profile({
 												onClick={() => {
 													setActiveList(null);
 													onPostClick(post.slug);
-												}}>
-												<img loading="lazy" 
-													src={
-														post.author?.profilePic
-															?.url ||
-														"https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"
-													}
-													className="w-10 h-10 rounded-full object-cover shrink-0"
-												/>
+												}}><UserAvatar
+														src={
+															post.author?.profilePic
+																?.url
+														}
+														alt=""
+														className="w-10 h-10 rounded-full object-cover shrink-0"
+													/>
 												<div>
 													<div className="font-bold text-sm text-white">
 														{post.author?.fullName}
@@ -1972,14 +2185,13 @@ export default function Profile({
 												onClick={() => {
 													setActiveList(null);
 													onUserClick(u.username);
-												}}>
-												<img loading="lazy" 
-													src={
-														u.profilePic?.url ||
-														"https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=100"
-													}
-													className="w-10 h-10 rounded-full object-cover shrink-0"
-												/>
+												}}><UserAvatar
+														src={
+															u.profilePic?.url
+														}
+														alt=""
+														className="w-10 h-10 rounded-full object-cover shrink-0"
+													/>
 												<div className="flex flex-col text-left flex-1">
 													<span className="font-bold text-sm text-white">
 														{u.fullName}
