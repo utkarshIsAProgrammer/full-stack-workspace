@@ -1,0 +1,430 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+	--font-sans:
+		"Space Grotesk", ui-sans-serif, system-ui, -apple-system,
+		BlinkMacSystemFont, sans-serif;
+	--font-logo: "Space Grotesk", ui-sans-serif, sans-serif;
+	--font-ui:
+		"Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+		sans-serif;
+	--font-button: "Manrope", ui-sans-serif, sans-serif;
+	--font-display: "Space Grotesk", ui-sans-serif, sans-serif;
+}
+
+/* Apply button font to all buttons */
+button {
+	font-family: "Manrope", ui-sans-serif, sans-serif;
+}
+
+@layer utilities {
+
+	/* Disable selections in buttons or icons */
+	.select-none {
+		user-select: none;
+	}
+}
+
+/* ─── Cross-browser backdrop-filter support (Tailwind v4 doesn't auto-prefix) ─── */
+[class*="backdrop-blur"] {
+	-webkit-backdrop-filter: var(--tw-backdrop-blur);
+}
+
+/* Fallback for browsers that don't support backdrop-filter at all */
+@supports not (backdrop-filter: blur(1px)) {
+	[class*="backdrop-blur"] {
+		background-color: rgba(9, 9, 11, 0.97) !important;
+	}
+}
+
+/* Custom globally applied styles on HTML root - completely hide any scrollbars */
+*::-webkit-scrollbar {
+	display: none !important;
+}
+
+* {
+	-ms-overflow-style: none !important;
+	/* IE and Edge */
+	scrollbar-width: none !important;
+	/* Firefox */
+}
+
+:root {
+	--app-height: 100dvh;
+	--safe-area-bottom: env(safe-area-inset-bottom, 0px);
+	--dock-offset: 6.25rem;
+	--z-base: 0;
+	--z-content: 10;
+	--z-dock: 120;
+	--z-alert: 140;
+	--z-toast: 160;
+	--z-modal: 300;
+}
+
+html {
+	background-color: #09090b;
+	color: #000000;
+	overflow-x: clip;
+	min-height: 100%;
+	transition: color 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (max-width: 1023px) {
+	html {
+		font-size: 13.5px;
+	}
+}
+
+html.dark {
+	background-color: #09090b;
+	color: #ffffff;
+	scrollbar-color: rgba(255, 255, 255, 0.15) rgba(0, 0, 0, 0.3);
+}
+
+body {
+	text-rendering: optimizeLegibility;
+	-webkit-font-smoothing: antialiased;
+	background-color: #09090b;
+	min-height: var(--app-height);
+	overflow-x: hidden;
+	overscroll-behavior: none;
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+	border-radius: 9999px;
+}
+
+/* Custom autofill styles to prevent browser ugly backgrounds and text colors */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus {
+	-webkit-text-fill-color: #f4f4f5 !important;
+	-webkit-box-shadow: 0 0 0px 1000px #09090b inset !important;
+	transition: background-color 5000s ease-in-out 0s;
+}
+
+
+
+.mobile-shell {
+	position: relative;
+	isolation: isolate;
+	z-index: var(--z-base);
+}
+
+.app-content-layer {
+	position: relative;
+	z-index: var(--z-content);
+}
+
+.app-dock-layer {
+	z-index: var(--z-dock);
+}
+
+.app-alert-layer {
+	z-index: var(--z-alert);
+}
+
+.app-toast-layer {
+	z-index: var(--z-toast);
+}
+
+.app-modal-layer {
+	z-index: var(--z-modal);
+}
+
+html.dark body {
+	background-color: #09090b;
+}
+
+#root {
+	min-height: var(--app-height);
+	width: 100%;
+	position: relative;
+	isolation: isolate;
+}
+
+/* Ensure legacy and newer overlay layers render above the dock and content */
+.z-50,
+.z-\[100\],
+.z-\[200\],
+.z-\[300\],
+.z-\[310\],
+.z-\[320\],
+.z-\[340\] {
+	z-index: var(--z-modal) !important;
+}
+
+.z-40 {
+	z-index: var(--z-dock) !important;
+}
+
+img,
+video {
+	max-width: 100%;
+	height: auto;
+	display: block;
+}
+
+@media (max-width: 768px) {
+	body {
+		padding-bottom: env(safe-area-inset-bottom);
+	}
+
+	.mobile-shell,
+	.mobile-full-height {
+		min-height: var(--app-height);
+		height: var(--app-height);
+	}
+
+	.mobile-safe-bottom {
+		padding-bottom: calc(var(--dock-offset) + var(--safe-area-bottom));
+	}
+
+	.mobile-safe-bottom-compact {
+		padding-bottom: calc(5.75rem + var(--safe-area-bottom));
+	}
+}
+
+/* Ensure intuitive interactive pointer cursor feedback on all clickable entities across the application */
+button,
+[role="button"],
+a,
+select,
+input[type="submit"],
+input[type="button"],
+input[type="checkbox"],
+input[type="radio"],
+input[type="file"],
+[onClick],
+.cursor-pointer,
+nav div,
+.clickable-item {
+	cursor: pointer !important;
+}
+
+/* Improve typography and spacing for better readability */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+	letter-spacing: -0.02em;
+	line-height: 1.2;
+}
+
+p,
+span,
+div {
+	letter-spacing: -0.01em;
+}
+
+/* Improve button hover states and transitions */
+button {
+	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Improve focus states for accessibility — neutral focus ring */
+*:focus-visible {
+	outline: 2px solid rgba(113, 113, 122, 0.4);
+	outline-offset: 2px;
+}
+
+/* Smooth scrolling for better UX */
+html {
+	scroll-behavior: smooth;
+}
+
+/* Improve glass morphism effects */
+.glass-effect {
+	backdrop-filter: blur(20px);
+	-webkit-backdrop-filter: blur(20px);
+}
+
+/* GPU acceleration for smooth animations */
+.gpu-accelerated {
+	transform: translateZ(0);
+	will-change: transform;
+	backface-visibility: hidden;
+}
+
+/* Content visibility for large scrollable areas to reduce paint cost */
+.content-visibility-auto {
+	content-visibility: auto;
+	contain-intrinsic-size: 500px;
+}
+
+/* Hide native browser validation tooltips — we use custom validation */
+input:invalid,
+textarea:invalid,
+select:invalid {
+	box-shadow: none;
+}
+
+/* Remove browser default red glow on invalid inputs */
+input:focus:invalid,
+textarea:focus:invalid {
+	box-shadow: none;
+}
+
+/* Remove outline from all input fields */
+input,
+textarea,
+select {
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+/* ─── Waveform animation for voice note recording indicator ─────────── */
+@keyframes waveform {
+	0% {
+		transform: scaleY(0.3);
+	}
+
+	100% {
+		transform: scaleY(1);
+	}
+}
+
+.waveform-bar {
+	transform-origin: bottom;
+	animation: waveform 0.5s ease-in-out infinite alternate;
+}
+
+/* Respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}
+
+/* Reusable surface border for consistent dark theme — use Tailwind's border-zinc-800/opacity instead */
+
+/* ─── Mobile Performance: Reduce animations and effects on small screens ─── */
+@media (max-width: 768px) {
+
+	/* Disable all non-essential heavy motion animations on mobile */
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.1s !important;
+	}
+
+	/* Re-enable essential micro-animations (spinner, pulse loaders, waveform) */
+	.animate-spin,
+	.animate-pulse,
+	.waveform-bar {
+		animation-duration: 1.5s !important;
+		animation-iteration-count: infinite !important;
+	}
+
+	/* Prevent costly backdrop-blur on mobile */
+	.backdrop-blur-xl,
+	.backdrop-blur-2xl,
+	.backdrop-blur-md,
+	.backdrop-blur-sm,
+	.glass-effect {
+		backdrop-filter: none !important;
+		-webkit-backdrop-filter: none !important;
+	}
+
+	/* Simplify shadows on mobile */
+	.shadow-2xl,
+	.shadow-xl,
+	.shadow-lg,
+	.shadow-md {
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12) !important;
+	}
+
+	/* Disable hover scale transforms on touch devices */
+	.group:hover .group-hover\:scale-105,
+	.group:hover .group-hover\:scale-110,
+	.group\/image:hover .group-hover\/image\:scale-\[1\.02\],
+	.group\/item:hover .group-hover\/item\:scale-105,
+	.hover\:scale-105:hover,
+	.hover\:scale-110:hover,
+	.hover\:scale-\[1\.02\]:hover {
+		transform: none !important;
+	}
+
+	/* Remove opacity hover effects on mobile */
+	.hover\:opacity-85:hover,
+	.hover\:opacity-90:hover,
+	.hover\:opacity-80:hover {
+		opacity: 1 !important;
+	}
+
+	/* Reduce paint cost — disable GPU layer promotions */
+	.gpu-accelerated {
+		transform: none !important;
+		will-change: auto !important;
+	}
+
+	/* Mobile chat: prevent zoom on input focus, prevent overscroll */
+	input,
+	textarea,
+	select {
+		font-size: 16px !important;
+		/* prevents iOS auto-zoom on focus */
+	}
+
+	/* Chat specific mobile fixes */
+	.chat-container {
+		touch-action: pan-y pinch-zoom !important;
+		overscroll-behavior: contain !important;
+		-webkit-overflow-scrolling: touch !important;
+	}
+
+	/* Prevent layout shift when keyboard opens */
+	.chat-input-area {
+		position: sticky !important;
+		bottom: 0 !important;
+		z-index: 10 !important;
+		padding-bottom: env(safe-area-inset-bottom, 8px) !important;
+	}
+}
+
+/* Mobile: dynamic viewport height for all browsers that support dvh */
+/* 100dvh excludes browser chrome (address bar, etc.) on mobile - prevents 'top part missing' issue */
+@supports (height: 100dvh) {
+	.h-screen-force {
+		height: 100dvh !important;
+	}
+}
+
+/* Fallback for browsers that don't support dvh units */
+@supports not (height: 100dvh) {
+	.h-screen-force {
+		height: 100vh !important;
+	}
+}
+
+/* iOS Safari must come LAST — overrides both 100dvh and 100vh above */
+@supports (-webkit-touch-callout: none) {
+	.h-screen-force {
+		height: -webkit-fill-available !important;
+	}
+
+	input,
+	textarea {
+		-webkit-user-select: text !important;
+		user-select: text !important;
+	}
+}

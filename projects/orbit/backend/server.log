@@ -1,7 +1,0 @@
-
-> backend@1.0.0 dev
-> tsx --watch src/server.ts
-
-Invalid or missing environment variables:
-  CLIENT_URL: CLIENT_URL must be a valid URL
-Failed running 'src/server.ts'. Waiting for file changes before restarting...
