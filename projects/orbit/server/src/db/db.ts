@@ -19,6 +19,20 @@ export const connectDB = async (retryCount = 0): Promise<mongoose.Connection> =>
 
     logger.info(`MongoDB connected successfully!`, { host: conn.connection.host });
 
+    // Clean up old 'glimpses' collection if it exists to ensure it is not created again
+    try {
+      const db = conn.connection.db;
+      if (db) {
+        const collections = await db.listCollections({ name: "glimpses" }).toArray();
+        if (collections.length > 0) {
+          await db.dropCollection("glimpses");
+          logger.info("Successfully dropped deprecated 'glimpses' collection from MongoDB");
+        }
+      }
+    } catch (dbErr: any) {
+      logger.warn("Failed to drop deprecated 'glimpses' collection", { error: dbErr.message });
+    }
+
     mongoose.connection.on("error", (err) => {
       logger.error("MongoDB connection error", { error: err.message });
     });

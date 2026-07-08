@@ -18,6 +18,39 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
   const [isCreating, setIsCreating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const expiredGlanceIdsRef = useRef<Set<string>>(new Set());
+  const [disintegratingAuthors, setDisintegratingAuthors] = useState<Record<string, boolean>>({});
+
+  // Dynamic particle explode and hot-glow style tag
+  useEffect(() => {
+    const styleEl = document.createElement("style");
+    styleEl.innerHTML = `
+      @keyframes particle-explode {
+        0% {
+          transform: translate(-50%, -50%) translate(0, 0) scale(1);
+          opacity: 1;
+        }
+        100% {
+          transform: translate(-50%, -50%) translate(var(--tx), var(--ty)) scale(0);
+          opacity: 0;
+        }
+      }
+      @keyframes hot-glow {
+        0%, 100% {
+          box-shadow: 0 0 5px rgba(239, 68, 68, 0.6), 0 0 10px rgba(239, 68, 68, 0.4);
+          transform: scale(1);
+        }
+        50% {
+          box-shadow: 0 0 15px rgba(239, 68, 68, 0.9), 0 0 25px rgba(239, 68, 68, 0.6);
+          transform: scale(1.025);
+        }
+      }
+    `;
+    document.head.appendChild(styleEl);
+    return () => {
+      document.head.removeChild(styleEl);
+    };
+  }, []);
 
   // Fetch glances feed
   const fetchGlances = async () => {
@@ -75,12 +108,47 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
 
     const handleGlanceExpired = (e: Event) => {
       const detail = (e as CustomEvent).detail;
+      const expiredGlimpseId = detail.glimpseId;
+
       setGlances((prev) => {
         // Do not remove if the user is currently viewing this glance
-        if (viewerOpenRef.current && prev[viewerIndexRef.current]?._id === detail.glimpseId) {
+        if (viewerOpenRef.current && prev[viewerIndexRef.current]?._id === expiredGlimpseId) {
+          expiredGlanceIdsRef.current.add(expiredGlimpseId);
           return prev;
         }
-        return prev.filter((g) => g._id !== detail.glimpseId);
+
+        const targetGlance = prev.find((g) => g._id === expiredGlimpseId);
+        if (targetGlance) {
+          const authorId = typeof targetGlance.author === "object" && targetGlance.author
+            ? (targetGlance.author._id || (targetGlance.author as any).id)
+            : targetGlance.author;
+          
+          if (authorId) {
+            const authorStr = authorId.toString();
+            
+            // Only trigger disintegration if this is the last glance of this author in the state
+            const authorGlancesCount = prev.filter((g) => {
+              const gAuthorId = typeof g.author === "object" && g.author
+                ? (g.author._id || (g.author as any).id)
+                : g.author;
+              return gAuthorId && gAuthorId.toString() === authorStr;
+            }).length;
+
+            if (authorGlancesCount <= 1) {
+              setDisintegratingAuthors((d) => ({ ...d, [authorStr]: true }));
+              setTimeout(() => {
+                setGlances((current) => current.filter((g) => g._id !== expiredGlimpseId));
+                setDisintegratingAuthors((d) => {
+                  const copy = { ...d };
+                  delete copy[authorStr];
+                  return copy;
+                });
+              }, 800);
+              return prev;
+            }
+          }
+        }
+        return prev.filter((g) => g._id !== expiredGlimpseId);
       });
     };
 
@@ -160,7 +228,11 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
     setGlances((prev) =>
       prev.map((g) => {
         if (g._id !== glanceId) return g;
-        return { ...g, viewedByMe: true };
+        return {
+          ...g,
+          viewedByMe: true,
+          viewsRemaining: Math.max(0, g.viewsRemaining - 1),
+        };
       })
     );
   };
@@ -168,10 +240,15 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
   // Group glances by author
   const authorsMap = new Map<string, { user: typeof glances[0]["author"]; glimpses: Glance[] }>();
   glances.forEach((g) => {
-    if (!authorsMap.has(g.author._id)) {
-      authorsMap.set(g.author._id, { user: g.author, glimpses: [] });
+    const authorId = typeof g.author === "object" && g.author
+      ? (g.author._id || (g.author as any).id)
+      : g.author;
+    if (!authorId) return;
+    const authorStr = authorId.toString();
+    if (!authorsMap.has(authorStr)) {
+      authorsMap.set(authorStr, { user: g.author, glimpses: [] });
     }
-    authorsMap.get(g.author._id)!.glimpses.push(g);
+    authorsMap.get(authorStr)!.glimpses.push(g);
   });
   const authorGlances = Array.from(authorsMap.values());
 
@@ -237,21 +314,27 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
               {/* Author rings */}
               <AnimatePresence mode="popLayout">
                 {authorGlances.map(({ user: author, glimpses: authorG }) => {
-                  const allViewed = authorG.every((g) => g.viewedByMe);
-                  const anyOneViewLeft = authorG.some(
-                    (g) => g.viewsRemaining === 1
-                  );
-                  const unviewedCount = authorG.filter((g) => !g.viewedByMe).length;
+                  const isOwnRing = author._id === user?._id;
+                  const allViewed = isOwnRing ? true : authorG.every((g) => g.viewedByMe);
+                  const activeGlance = authorG.find((g) => !g.viewedByMe) || authorG[0];
+                  const viewsLeft = activeGlance?.viewsRemaining ?? 0;
+                  const isDisintegrating = !!disintegratingAuthors[author._id];
+                  const isHot = viewsLeft <= 25 && viewsLeft > 0;
+                  const anyOneViewLeft = isOwnRing ? false : viewsLeft === 1;
 
                   return (
                     <motion.button
                       key={author._id}
                       layout
                       initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
+                      animate={{
+                        opacity: isDisintegrating ? 0 : 1,
+                        scale: isDisintegrating ? 0 : 1,
+                      }}
                       exit={{ opacity: 0, scale: 0.8 }}
-                      transition={{ duration: 0.2 }}
+                      transition={{ duration: isDisintegrating ? 0.6 : 0.2, ease: "easeOut" }}
                       onClick={() => {
+                        if (isDisintegrating) return;
                         // Open the first unviewed glance, or the first one
                         const firstUnviewed = authorG.find((g) => !g.viewedByMe);
                         const targetG = firstUnviewed || authorG[0];
@@ -261,6 +344,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
                         if (idx >= 0) handleOpenViewer(idx);
                       }}
                       className="flex flex-col items-center gap-1 shrink-0 group cursor-pointer"
+                      style={isDisintegrating ? { pointerEvents: "none" } : undefined}
                     >
                       <div
                         className={`relative h-16 w-16 rounded-full p-[2.5px] transition-all ${
@@ -270,7 +354,53 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
                             ? "bg-zinc-700"
                             : "bg-gradient-to-br from-violet-400 via-fuchsia-300 to-sky-400"
                         }`}
+                        style={
+                          isHot && !allViewed
+                            ? { animation: "hot-glow 1.5s infinite ease-in-out" }
+                            : undefined
+                        }
                       >
+                        {/* Particle Explosion */}
+                        {isDisintegrating && (
+                          <div className="absolute inset-0 pointer-events-none z-20">
+                            {Array.from({ length: 24 }).map((_, i) => {
+                              const angle = (i * 360) / 24 + Math.random() * 15;
+                              const rad = (angle * Math.PI) / 180;
+                              const distance = 30 + Math.random() * 50; // pixels outwards
+                              const tx = `${Math.cos(rad) * distance}px`;
+                              const ty = `${Math.sin(rad) * distance}px`;
+                              
+                              // Select gradient-matched colors
+                              const colors = [
+                                "#a78bfa", // violet-400
+                                "#f472b6", // fuchsia-400
+                                "#38bdf8", // sky-400
+                                "#fbbf24", // amber-400
+                                "#fef08a", // yellow-200
+                              ];
+                              const color = colors[Math.floor(Math.random() * colors.length)];
+                              const size = 3 + Math.random() * 5; // 3px to 8px
+                              const duration = 400 + Math.random() * 400; // 400ms to 800ms
+                              const delay = Math.random() * 100; // 0 to 100ms
+
+                              return (
+                                <div
+                                  key={i}
+                                  style={{
+                                    "--tx": tx,
+                                    "--ty": ty,
+                                    animation: `particle-explode ${duration}ms cubic-bezier(0.1, 0.8, 0.3, 1) ${delay}ms forwards`,
+                                    backgroundColor: color,
+                                    width: `${size}px`,
+                                    height: `${size}px`,
+                                  } as React.CSSProperties}
+                                  className="absolute left-1/2 top-1/2 rounded-full shadow-lg shadow-black/20"
+                                />
+                              );
+                            })}
+                          </div>
+                        )}
+
                         {/* Blink animation when 1 view left */}
                         {anyOneViewLeft && !allViewed && (
                           <motion.div
@@ -290,10 +420,10 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
                           className="relative h-full w-full rounded-full object-cover border-2 border-zinc-950 aspect-square"
                         />
 
-                        {/* Unviewed count badge */}
-                        {unviewedCount > 0 && (
-                          <div className="absolute -top-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-violet-500 text-[8px] font-bold text-white border-2 border-zinc-950">
-                            {unviewedCount}
+                        {/* Views remaining red dot badge (only show when <= 25 left) */}
+                        {viewsLeft > 0 && viewsLeft <= 25 && (
+                          <div className="absolute -top-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[8px] font-bold text-white border-2 border-zinc-950">
+                            {viewsLeft}
                           </div>
                         )}
 
@@ -336,14 +466,66 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
         <GlanceViewer
           glimpses={glances}
           initialIndex={viewerIndex}
+          onIndexChange={(idx) => setViewerIndex(idx)}
           onClose={() => {
             setViewerOpen(false);
-            // Clean up consumed glances from feed — but always keep your own glances (for stats)
-            setGlances((prev) => prev.filter((g) => {
-              const isMyGlance = typeof g.author === "object" && g.author?._id === user?._id;
-              if (isMyGlance) return true; // Always keep your own glances
-              return g.viewsRemaining > 0 || g.viewedByMe;
-            }));
+            
+            // Clean up consumed glances from feed for all users
+            setGlances((prev) => {
+              const nextGlances = prev.filter(
+                (g) => g.viewsRemaining > 0 && !expiredGlanceIdsRef.current.has(g._id)
+              );
+
+              // Trigger disintegration animation for any rings being filtered out
+              const removedGlances = prev.filter((g) => !nextGlances.some((ng) => ng._id === g._id));
+              const disintegratingAuthorIds = new Set<string>();
+
+              removedGlances.forEach((rg) => {
+                const authorId = typeof rg.author === "object" && rg.author
+                  ? (rg.author._id || (rg.author as any).id)
+                  : rg.author;
+                if (authorId) {
+                  const authorStr = authorId.toString();
+                  // Check if this author has any remaining active glances in nextGlances
+                  const hasRemainingActive = nextGlances.some((g) => {
+                    const gAuthorId = typeof g.author === "object" && g.author
+                      ? (g.author._id || (g.author as any).id)
+                      : g.author;
+                    return gAuthorId && gAuthorId.toString() === authorStr;
+                  });
+
+                  if (!hasRemainingActive) {
+                    disintegratingAuthorIds.add(authorStr);
+                    setDisintegratingAuthors((d) => ({ ...d, [authorStr]: true }));
+                    setTimeout(() => {
+                      setGlances((current) => current.filter((g) => g._id !== rg._id));
+                      setDisintegratingAuthors((d) => {
+                        const copy = { ...d };
+                        delete copy[authorStr];
+                        return copy;
+                      });
+                    }, 800);
+                  }
+                }
+              });
+
+              // Clear the ref for the ones we processed
+              removedGlances.forEach((rg) => {
+                expiredGlanceIdsRef.current.delete(rg._id);
+              });
+
+              // Keep glances in the state if they belong to a disintegrating author
+              return prev.filter((g) => {
+                const isRemaining = nextGlances.some((ng) => ng._id === g._id);
+                if (isRemaining) return true;
+
+                const authorId = typeof g.author === "object" && g.author
+                  ? (g.author._id || (g.author as any).id)
+                  : g.author;
+                const authorStr = authorId?.toString();
+                return authorStr && disintegratingAuthorIds.has(authorStr);
+              });
+            });
           }}
           onView={handleLocalView}
           currentUser={user}

@@ -51,7 +51,7 @@ const glimpseSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true, collection: "glances" }
 );
 
 // Virtual: how many views are remaining

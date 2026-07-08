@@ -163,11 +163,8 @@ const glimpseMediaStorage = new CloudinaryStorage({
   params: async (req, file) => {
     const isVideo = file.mimetype.startsWith("video/");
     return {
-      folder: "orbit/glimpses",
+      folder: "orbit/glances",
       resource_type: "auto",
-      allowed_formats: isVideo
-        ? ["mp4", "mov", "webm", "avi", "mkv", "3gp"]
-        : ["jpg", "jpeg", "png", "webp", "gif"],
       public_id: `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, "")}`,
       transformation: isVideo ? [{ width: 1080, crop: "limit", quality: "auto" }] : [
         { width: 1080, height: 1920, crop: "limit", quality: "auto", fetch_format: "auto" },
@@ -177,12 +174,11 @@ const glimpseMediaStorage = new CloudinaryStorage({
 });
 
 const glimpseMediaFilter = (req: any, file: any, cb: any) => {
-  const allowedImages = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"];
-  const allowedVideos = ["video/mp4", "video/quicktime", "video/webm", "video/x-msvideo", "video/x-matroska", "video/3gpp"];
-  const allAllowed = [...allowedImages, ...allowedVideos];
+  const isImage = file.mimetype.startsWith("image/");
+  const isVideo = file.mimetype.startsWith("video/");
 
-  if (!allAllowed.includes(file.mimetype)) {
-    return cb(new Error("Only image and video files allowed for glimpses!"), false);
+  if (!isImage && !isVideo) {
+    return cb(new Error("Only image and video files allowed for glances!"), false);
   }
 
   cb(null, true);

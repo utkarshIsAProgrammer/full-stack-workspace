@@ -499,12 +499,12 @@ export default function App() {
 		socketUserIdRef.current = userId;
 
 		// In production, connect directly to the backend server
-		// In dev, connect to empty string (which Vite proxies)
+		// In dev, connect to current host origin (which Vite dev server proxies for websocket)
 		const socketUrl = import.meta.env.PROD
 			? import.meta.env.VITE_SOCKET_URL ||
 			import.meta.env.VITE_API_URL ||
 			""
-			: "";
+			: window.location.origin;
 
 		// Skip socket connection if no socket URL configured (e.g. frontend-only Vercel deploy)
 		if (!socketUrl) {

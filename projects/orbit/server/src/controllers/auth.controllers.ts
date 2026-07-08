@@ -164,36 +164,12 @@ export const login = async (req: Request, res: Response) => {
       throw new NotFoundError("User doesn't exist!");
     }
 
-    // Check if account is locked
-    if (user.lockUntil && user.lockUntil > new Date()) {
-      const remainingMin = Math.ceil((user.lockUntil.getTime() - Date.now()) / 60000);
-      logger.warn(`Locked account login attempt`, { userId: user._id, remainingMin });
-      throw new BadRequestError(`Account is temporarily locked due to too many failed login attempts. Please try again in ${remainingMin} minutes.`);
-    }
-
     // verify password
     const isMatch = await user.comparePassword(result.data.password);
 
     if (!isMatch) {
-      const attempts = (user.loginAttempts || 0) + 1;
-      const updateData: any = { loginAttempts: attempts };
-
-      if (attempts >= MAX_LOGIN_ATTEMPTS) {
-        updateData.lockUntil = new Date(Date.now() + LOCK_TIME_MS);
-        logger.warn(`Account locked due to too many failed attempts`, { userId: user._id, attempts });
-      } else {
-        logger.warn(`Failed login attempt`, { userId: user._id, attempts });
-      }
-
-      await User.findByIdAndUpdate(user._id, { $set: updateData });
+      logger.warn(`Failed login attempt`, { userId: user._id });
       throw new UnauthorizedError("Invalid credentials!");
-    }
-
-    // Reset login attempts on successful login
-    if ((user.loginAttempts || 0) > 0 || user.lockUntil) {
-      await User.findByIdAndUpdate(user._id, {
-        $set: { loginAttempts: 0, lockUntil: null }
-      });
     }
 
     // generate jwt

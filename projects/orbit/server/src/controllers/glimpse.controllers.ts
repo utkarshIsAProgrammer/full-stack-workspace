@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import type { Request, Response } from "express";
 import Glimpse from "../models/glimpse.model";
 import cloudinary from "../configs/cloudinary";
-import { AppError, BadRequestError, NotFoundError, UnauthorizedError } from "../utilities/errors";
+import { AppError, BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from "../utilities/errors";
 import { logger } from "../utilities/logger";
 import { getIO } from "../configs/socket";
 
@@ -87,7 +87,7 @@ export const createGlimpse = async (req: Request, res: Response) => {
     const enrichedGlimpse = {
       ...populated,
       viewedByMe: false,
-      viewsRemaining: 2,
+      viewsRemaining: populated?.maxViews ?? 1,
     };
 
     // Broadcast via socket
@@ -217,7 +217,9 @@ export const viewGlimpse = async (req: Request, res: Response) => {
       const io = getIO();
 
       if (remainingViews === 0) {
-        // Fully viewed — do not delete instantly so the active viewer is not kicked out.
+        // Fully viewed — delete it from the database and broadcast expiration
+        await deleteGlimpseAndCleanup(updatedGlimpse);
+        io.emit("glimpse:expired", { glimpseId });
       } else if (remainingViews === 1) {
         io.emit("glimpse:one-view-left", {
           glimpseId,
@@ -288,6 +290,53 @@ export const getGlimpse = async (req: Request, res: Response) => {
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
     logger.error("Error in getGlimpse controller!", { error: err.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+// Delete a glimpse (either by author, or because it has been fully viewed and closed)
+export const deleteGlimpse = async (req: Request, res: Response) => {
+  const glimpseId = req.params.glimpseId as string;
+  const currentUserId = String(req.user?._id || "");
+
+  try {
+    if (!currentUserId) {
+      throw new UnauthorizedError("Unauthorized!");
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(glimpseId)) {
+      throw new BadRequestError("Invalid glimpse ID!");
+    }
+
+    const glimpse = await Glimpse.findById(glimpseId);
+    if (!glimpse) {
+      throw new NotFoundError("Glimpse not found!");
+    }
+
+    const isAuthor = glimpse.author.toString() === currentUserId;
+    const isFullyViewed = glimpse.viewers.length >= glimpse.maxViews;
+
+    // Only allow deletion if the requester is the author OR if the glimpse has been fully viewed
+    if (!isAuthor && !isFullyViewed) {
+      throw new ForbiddenError("You are not authorized to delete this glance!");
+    }
+
+    await deleteGlimpseAndCleanup(glimpse);
+
+    // Broadcast socket event to all clients so they can animate deletion in real-time
+    try {
+      getIO().emit("glimpse:expired", { glimpseId });
+    } catch (socketErr: any) {
+      logger.warn("Failed to emit glimpse:expired socket event", { error: socketErr.message });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Glimpse deleted successfully!",
+    });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error("Error in deleteGlimpse controller!", { error: err.message });
     throw new AppError("Internal server error!");
   }
 };

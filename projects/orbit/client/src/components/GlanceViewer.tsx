@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { X, Eye, Users } from "lucide-react";
+import { X, Eye } from "lucide-react";
 import type { Glance, User } from "../types";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
@@ -10,6 +10,7 @@ interface GlanceViewerProps {
 	initialIndex: number;
 	onClose: () => void;
 	onView: (glanceId: string) => void;
+	onIndexChange?: (index: number) => void;
 	currentUser?: User | null;
 }
 
@@ -18,14 +19,22 @@ export default function GlanceViewer({
 	initialIndex,
 	onClose,
 	onView,
+	onIndexChange,
 	currentUser,
 }: GlanceViewerProps) {
 	const [currentIndex, setCurrentIndex] = useState(initialIndex);
 	const [progress, setProgress] = useState(0);
 	const [showViewersList, setShowViewersList] = useState(false);
-	const [viewedIds, setViewedIds] = useState<Set<string>>(new Set());
+	const viewedIdsRef = useRef<Set<string>>(new Set());
 	const [isPaused, setIsPaused] = useState(false);
 	const progressRef = useRef(0);
+
+	// Sync current index back to parent feed component
+	useEffect(() => {
+		if (onIndexChange) {
+			onIndexChange(currentIndex);
+		}
+	}, [currentIndex, onIndexChange]);
 	const timerRef = useRef<NodeJS.Timeout | null>(null);
 	const currentGlance = glimpses[currentIndex];
 
@@ -54,8 +63,8 @@ export default function GlanceViewer({
 	// Mark glance as viewed on the server
 	const markViewed = useCallback(
 		async (glanceId: string) => {
-			if (viewedIds.has(glanceId)) return;
-			setViewedIds((prev) => new Set(prev).add(glanceId));
+			if (viewedIdsRef.current.has(glanceId)) return;
+			viewedIdsRef.current.add(glanceId);
 			onView(glanceId);
 
 			try {
@@ -66,15 +75,20 @@ export default function GlanceViewer({
 				logger.error("Failed to mark glance as viewed", err);
 			}
 		},
-		[viewedIds, onView],
+		[onView],
 	);
+
+	// Handle close
+	const handleClose = useCallback(() => {
+		onClose();
+	}, [onClose]);
 
 	// Mark as viewed immediately when shown to a non-author
 	useEffect(() => {
-		if (currentGlance && !isAuthor) {
+		if (currentGlance && !isAuthor && !currentGlance.viewedByMe) {
 			markViewed(currentGlance._id);
 		}
-	}, [currentGlance?._id, isAuthor, markViewed]);
+	}, [currentGlance?._id, currentGlance?.viewedByMe, isAuthor, markViewed]);
 
 	// Auto-advance progress
 	useEffect(() => {
@@ -96,7 +110,7 @@ export default function GlanceViewer({
 				if (currentIndex < glimpses.length - 1) {
 					setCurrentIndex((prev) => prev + 1);
 				} else {
-					onClose();
+					handleClose();
 				}
 			}
 		}, interval);
@@ -110,7 +124,7 @@ export default function GlanceViewer({
 		isPaused,
 		DURATION,
 		glimpses.length,
-		onClose,
+		handleClose,
 		isAuthor,
 		showViewersList,
 	]);
@@ -129,7 +143,7 @@ export default function GlanceViewer({
 			if (currentIndex < glimpses.length - 1) {
 				setCurrentIndex((prev) => prev + 1);
 			} else {
-				onClose();
+				handleClose();
 			}
 		} else {
 			setIsPaused((prev) => !prev);
@@ -139,12 +153,12 @@ export default function GlanceViewer({
 	// Keyboard support
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") onClose();
+			if (e.key === "Escape") handleClose();
 
 			if (e.key === "ArrowRight") {
 				if (currentIndex < glimpses.length - 1)
 					setCurrentIndex((prev) => prev + 1);
-				else onClose();
+				else handleClose();
 			}
 			if (e.key === "ArrowLeft") {
 				if (currentIndex > 0) setCurrentIndex((prev) => prev - 1);
@@ -156,7 +170,7 @@ export default function GlanceViewer({
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [currentIndex, glimpses.length, onClose, isAuthor]);
+	}, [currentIndex, glimpses.length, handleClose, isAuthor]);
 
 	const filteredViewers = (currentGlance?.viewers || []).filter((v) => {
 		const viewerId = typeof v.user === "object" && v.user ? v.user._id : v.user;
@@ -178,7 +192,7 @@ export default function GlanceViewer({
 			<button
 				onClick={(e) => {
 					e.stopPropagation();
-					onClose();
+					handleClose();
 				}}
 				className="absolute top-6 right-6 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/40 hover:bg-black/60 text-white transition-all cursor-pointer">
 				<X className="h-5 w-5" />

@@ -97,16 +97,6 @@ describe("GlanceViewer", () => {
     expect(video).toHaveAttribute("src", "/video.mp4");
   });
 
-  it("shows urgency badge when viewsRemaining is 1 and author views it", () => {
-    render(<GlanceViewer {...defaultProps} initialIndex={1} />);
-    expect(screen.getByText("Only 1 view left!")).toBeInTheDocument();
-  });
-
-  it("renders views remaining badge with correct count when author views it", () => {
-    render(<GlanceViewer {...defaultProps} />);
-    expect(screen.getByText("2/2")).toBeInTheDocument();
-  });
-
   it("renders glance content normally for non-author viewers", () => {
     const nonAuthorProps = {
       ...defaultProps,
@@ -132,9 +122,6 @@ describe("GlanceViewer", () => {
     // Author info should be visible
     expect(screen.getByText("Alice")).toBeInTheDocument();
     expect(screen.getByText("@alice", { exact: false })).toBeInTheDocument();
-
-    // Views remaining badge should be visible
-    expect(screen.getByText(/2\/2/)).toBeInTheDocument();
   });
 
   it("renders without crashing when given an empty array", () => {
