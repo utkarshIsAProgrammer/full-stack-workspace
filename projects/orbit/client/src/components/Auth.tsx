@@ -160,7 +160,7 @@ export default function Auth({
             <ShinyText text="ORBIT" speed={3.5} />
           </h1>
         </div>
-        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-extrabold uppercase tracking-[0.25em] mt-1.5 font-sans">
+        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 font-extrabold uppercase tracking-[0.25em] mt-1.5 font-sans">
           simple social circle
         </p>
       </div>
@@ -199,12 +199,12 @@ export default function Auth({
           <form onSubmit={handleSignupSubmit} noValidate className={`font-sans transition-all duration-200 ${
             isKeyboardOpen ? "space-y-2" : "space-y-2.5"
           }`}>
-            <h3 className="text-[11px] font-bold text-white/80 tracking-wide mb-2.5">Create Account</h3>
+            <h3 className="text-[12px] font-bold text-white/80 tracking-wide mb-2.5">Create Account</h3>
 
             {/* Username + Full Name side by side */}
             <div className="grid grid-cols-2 gap-2.5">
               <div className="space-y-1 text-left">
-                <label htmlFor="signup-username" className="text-[9px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Username</label>
+                <label htmlFor="signup-username" className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Username</label>
                 <input
                   id="signup-username"
                   type="text"
@@ -214,7 +214,7 @@ export default function Auth({
                   value={username}
                   onChange={(e) => { setUsername(e.target.value.toLowerCase().replace(/\s+/g, "")); clearFieldError("username"); }}
                   maxLength={100}
-                  className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-xs md:text-[13px] font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
+                  className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-[12px] md:text-sm font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
                 />
                 <div className="flex items-center justify-between px-1">
                   <ValidationMessage message={fieldErrors.username} />
@@ -223,7 +223,7 @@ export default function Auth({
               </div>
 
               <div className="space-y-1 text-left">
-                <label htmlFor="signup-fullname" className="text-[9px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Full Name</label>
+                <label htmlFor="signup-fullname" className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Full Name</label>
                 <input
                   id="signup-fullname"
                   type="text"
@@ -232,7 +232,7 @@ export default function Auth({
                   value={fullName}
                   onChange={(e) => { setFullName(e.target.value); clearFieldError("fullName"); }}
                   maxLength={50}
-                  className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-xs md:text-[13px] font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
+                  className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-[12px] md:text-sm font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
                 />
                 <div className="flex items-center justify-between px-1">
                   <ValidationMessage message={fieldErrors.fullName} />
@@ -242,7 +242,7 @@ export default function Auth({
             </div>
 
             <div className="space-y-1 text-left">
-              <label htmlFor="signup-email" className="text-[9px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Email Address</label>
+              <label htmlFor="signup-email" className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Email Address</label>
               <input
                 id="signup-email"
                 type="email"
@@ -251,7 +251,7 @@ export default function Auth({
                 placeholder="alice@gmail.com"
                 value={email}
                 onChange={(e) => { setEmail(e.target.value); clearFieldError("email"); }}
-                className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-xs md:text-[13px] font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
+                className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-[12px] md:text-sm font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
               />
               <ValidationMessage message={fieldErrors.email} />
             </div>
@@ -259,7 +259,7 @@ export default function Auth({
             {/* Password + Confirm Password side by side */}
             <div className="grid grid-cols-2 gap-2.5">
               <div className="space-y-1 text-left">
-                <label htmlFor="signup-password" className="text-[9px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Password</label>
+                <label htmlFor="signup-password" className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Password</label>
                 <div className="relative">
                   <input
                     id="signup-password"
@@ -269,7 +269,7 @@ export default function Auth({
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => { setPassword(e.target.value); clearFieldError("password"); }}
-                    className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 pl-3.5 pr-9 text-xs md:text-[13px] font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
+                    className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 pl-3.5 pr-9 text-[12px] md:text-sm font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
                   />
                   <button
                     type="button"
@@ -283,7 +283,7 @@ export default function Auth({
               </div>
 
               <div className="space-y-1 text-left">
-                <label htmlFor="signup-confirm-password" className="text-[9px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Confirm</label>
+                <label htmlFor="signup-confirm-password" className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Confirm</label>
                 <div className="relative">
                   <input
                     id="signup-confirm-password"
@@ -293,7 +293,7 @@ export default function Auth({
                     placeholder="••••••••"
                     value={confirmPassword}
                     onChange={(e) => { setConfirmPassword(e.target.value); clearFieldError("confirmPassword"); }}
-                    className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 pl-3.5 pr-9 text-xs md:text-[13px] font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
+                    className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 pl-3.5 pr-9 text-[12px] md:text-sm font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
                   />
                   <button
                     type="button"
@@ -308,7 +308,7 @@ export default function Auth({
             </div>
 
             <div className="space-y-1 text-left">
-              <label htmlFor="signup-bio" className="text-[9px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Bio</label>
+              <label htmlFor="signup-bio" className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Bio</label>
               <textarea
                 id="signup-bio"
                 rows={1}
@@ -316,7 +316,7 @@ export default function Auth({
                 value={bio}
                 onChange={(e) => setBio(e.target.value)}
                 maxLength={300}
-                className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-xs md:text-[13px] font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all resize-none"
+                className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-[12px] md:text-sm font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all resize-none"
               />
               <div className="flex justify-end px-1">
                 <CharCounter current={bio.length} max={300} />
@@ -326,18 +326,18 @@ export default function Auth({
             <button
               type="submit"
               disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-full bg-black py-2.5 text-[10px] font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black transition-all hover:bg-zinc-900 dark:hover:bg-zinc-100 active:scale-[0.98] disabled:opacity-40 cursor-pointer shadow-md"
+              className="flex w-full items-center justify-center gap-2 rounded-full bg-black py-2.5 text-[12px] md:text-sm font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black transition-all hover:bg-zinc-900 dark:hover:bg-zinc-100 active:scale-[0.98] disabled:opacity-40 cursor-pointer shadow-md"
             >
               {loading ? "Creating Account..." : "Create Account"}
               <ShieldCheck className="h-3.5 w-3.5" />
             </button>
 
             <div className="text-center mt-3 pt-2.5 border-t border-zinc-800/50">
-              <span className="text-[9px] text-zinc-500 font-semibold">Already have an account? </span>
+              <span className="text-[12px] md:text-sm text-zinc-500 font-semibold">Already have an account? </span>
               <button
                 type="button"
                 onClick={() => { setShowSignup(false); setError(null); setFieldErrors({}); }}
-                className="text-[9px] font-bold text-white hover:text-zinc-300 underline underline-offset-2 cursor-pointer transition-colors"
+                className="text-[12px] md:text-sm font-bold text-white hover:text-zinc-300 underline underline-offset-2 cursor-pointer transition-colors"
               >
                 Sign In
               </button>
@@ -357,7 +357,7 @@ export default function Auth({
           }`}>
             <h3 className="text-sm font-bold text-white/80 tracking-wide mb-3">Sign In</h3>
             <div className="space-y-1.5 text-left">
-              <label htmlFor="login-identity" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-4">Username or Email</label>
+              <label htmlFor="login-identity" className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-4">Username or Email</label>
               <div className="relative group">
                 <span className="absolute inset-y-0 left-0 flex items-center pl-4.5 text-zinc-400 group-focus-within:text-black dark:group-focus-within:text-white transition-colors">
                   <User className="h-4 w-4" />
@@ -378,11 +378,11 @@ export default function Auth({
 
             <div className="space-y-1.5 text-left">
               <div className="flex items-center justify-between pl-4">
-                <label htmlFor="login-password" className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Password</label>
+                <label htmlFor="login-password" className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Password</label>
                 <button
                   type="button"
                   onClick={onForgotPasswordClick}
-                  className="text-[10px] font-bold text-zinc-400 dark:text-zinc-400 hover:text-white dark:hover:text-zinc-200 transition-colors focus:outline-none cursor-pointer"
+                  className="text-[12px] md:text-sm font-bold text-zinc-400 dark:text-zinc-400 hover:text-white dark:hover:text-zinc-200 transition-colors focus:outline-none cursor-pointer"
                 >
                   Forgot Password?
                 </button>
@@ -415,18 +415,18 @@ export default function Auth({
             <button
               type="submit"
               disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-full bg-black py-3.5 max-sm:py-2.5 text-[11px] max-sm:text-[10px] font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black shadow-md transition-all hover:bg-zinc-900 dark:hover:bg-zinc-100 hover:shadow-lg focus:outline-none disabled:opacity-40 cursor-pointer"
+              className="flex w-full items-center justify-center gap-2 rounded-full bg-black py-3.5 max-sm:py-2.5 text-[12px] md:text-sm font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black shadow-md transition-all hover:bg-zinc-900 dark:hover:bg-zinc-100 hover:shadow-lg focus:outline-none disabled:opacity-40 cursor-pointer"
             >
               {loading ? "Signing In..." : "Sign In"}
               <ArrowRight className="h-3.5 w-3.5" />
             </button>
 
             <div className="text-center mt-5 pt-4 border-t border-zinc-800/50">
-              <span className="text-[10px] text-zinc-500 font-semibold">Don't have an account? </span>
+              <span className="text-[12px] md:text-sm text-zinc-500 font-semibold">Don't have an account? </span>
               <button
                 type="button"
                 onClick={() => { setShowSignup(true); setError(null); setFieldErrors({}); }}
-                className="text-[10px] font-bold text-white hover:text-zinc-300 underline underline-offset-2 cursor-pointer transition-colors"
+                className="text-[12px] md:text-sm font-bold text-white hover:text-zinc-300 underline underline-offset-2 cursor-pointer transition-colors"
               >
                 Create Account
               </button>

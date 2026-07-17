@@ -3,7 +3,7 @@ import { User } from "../models/user.model";
 import { sendNotification } from "../configs/socket";
 import { logger } from "./logger";
 
-type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message_reply";
+type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message_reply" | "glimpse_reaction" | "glimpse_reply";
 
 type NotificationParams = {
   recipient: string;
@@ -11,6 +11,7 @@ type NotificationParams = {
   type: NotificationType;
   post?: string | null;
   comment?: string | null;
+  glimpse?: string | null;
 };
 
 type CreateNotificationParams = NotificationParams;
@@ -33,6 +34,7 @@ export const createNotification = async ({
   type,
   post,
   comment,
+  glimpse,
 }: CreateNotificationParams) => {
   try {
     // prevent self notifications
@@ -47,6 +49,7 @@ export const createNotification = async ({
       type,
       post: post || null,
       comment: comment || null,
+      glimpse: glimpse || null,
     });
 
     // populate notification for socket
@@ -72,6 +75,7 @@ export const deleteInteractionNotification = async ({
   type,
   post,
   comment,
+  glimpse,
 }: DeleteNotificationParams) => {
   try {
     const filter: Record<string, unknown> = {
@@ -86,6 +90,10 @@ export const deleteInteractionNotification = async ({
 
     if (comment !== undefined) {
       filter.comment = comment;
+    }
+
+    if (glimpse !== undefined) {
+      filter.glimpse = glimpse;
     }
 
     await Notification.deleteMany(filter);

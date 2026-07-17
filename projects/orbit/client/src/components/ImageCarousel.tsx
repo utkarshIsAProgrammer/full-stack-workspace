@@ -150,7 +150,7 @@ export default function ImageCarousel({
 
       {/* Counter badge for many images */}
       {showArrows && (
-        <div className="absolute top-3 right-3 rounded-full bg-black/60 backdrop-blur-sm px-2.5 py-0.5 text-[10px] font-bold text-white/90 hidden md:block">
+        <div className="absolute top-3 right-3 rounded-full bg-black/60 backdrop-blur-sm px-2.5 py-0.5 text-[11px] font-bold text-white/90 hidden md:block">
           {currentIndex + 1} / {images.length}
         </div>
       )}

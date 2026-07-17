@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { hasWebGL } from "../utils/hasWebGL";
 
@@ -7,7 +7,18 @@ export default function LandingSpaceBackdrop() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const etherCanvasRef = useRef<HTMLCanvasElement>(null);
   const mouseRef = useRef({ x: 0, y: 0, targetX: 0, targetY: 0 });
-  const isMobile = typeof window !== 'undefined' && (window.innerWidth < 768 || window.matchMedia('(pointer: coarse)').matches);
+  const [isLargeScreen, setIsLargeScreen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth >= 768;
+  });
+
+  useEffect(() => {
+    const checkScreen = () => {
+      setIsLargeScreen(window.innerWidth >= 768);
+    };
+    window.addEventListener("resize", checkScreen);
+    return () => window.removeEventListener("resize", checkScreen);
+  }, []);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -24,7 +35,7 @@ export default function LandingSpaceBackdrop() {
   }, []);
 
   useEffect(() => {
-    if (!hasWebGL() || isMobile) return;
+    if (!hasWebGL() || !isLargeScreen) return;
     const canvas = canvasRef.current;
     const etherCanvas = etherCanvasRef.current;
     if (!canvas || !etherCanvas) return;
@@ -302,7 +313,7 @@ export default function LandingSpaceBackdrop() {
       renderer.forceContextLoss();
       timer.dispose();
     };
-  }, []);
+  }, [isLargeScreen]);
 
   return (
     <div

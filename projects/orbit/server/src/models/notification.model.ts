@@ -17,7 +17,7 @@ const notificationSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ["like", "comment", "follow", "repost", "save", "mention", "reaction", "message_reply"],
+      enum: ["like", "comment", "follow", "repost", "save", "mention", "reaction", "message_reply", "glimpse_reaction", "glimpse_reply"],
       required: true,
     },
 
@@ -33,6 +33,12 @@ const notificationSchema = new mongoose.Schema(
       default: null,
     },
 
+    glimpse: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Glimpse",
+      default: null,
+    },
+
     isRead: {
       type: Boolean,
       default: false,
@@ -42,8 +48,6 @@ const notificationSchema = new mongoose.Schema(
 );
 
 notificationSchema.index({ recipient: 1, createdAt: -1 });
-
-// Compound index for fetching unread notifications (common query pattern)
 notificationSchema.index({ recipient: 1, isRead: 1, createdAt: -1 });
 
 const Notification = mongoose.model("Notification", notificationSchema);

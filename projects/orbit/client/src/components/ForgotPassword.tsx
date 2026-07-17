@@ -172,11 +172,11 @@ export default function ForgotPassword({
       <div className="mb-5 flex items-center justify-between">
         <button
           onClick={onBackToLogin}
-          className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 hover:text-slate-800 dark:text-zinc-400 dark:hover:text-zinc-200 cursor-pointer"
+          className="flex items-center gap-1.5 text-[12px] font-semibold text-slate-500 hover:text-slate-800 dark:text-zinc-400 dark:hover:text-zinc-200 cursor-pointer"
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
-        <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-white">
+        <span className="flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-white">
           <ShieldCheck className="h-3 w-3" /> SECURITY
         </span>
       </div>
@@ -206,7 +206,7 @@ export default function ForgotPassword({
       {step === "request" ? (
         <form onSubmit={handleRequestOtp} noValidate className="space-y-4">
           <div className="space-y-1.5 pl-2">
-            <label htmlFor="forgot-email" className="text-[10px] font-bold uppercase tracking-wider text-slate-700 dark:text-zinc-350 pl-3">Your Email Address</label>
+            <label htmlFor="forgot-email" className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-zinc-350 pl-3">Your Email Address</label>
             <div className="relative">
               <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-slate-400 dark:text-zinc-500">
                 <Mail className="h-4 w-4" />
@@ -219,7 +219,7 @@ export default function ForgotPassword({
                 placeholder="alice@gmail.com"
                 value={email}
                 onChange={(e) => { setEmail(e.target.value); clearFieldError("email"); }}
-                className="w-full rounded-full border border-zinc-800 bg-zinc-950/40 py-3 pl-11 pr-4.5 text-xs md:text-[13px] font-medium text-zinc-100 placeholder-zinc-500 transition-all focus:border-white focus:bg-zinc-900 focus:outline-none focus:ring-1 focus:ring-slate-400/50"
+                className="w-full rounded-full border border-zinc-800 bg-zinc-950/40 py-3 pl-11 pr-4.5 text-[12px] md:text-sm font-medium text-zinc-100 placeholder-zinc-500 transition-all focus:border-white focus:bg-zinc-900 focus:outline-none focus:ring-1 focus:ring-slate-400/50"
               />
             </div>
             <ValidationMessage message={fieldErrors.email} />
@@ -228,7 +228,7 @@ export default function ForgotPassword({
           <button
             type="submit"
             disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-full bg-black dark:bg-white py-3.5 text-[11px] font-bold tracking-widest uppercase text-white dark:text-black shadow-md shadow-black/10 cursor-pointer transition-all hover:bg-zinc-800 dark:hover:bg-zinc-200 focus:outline-none disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-2 rounded-full bg-black dark:bg-white py-3.5 text-[12px] md:text-sm font-bold tracking-widest uppercase text-white dark:text-black shadow-md shadow-black/10 cursor-pointer transition-all hover:bg-zinc-800 dark:hover:bg-zinc-200 focus:outline-none disabled:opacity-50"
           >
             {loading ? "Sending Code..." : "Send Verification Code"}{" "}
             <ArrowRight className="h-3.5 w-3.5" />
@@ -237,7 +237,7 @@ export default function ForgotPassword({
       ) : (
         <form onSubmit={handleResetPassword} noValidate className="space-y-5">
           <div className="space-y-1.5">
-            <label htmlFor="forgot-otp" className="text-[10px] font-bold uppercase tracking-wider text-slate-700 dark:text-zinc-350 pl-3">6-Digit Verification Code</label>
+            <label htmlFor="forgot-otp" className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-zinc-350 pl-3">6-Digit Verification Code</label>
             <div className="flex justify-between gap-2">
               {otp.map((digit, index) => (
                 <input
@@ -250,7 +250,7 @@ export default function ForgotPassword({
                   value={digit}
                   onChange={(e) => handleOtpChange(index, e.target.value)}
                   onKeyDown={(e) => handleKeyDown(index, e)}
-                  className="h-11 w-full rounded-full border border-zinc-800 bg-zinc-950/40 text-center text-base font-bold text-zinc-100 focus:border-white focus:bg-zinc-900 focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white"
+                  className="h-11 w-full rounded-full border border-zinc-800 bg-zinc-950/40 text-center text-[12px] md:text-sm font-bold text-zinc-100 focus:border-white focus:bg-zinc-900 focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white"
                 />
               ))}
             </div>
@@ -258,7 +258,7 @@ export default function ForgotPassword({
           </div>
 
           <div className="space-y-1.5 pl-2">
-            <label htmlFor="forgot-new-password" className="text-[10px] font-bold uppercase tracking-wider text-slate-700 dark:text-zinc-350 pl-3">New Password</label>
+            <label htmlFor="forgot-new-password" className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-zinc-350 pl-3">New Password</label>
             <div className="relative">
               <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-slate-400 dark:text-zinc-500">
                 <KeyRound className="h-4 w-4" />
@@ -272,7 +272,7 @@ export default function ForgotPassword({
                 placeholder="••••••••••••"
                 value={newPassword}
                 onChange={(e) => { setNewPassword(e.target.value); clearFieldError("newPassword"); }}
-                className="w-full rounded-full border border-zinc-800 bg-zinc-950/40 py-3 pl-11 pr-11 text-xs md:text-[13px] font-medium text-zinc-100 placeholder-zinc-500 transition-all focus:border-white focus:bg-zinc-900 focus:outline-none focus:ring-1 focus:ring-slate-400/50"
+                className="w-full rounded-full border border-zinc-800 bg-zinc-950/40 py-3 pl-11 pr-11 text-[12px] md:text-sm font-medium text-zinc-100 placeholder-zinc-500 transition-all focus:border-white focus:bg-zinc-900 focus:outline-none focus:ring-1 focus:ring-slate-400/50"
               />
               <button
                 type="button"
@@ -285,7 +285,7 @@ export default function ForgotPassword({
             <ValidationMessage message={fieldErrors.newPassword} />
           </div>
 
-          <div className="flex items-center justify-between text-[10px] font-sans px-2">
+          <div className="flex items-center justify-between text-[11px] font-sans px-2">
             <span className="text-slate-500 dark:text-zinc-400">Didn't receive verification code?</span>
             <button
               type="button"
@@ -300,7 +300,7 @@ export default function ForgotPassword({
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-full bg-black dark:bg-white py-3.5 text-[11px] font-bold tracking-widest uppercase text-white dark:text-black shadow-md shadow-black/10 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-all focus:outline-none disabled:opacity-50 cursor-pointer"
+            className="w-full rounded-full bg-black dark:bg-white py-3.5 text-[12px] md:text-sm font-bold tracking-widest uppercase text-white dark:text-black shadow-md shadow-black/10 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-all focus:outline-none disabled:opacity-50 cursor-pointer"
           >
             {loading ? "Updating Password..." : "Update Password"}
           </button>

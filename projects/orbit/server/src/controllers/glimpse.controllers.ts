@@ -5,6 +5,9 @@ import cloudinary from "../configs/cloudinary";
 import { AppError, BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from "../utilities/errors";
 import { logger } from "../utilities/logger";
 import { getIO } from "../configs/socket";
+import { Conversation } from "../models/conversation.model";
+import { Message } from "../models/message.model";
+import { createNotification } from "../utilities/notification";
 
 // Get glimpse feed for the current user
 // Returns non-expired glimpses that still have remaining views
@@ -17,13 +20,9 @@ export const getGlimpseFeed = async (req: Request, res: Response) => {
     }
 
     const now = new Date();
-    // Return glances that still have views remaining OR were authored by the current user (for stats)
+    // Return all non-expired glimpses
     const glimpses = await Glimpse.find({
       expiresAt: { $gt: now },
-      $or: [
-        { $expr: { $lt: [{ $size: "$viewers" }, "$maxViews"] } },
-        { author: new mongoose.Types.ObjectId(currentUserId) },
-      ],
     })
       .populate("author", "username fullName profilePic")
       .populate("viewers.user", "username fullName profilePic")
@@ -37,7 +36,6 @@ export const getGlimpseFeed = async (req: Request, res: Response) => {
       viewedByMe: (g.viewers || []).some(
         (v: any) => v.user?.toString() === currentUserId
       ),
-      viewsRemaining: Math.max(0, g.maxViews - (g.viewers?.length || 0)),
     }));
 
     return res.status(200).json({
@@ -67,6 +65,16 @@ export const createGlimpse = async (req: Request, res: Response) => {
 
     const isVideo = file.mimetype.startsWith("video/");
 
+    // Validate video duration from Cloudinary response
+    if (isVideo && (file as any).duration) {
+      const durationInSeconds = (file as any).duration;
+      if (durationInSeconds > 60) {
+        // Delete the uploaded file from Cloudinary
+        cloudinary.uploader.destroy((file as any).filename, { resource_type: "video" }).catch(() => {});
+        throw new BadRequestError("Video duration must not exceed 1 minute!");
+      }
+    }
+
     const glimpse = new Glimpse({
       author,
       media: {
@@ -74,7 +82,7 @@ export const createGlimpse = async (req: Request, res: Response) => {
         public_id: (file as any).filename,
       },
       mediaType: isVideo ? "video" : "image",
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000),
     });
 
     await glimpse.save();
@@ -87,7 +95,6 @@ export const createGlimpse = async (req: Request, res: Response) => {
     const enrichedGlimpse = {
       ...populated,
       viewedByMe: false,
-      viewsRemaining: populated?.maxViews ?? 1,
     };
 
     // Broadcast via socket
@@ -142,7 +149,7 @@ export const viewGlimpse = async (req: Request, res: Response) => {
     }
 
     // Check if already viewed (lightweight read-only check)
-    const existingGlimpse = await Glimpse.findById(glimpseId).select("author viewers expiresAt maxViews media");
+    const existingGlimpse = await Glimpse.findById(glimpseId).select("author viewers expiresAt media");
     if (!existingGlimpse) {
       throw new NotFoundError("Glimpse not found!");
     }
@@ -174,39 +181,24 @@ export const viewGlimpse = async (req: Request, res: Response) => {
       });
     }
 
-    // Atomic update: only push viewer if current count < maxViews AND user hasn't viewed
-    // Using findOneAndUpdate with $expr filter to prevent race condition
-    const updatedGlimpse = await Glimpse.findOneAndUpdate(
+    // Add viewer to the glimpse (no view limit anymore — just record who viewed)
+    const updatedGlimpse = await Glimpse.findByIdAndUpdate(
+      glimpseId,
       {
-        _id: glimpseId,
-        expiresAt: { $gt: new Date() },
-        $expr: { $lt: [{ $size: "$viewers" }, "$maxViews"] },
-        "viewers.user": { $ne: new mongoose.Types.ObjectId(String(currentUserId)) },
-      },
-      {
-        $push: {
+        $addToSet: {
           viewers: {
             user: new mongoose.Types.ObjectId(String(currentUserId)),
             viewedAt: new Date(),
           },
         },
       },
-      { returnDocument: 'after' }
+      { new: true }
     );
 
-    // If the atomic update didn't match, the glimpse is either expired or fully consumed
     if (!updatedGlimpse) {
-      // Re-check why it failed — could be fully consumed
-      const currentGlimpse = await Glimpse.findById(glimpseId).select("viewers maxViews media");
-      if (currentGlimpse && currentGlimpse.viewers.length >= currentGlimpse.maxViews) {
-        await deleteGlimpseAndCleanup(currentGlimpse);
-        try { getIO().emit("glimpse:expired", { glimpseId }); } catch {}
-        throw new BadRequestError("Glimpse has already reached maximum views!");
-      }
-      throw new BadRequestError("Could not view glimpse — it may have expired or been fully viewed!");
+      throw new NotFoundError("Glimpse not found!");
     }
 
-    const remainingViews = updatedGlimpse.maxViews - updatedGlimpse.viewers.length;
     const viewers = updatedGlimpse.viewers.map((v: any) => ({
       user: v.user?.toString() || "",
       viewedAt: v.viewedAt,
@@ -215,23 +207,9 @@ export const viewGlimpse = async (req: Request, res: Response) => {
     // Socket broadcasts
     try {
       const io = getIO();
-
-      if (remainingViews === 0) {
-        // Fully viewed — delete it from the database and broadcast expiration
-        await deleteGlimpseAndCleanup(updatedGlimpse);
-        io.emit("glimpse:expired", { glimpseId });
-      } else if (remainingViews === 1) {
-        io.emit("glimpse:one-view-left", {
-          glimpseId,
-          authorId: updatedGlimpse.author.toString(),
-          remainingViews: 1,
-        });
-      }
-
       io.emit("glimpse:viewed", {
         glimpseId,
         viewerId: currentUserId,
-        remainingViews,
         viewers,
       });
     } catch (socketErr: any) {
@@ -243,7 +221,6 @@ export const viewGlimpse = async (req: Request, res: Response) => {
     return res.status(200).json({
       success: true,
       message: "Glimpse viewed!",
-      remainingViews,
       alreadyViewed: false,
     });
   } catch (err: any) {
@@ -280,7 +257,7 @@ export const getGlimpse = async (req: Request, res: Response) => {
       viewedByMe: (glimpse.viewers || []).some(
         (v: any) => v.user?.toString() === currentUserId
       ),
-      viewsRemaining: Math.max(0, glimpse.maxViews - (glimpse.viewers?.length || 0)),
+
     };
 
     return res.status(200).json({
@@ -290,6 +267,214 @@ export const getGlimpse = async (req: Request, res: Response) => {
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
     logger.error("Error in getGlimpse controller!", { error: err.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+// React to a glimpse (like/emoji reaction)
+export const reactToGlimpse = async (req: Request, res: Response) => {
+  const glimpseId = req.params.glimpseId as string;
+  const currentUserId = String(req.user?._id || "");
+  const { emoji } = req.body;
+
+  try {
+    if (!currentUserId) {
+      throw new UnauthorizedError("Unauthorized!");
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(glimpseId)) {
+      throw new BadRequestError("Invalid glimpse ID!");
+    }
+
+    if (!emoji || typeof emoji !== "string") {
+      throw new BadRequestError("Emoji is required!");
+    }
+
+    const glimpse = await Glimpse.findById(glimpseId);
+    if (!glimpse) {
+      throw new NotFoundError("Glimpse not found!");
+    }
+
+    // Check if user already reacted with this emoji
+    const existingIdx = glimpse.reactions?.findIndex(
+      (r) => r.user.toString() === currentUserId
+    );
+
+    let action: "added" | "removed";
+
+    if (existingIdx !== undefined && existingIdx >= 0) {
+      // Remove existing reaction (toggle off)
+      glimpse.reactions!.splice(existingIdx, 1);
+      action = "removed";
+    } else {
+      // Add new reaction
+      glimpse.reactions!.push({
+        user: new mongoose.Types.ObjectId(String(currentUserId)),
+        emoji,
+        createdAt: new Date(),
+      } as any);
+      action = "added";
+    }
+
+    await glimpse.save();
+
+    // Broadcast via socket
+    try {
+      getIO().emit("glimpse:reacted", {
+        glimpseId,
+        userId: currentUserId,
+        emoji,
+        action,
+        reactionsCount: glimpse.reactions?.length || 0,
+      });
+    } catch (socketErr: any) {
+      logger.warn("Failed to emit glimpse:reacted socket event", { error: socketErr.message });
+    }
+
+    // Create notification for the author (only if reaction was added)
+    try {
+      const authorId = glimpse.author?.toString();
+      if (authorId && action === "added" && authorId !== currentUserId) {
+        await createNotification({
+          recipient: authorId,
+          sender: currentUserId,
+          type: "glimpse_reaction",
+          glimpse: glimpseId,
+        });
+      }
+    } catch (notifErr: any) {
+      logger.warn("Failed to create glimpse reaction notification", { error: notifErr.message });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: action === "added" ? "Reaction added!" : "Reaction removed!",
+      action,
+      reactionsCount: glimpse.reactions?.length || 0,
+      reactions: glimpse.reactions,
+    });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error("Error in reactToGlimpse controller!", { error: err.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+// Reply to a glimpse (creates a conversation + sends a message with the glimpse as an attachment)
+export const replyToGlimpse = async (req: Request, res: Response) => {
+  const glimpseId = req.params.glimpseId as string;
+  const currentUserId = String(req.user?._id || "");
+  const { text } = req.body;
+
+  try {
+    if (!currentUserId) {
+      throw new UnauthorizedError("Unauthorized!");
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(glimpseId)) {
+      throw new BadRequestError("Invalid glimpse ID!");
+    }
+
+    const glimpse = await Glimpse.findById(glimpseId)
+      .populate("author", "_id username fullName profilePic")
+      .lean({ virtuals: true });
+    if (!glimpse) {
+      throw new NotFoundError("Glimpse not found!");
+    }
+
+    const authorId = glimpse.author?._id?.toString();
+    if (!authorId) {
+      throw new BadRequestError("Glimpse author not found!");
+    }
+
+    // Don't allow replying to your own glimpse
+    if (authorId === currentUserId) {
+      throw new BadRequestError("Cannot reply to your own glimpse!");
+    }
+
+    // Find existing conversation between these two users, or create a new one
+    let conversation = await Conversation.findOne({
+      participants: { $all: [
+        new mongoose.Types.ObjectId(String(currentUserId)),
+        new mongoose.Types.ObjectId(authorId),
+      ]},
+      type: { $ne: "group" },
+    });
+
+    if (!conversation) {
+      conversation = new Conversation({
+        participants: [
+          new mongoose.Types.ObjectId(String(currentUserId)),
+          new mongoose.Types.ObjectId(authorId),
+        ],
+        unreadCounts: new Map(),
+      });
+      await conversation.save();
+    }
+
+    // Create a message with the glimpse attached
+    const message = new Message({
+      conversation: conversation._id,
+      sender: new mongoose.Types.ObjectId(String(currentUserId)),
+      recipient: new mongoose.Types.ObjectId(authorId),
+      text: typeof text === "string" ? text : "",
+      attachments: [{
+        url: glimpse.media?.url || "",
+        public_id: glimpse.media?.public_id || "",
+        type: glimpse.mediaType === "video" ? "video" : "image",
+      }],
+      seen: false,
+    });
+
+    await message.save();
+
+    const populatedMessage = await Message.findById(message._id)
+      .populate("sender", "username fullName profilePic")
+      .lean();
+
+    // Update conversation's lastMessage
+    await Conversation.findByIdAndUpdate(conversation._id, {
+      lastMessage: message._id,
+      updatedAt: new Date(),
+      $inc: { [`unreadCounts.${authorId}`]: 1 },
+    });
+
+    // Broadcast to conversation
+    try {
+      const io = getIO();
+      io.to(`conversation:${conversation._id}`).emit("message:new", populatedMessage);
+      
+      // Also notify the author if they're not in the conversation
+      io.to(`user:${authorId}`).emit("chat:notification", {
+        conversationId: conversation._id,
+        message: populatedMessage,
+        unreadCount: 1,
+      });
+    } catch (socketErr: any) {
+      logger.warn("Failed to emit glimpse reply socket events", { error: socketErr.message });
+    }
+
+    // Create notification for the author
+    try {
+      await createNotification({
+        recipient: authorId,
+        sender: currentUserId,
+        type: "glimpse_reply",
+        glimpse: glimpseId,
+      });
+    } catch (notifErr: any) {
+      logger.warn("Failed to create glimpse reply notification", { error: notifErr.message });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Reply sent!",
+      conversation,
+      sentMessage: populatedMessage,
+    });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error("Error in replyToGlimpse controller!", { error: err.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -314,10 +499,8 @@ export const deleteGlimpse = async (req: Request, res: Response) => {
     }
 
     const isAuthor = glimpse.author.toString() === currentUserId;
-    const isFullyViewed = glimpse.viewers.length >= glimpse.maxViews;
-
-    // Only allow deletion if the requester is the author OR if the glimpse has been fully viewed
-    if (!isAuthor && !isFullyViewed) {
+    // Only allow deletion if the requester is the author
+    if (!isAuthor) {
       throw new ForbiddenError("You are not authorized to delete this glance!");
     }
 

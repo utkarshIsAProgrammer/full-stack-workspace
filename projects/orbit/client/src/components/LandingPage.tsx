@@ -1,4 +1,4 @@
-import { useEffect, useRef, lazy, Suspense } from "react";
+import { useEffect, useRef, lazy, Suspense, useState } from "react";
 import { gsap } from "gsap";
 import { motion } from "motion/react";
 import {
@@ -33,6 +33,20 @@ export default function LandingPage({
 	const prefersReducedMotion =
 		typeof window !== "undefined" &&
 		window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+	const [isLargeScreen, setIsLargeScreen] = useState(() => {
+		if (typeof window === "undefined") return false;
+		return window.innerWidth >= 768;
+	});
+
+	useEffect(() => {
+		if (typeof window === "undefined") return;
+		const checkScreen = () => {
+			setIsLargeScreen(window.innerWidth >= 768);
+		};
+		window.addEventListener("resize", checkScreen);
+		return () => window.removeEventListener("resize", checkScreen);
+	}, []);
 
 	useEffect(() => {
 		if (!subtitleRef.current || !ctaRef.current || prefersReducedMotion)
@@ -73,10 +87,12 @@ export default function LandingPage({
 	return (
 		<div className="relative w-full min-h-screen bg-transparent overflow-hidden flex flex-col justify-between font-sans selection:bg-white/20">
 			{/* Fully interactive 3D deep space cosmic backdrop (lazy-loaded) */}
-			<Suspense
-				fallback={<div className="absolute inset-0 bg-black z-0" />}>
-				<LandingSpaceBackdrop />
-			</Suspense>
+			{isLargeScreen && (
+				<Suspense
+					fallback={<div className="absolute inset-0 bg-black z-0" />}>
+					<LandingSpaceBackdrop />
+				</Suspense>
+			)}
 
 			{/* 1. Monochromatic Accent Glows */}
 			<div className="absolute inset-x-0 -top-40 h-[70vh] bg-linear-to-b from-white/5 via-transparent to-transparent blur-[140px] pointer-events-none -z-10" />
@@ -98,7 +114,7 @@ export default function LandingPage({
 					<button
 						type="button"
 						onClick={onScrollToSignup || onScrollToAuth}
-						className="rounded-full bg-white text-black hover:bg-zinc-200 px-3 py-1.5 text-[9px] sm:px-3.5 sm:py-1.5 sm:text-[10px] font-black transition-all cursor-pointer shadow-md hover:scale-105 active:scale-95 uppercase tracking-wider border border-white/25 font-sans">
+						className="rounded-full bg-white text-black hover:bg-zinc-200 px-3 py-1.5 text-[12px] sm:px-3.5 sm:py-1.5 sm:text-sm font-black transition-all cursor-pointer shadow-md hover:scale-105 active:scale-95 uppercase tracking-wider border border-white/25 font-sans">
 						Get Started
 					</button>
 				</div>
@@ -124,7 +140,7 @@ export default function LandingPage({
 
 					<p
 						ref={subtitleRef}
-						className="text-[10px] md:text-xs font-semibold tracking-[0.2em] text-zinc-300 max-w-xl mx-auto leading-relaxed uppercase border-t border-b border-white/10 py-4 font-sans">
+						className="text-[11px] md:text-sm font-semibold tracking-[0.2em] text-zinc-300 max-w-xl mx-auto leading-relaxed uppercase border-t border-b border-white/10 py-4 font-sans">
 						The Simpler Social Feed. Share thoughts, meet friends,
 						and participate in lively discussions without the noise.
 					</p>
@@ -142,7 +158,7 @@ export default function LandingPage({
 							boxShadow: "0 0 35px rgba(255,255,255,0.25)",
 						}}
 						whileTap={{ scale: 1.02 }}
-						className="group flex items-center gap-2 rounded-full bg-white px-7 py-3.5 text-[10px] font-black uppercase tracking-widest text-black shadow-2xl transition-all duration-300 cursor-pointer">
+						className="group flex items-center gap-2 rounded-full bg-white px-7 py-3.5 text-[12px] md:text-sm font-black uppercase tracking-widest text-black shadow-2xl transition-all duration-300 cursor-pointer">
 						Enter Social Hub
 						<ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
 					</motion.button>
@@ -155,7 +171,7 @@ export default function LandingPage({
 							backgroundColor: "rgba(255, 255, 255, 0.45)",
 						}}
 						whileTap={{ scale: 0.95 }}
-						className="flex items-center gap-2 rounded-full bg-white/40 dark:bg-zinc-950/20 px-6 py-3.5 text-[10px] font-black uppercase tracking-widest text-zinc-100 dark:text-zinc-300 hover:text-white border border-zinc-800/20 backdrop-blur-md transition-all cursor-pointer font-sans">
+						className="flex items-center gap-2 rounded-full bg-white/40 dark:bg-zinc-950/20 px-6 py-3.5 text-[12px] md:text-sm font-black uppercase tracking-widest text-zinc-100 dark:text-zinc-300 hover:text-white border border-zinc-800/20 backdrop-blur-md transition-all cursor-pointer font-sans">
 						<Compass className="h-4 w-4 text-zinc-400 animate-spin-slow shrink-0" />
 						Explore Public Feed
 					</motion.button>
@@ -170,7 +186,7 @@ export default function LandingPage({
 						whileInView={{ opacity: 1, y: 0 }}
 						viewport={{ once: false, amount: 0.2 }}
 						className="text-center space-y-2 mb-12">
-						<span className="text-[9px] font-mono font-black text-zinc-400 uppercase tracking-[0.35em] flex items-center justify-center gap-2">
+						<span className="text-[10px] font-mono font-black text-zinc-400 uppercase tracking-[0.35em] flex items-center justify-center gap-2">
 							<span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />{" "}
 							Designed for Connection • Simple & Beautiful
 						</span>
@@ -203,11 +219,11 @@ export default function LandingPage({
 								<div className="h-8 w-8 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-4 group-hover:scale-110 group-hover:rotate-6 transition-transform">
 									<Globe className="h-4 w-4" />
 								</div>
-								<h3 className="text-[10px] font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
+								<h3 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
 									Sovereign Profiles{" "}
 									<span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
 								</h3>
-								<p className="text-[10px] text-zinc-400 leading-normal font-bold uppercase tracking-tight font-sans">
+								<p className="text-[11px] text-zinc-400 leading-normal font-bold uppercase tracking-tight font-sans">
 									Express yourself clearly. Create a custom
 									profile card, update your full name, set a
 									custom bio, and declare your active status
@@ -235,11 +251,11 @@ export default function LandingPage({
 								<div className="h-8 w-8 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-4 group-hover:scale-110 group-hover:rotate-6 transition-transform">
 									<Activity className="h-4 w-4 text-zinc-350" />
 								</div>
-								<h3 className="text-[10px] font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
+								<h3 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
 									Living Social Feed{" "}
 									<span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
 								</h3>
-								<p className="text-[10px] text-zinc-400 leading-normal font-bold uppercase tracking-tight font-sans">
+								<p className="text-[11px] text-zinc-400 leading-normal font-bold uppercase tracking-tight font-sans">
 									A high-contrast shared feed where you can
 									view posts, upload photos with a fully
 									integrated cropper, and like posts
@@ -267,10 +283,10 @@ export default function LandingPage({
 								<div className="h-7 w-7 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-3.5 group-hover:scale-110 group-hover:rotate-6 transition-transform">
 									<MessageSquare className="h-3.5 w-3.5" />
 								</div>
-								<h3 className="text-[11px] font-semibold text-slate-900 dark:text-zinc-100 mb-1.5 font-display">
+								<h3 className="text-[12px] font-semibold text-slate-900 dark:text-zinc-100 mb-1.5 font-display">
 									Comments
 								</h3>
-								<p className="text-[11px] text-slate-500 dark:text-zinc-400 leading-relaxed font-medium font-sans">
+								<p className="text-[12px] text-slate-500 dark:text-zinc-400 leading-relaxed font-medium font-sans">
 									Join conversations and share your thoughts
 									on posts.
 								</p>
@@ -296,11 +312,11 @@ export default function LandingPage({
 								<div className="h-8.5 w-8.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-5 group-hover:scale-110 group-hover:rotate-6 transition-transform">
 									<MessageSquare className="h-4 w-4" />
 								</div>
-								<h3 className="text-[10px] font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
+								<h3 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
 									Direct Messages{" "}
 									<span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
 								</h3>
-								<p className="text-[10px] text-zinc-400 leading-relaxed font-bold uppercase tracking-tight font-sans">
+								<p className="text-[11px] text-zinc-400 leading-relaxed font-bold uppercase tracking-tight font-sans">
 									Private direct conversations to connect
 									straight with other users, featuring
 									responsive text, instant message listeners,
@@ -328,11 +344,11 @@ export default function LandingPage({
 								<div className="h-7 w-7 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-350 mb-3.5 group-hover:scale-110 group-hover:rotate-6 transition-transform">
 									<Bookmark className="h-3.5 w-3.5" />
 								</div>
-								<h3 className="text-[10px] font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
+								<h3 className="text-[11px] font-black text-white uppercase tracking-widest mb-2 flex items-center justify-between font-display">
 									Saved Bookmarks{" "}
 									<span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
 								</h3>
-								<p className="text-[10px] text-zinc-400 leading-relaxed font-bold uppercase tracking-tight font-sans">
+								<p className="text-[11px] text-zinc-400 leading-relaxed font-bold uppercase tracking-tight font-sans">
 									Keep your favorite posts safe. Bookmark any
 									post and view them securely inside a
 									designated bookmarks shelf for quick and
@@ -348,7 +364,7 @@ export default function LandingPage({
 			<div className="relative z-10 w-full py-8 flex justify-center pointer-events-auto">
 				<button
 					onClick={onScrollToAuth}
-					className="flex flex-col items-center gap-2 text-zinc-500 hover:text-white tracking-[0.25em] text-[10px] uppercase font-black transition-all cursor-pointer group">
+					className="flex flex-col items-center gap-2 text-zinc-500 hover:text-white tracking-[0.25em] text-[11px] uppercase font-black transition-all cursor-pointer group">
 					<span>Scroll to login & signup layer</span>
 					<ArrowDown className="h-4 w-4 animate-bounce text-zinc-500 group-hover:translate-y-1 transition-transform" />
 				</button>

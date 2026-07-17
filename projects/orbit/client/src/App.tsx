@@ -51,7 +51,26 @@ export default function App() {
 	const [user, setUser] = useState<User | null>(null);
 	const [sessionChecked, setSessionChecked] = useState(false);
 	const [showAuthForm] = useState(true);
-	const [currentTab, setTab] = useState("home");
+	const [currentTab, setTabState] = useState(() => {
+		if (typeof window !== "undefined") {
+			const saved = localStorage.getItem("orbit_current_tab");
+			const valid = ["home", "explore", "notifications", "chat", "profile", "settings"];
+			if (saved && valid.includes(saved)) {
+				return saved;
+			}
+		}
+		return "home";
+	});
+
+	const setTab = useCallback((updater: string | ((prev: string) => string)) => {
+		setTabState((prev) => {
+			const nextTab = typeof updater === "function" ? updater(prev) : updater;
+			if (nextTab !== "compose") {
+				localStorage.setItem("orbit_current_tab", nextTab);
+			}
+			return nextTab;
+		});
+	}, []);
 	const [badgeCount, setBadgeCount] = useState(0);
 	const [chatBadgeCount, setChatBadgeCount] = useState(0);
 	// Preload heavy screen components only when the browser is idle to reduce startup cost.
@@ -81,7 +100,7 @@ export default function App() {
 					void preloadComponents();
 				});
 			} else {
-				window.setTimeout(() => {
+				setTimeout(() => {
 					void preloadComponents();
 				}, 1500);
 			}
@@ -109,26 +128,20 @@ export default function App() {
 	const [composeOpen, setComposeOpen] = useState(false);
 	const [hasActiveConversation, setHasActiveConversation] = useState(false);
 	const [commentsOpen, setCommentsOpen] = useState(false);
-	const [settingsEditProfileOpen, setSettingsEditProfileOpen] =
+	const [, setSettingsEditProfileOpen] =
 		useState(false);
-	const [isMobileDevice, setIsMobileDevice] = useState(() => {
+	const [isLargeScreen, setIsLargeScreen] = useState(() => {
 		if (typeof window === "undefined") return false;
-		return (
-			window.innerWidth < 768 ||
-			window.matchMedia("(pointer: coarse)").matches
-		);
+		return window.innerWidth >= 768;
 	});
 
 	useEffect(() => {
 		if (typeof window === "undefined") return;
-		const checkMobile = () => {
-			setIsMobileDevice(
-				window.innerWidth < 768 ||
-				window.matchMedia("(pointer: coarse)").matches,
-			);
+		const checkScreen = () => {
+			setIsLargeScreen(window.innerWidth >= 768);
 		};
-		window.addEventListener("resize", checkMobile);
-		return () => window.removeEventListener("resize", checkMobile);
+		window.addEventListener("resize", checkScreen);
+		return () => window.removeEventListener("resize", checkScreen);
 	}, []);
 
 	useEffect(() => {
@@ -170,6 +183,38 @@ export default function App() {
 	useEffect(() => {
 		document.documentElement.classList.add("dark");
 		localStorage.setItem("orbit_theme", "dark");
+	}, []);
+
+	// Inject shimmer animation keyframes for suggestion skeletons
+	// The shimmer sweep (background-position) is on each .shimmer-bg child,
+	// while the stagger delay is passed via a CSS custom property from the parent row.
+	useEffect(() => {
+		const styleId = "shimmer-skeleton-style";
+		if (!document.getElementById(styleId)) {
+			const style = document.createElement("style");
+			style.id = styleId;
+			style.textContent = `
+				@keyframes shimmer {
+					0% { background-position: 200% 0; opacity: 0.6; }
+					50% { opacity: 1; }
+					100% { background-position: -200% 0; opacity: 0.6; }
+				}
+				.shimmer-bg {
+					background: linear-gradient(
+						90deg,
+						rgba(39, 39, 42, 0.6) 0%,
+						rgba(63, 63, 70, 0.6) 40%,
+						rgba(82, 82, 91, 0.3) 50%,
+						rgba(63, 63, 70, 0.6) 60%,
+						rgba(39, 39, 42, 0.6) 100%
+					);
+					background-size: 200% 100%;
+					animation: shimmer 1.5s ease-in-out infinite;
+					animation-delay: var(--shimmer-delay, 0s);
+				}
+			`;
+			document.head.appendChild(style);
+		}
 	}, []);
 
 	// Dynamic page title based on current tab — improves UX and browser history
@@ -248,6 +293,11 @@ export default function App() {
 
 	// Ref to track call partner ID for ICE restart signaling
 	const callPartnerIdRef = useRef<string | null>(null);
+	// Refs for async call acceptance (prevents stale closure issues)
+	const callAcceptDataRef = useRef<{
+		partnerId: string;
+		type: "audio" | "video";
+	} | null>(null);
 	// Timer ref for delayed ICE restart on temporary disconnects
 	const iceRestartTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -571,12 +621,21 @@ export default function App() {
 			};
 			document.addEventListener("visibilitychange", handleVisibility);
 
-			// Clean up the listener when socket disconnects
+			// Periodically send presence heartbeat so the server knows we're still online.
+			// Without this, a brief network blip (e.g. mobile backgrounding) can cause the
+			// user to fall out of the server's `onlineUsers` set, making them appear offline
+			// to chat partners until a full page refresh.
+			const presenceHeartbeatInterval = setInterval(() => {
+				socket.emit("presence:heartbeat");
+			}, 25000);
+
+			// Clean up the listener and interval when socket disconnects
 			socket.once("disconnect", () => {
 				document.removeEventListener(
 					"visibilitychange",
 					handleVisibility,
 				);
+				clearInterval(presenceHeartbeatInterval);
 			});
 		});
 
@@ -595,7 +654,39 @@ export default function App() {
 		});
 
 		// ── Realtime message updates when Chat.tsx is not mounted ──
-		// Keeps conversations list sorted with latest message even when user is on another tab
+		// Keeps conversations list sorted with latest message even when user is on another tab.
+		// NOTE: Do NOT update unreadCounts here — only update lastMessage and re-sort.
+
+		// Listen for message deletions from other users (or own action via personal room)
+		// This handler lives in App.tsx (not just Chat.tsx) because Chat.tsx unmounts when
+		// navigating away from the chat tab — without this handler, the conversations list
+		// would not update until a page reload.
+		socket.on("message:delete", ({ messageId }: { messageId: string }) => {
+			logger.info("App: Received message:delete event", { messageId });
+			setConversations((prev) =>
+				prev.map((c) => {
+					if (c.lastMessage?._id === messageId) {
+						return {
+							...c,
+							lastMessage: {
+								...c.lastMessage,
+								isDeleted: true,
+								text: "This message was deleted",
+								attachments: [],
+							},
+						};
+					}
+					return c;
+				}),
+			);
+		});
+
+		// ── Realtime message updates when Chat.tsx is not mounted ──
+		// Keeps conversations list sorted with latest message even when user is on another tab.
+		// Unread counts are managed by the `chat:notification` event (server-authoritative)
+		// and by Chat.tsx (active conversation → zero). Incrementing unreadCounts here
+		// would race with those handlers, causing badge counts to desync from the server
+		// and reappear on page refresh.
 		socket.on("message:new", (message: any) => {
 			logger.info("Received message:new in App.tsx", {
 				messageId: message._id,
@@ -606,20 +697,12 @@ export default function App() {
 					(c) => c._id === message.conversation,
 				);
 				if (!existing) return prev;
-				const isMeRecipient = message.recipient === userId;
 				return prev
 					.map((c) => {
 						if (c._id === message.conversation) {
-							const updatedUnread = isMeRecipient
-								? (c.unreadCounts?.[userId] || 0) + 1
-								: c.unreadCounts?.[userId] || 0;
 							return {
 								...c,
 								lastMessage: message,
-								unreadCounts: {
-									...c.unreadCounts,
-									[userId]: updatedUnread,
-								},
 							};
 						}
 						return c;
@@ -1176,6 +1259,12 @@ export default function App() {
 						partnerName: "Calling...",
 					};
 				}
+				// Store call accept data in a ref so the async onAcceptCall handler
+				// can access it without stale closure issues.
+				callAcceptDataRef.current = {
+					partnerId: data.callerId,
+					type: data.type,
+				};
 				setCallState({
 					type: data.type,
 					status: "incoming",
@@ -1313,6 +1402,13 @@ export default function App() {
 				);
 			},
 		);
+
+		socket.on("glimpse:reacted", (data: { glimpseId: string; userId: string; emoji: string; action: string; reactionsCount: number }) => {
+			logger.info("Received glimpse:reacted", data);
+			window.dispatchEvent(
+				new CustomEvent("glimpse:reacted", { detail: data }),
+			);
+		});
 
 		socket.on("glimpse:expired", (data: { glimpseId: string }) => {
 			logger.info("Received glimpse:expired", data);
@@ -1526,17 +1622,50 @@ export default function App() {
 
 			setCallState({ type, status: "outgoing", partnerId, partnerName });
 			try {
-				const stream = await navigator.mediaDevices.getUserMedia({
-					audio: {
-						echoCancellation: true,
-						noiseSuppression: true,
-						autoGainControl: true,
-						// ⚠️ Intentionally omitting sampleRate/channelCount.
-						// Letting the browser use its native audio format prevents
-						// AEC pipeline conflicts (resampling/downmixing) that cause echo.
-					},
-					video: type === "video",
-				});
+				let stream: MediaStream;
+				try {
+					stream = await navigator.mediaDevices.getUserMedia({
+						audio: {
+							echoCancellation: true,
+							noiseSuppression: true,
+							autoGainControl: true,
+							// ⚠️ Intentionally omitting sampleRate/channelCount.
+							// Letting the browser use its native audio format prevents
+							// AEC pipeline conflicts (resampling/downmixing) that cause echo.
+						},
+						video: type === "video" ? {
+							width: { ideal: 1280 },
+							height: { ideal: 720 },
+							frameRate: { ideal: 30 }
+						} : false,
+					});
+				} catch (videoErr) {
+					logger.warn("Caller: getUserMedia with HD video constraints failed, trying basic video constraints", videoErr);
+					try {
+						if (type === "video") {
+							stream = await navigator.mediaDevices.getUserMedia({
+								audio: {
+									echoCancellation: true,
+									noiseSuppression: true,
+									autoGainControl: true,
+								},
+								video: true,
+							});
+						} else {
+							throw videoErr;
+						}
+					} catch (fallbackErr) {
+						logger.warn("Caller: getUserMedia with basic video failed, falling back to audio only", fallbackErr);
+						stream = await navigator.mediaDevices.getUserMedia({
+							audio: {
+								echoCancellation: true,
+								noiseSuppression: true,
+								autoGainControl: true,
+							},
+							video: false,
+						});
+					}
+				}
 				localStreamRef.current = stream;
 
 				const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
@@ -1761,18 +1890,11 @@ export default function App() {
 			if (tab === "notifications") {
 				setBadgeCount(0);
 			}
-			// Clear chat badge when navigating to chat tab — clear unread counts so badge stays clear
+			// Clear only the aggregate chat badge when navigating to chat tab
+			// Per-conversation unread counts are managed by Chat.tsx (cleared when user opens that specific conversation)
 			if (tab === "chat") {
 				setChatBadgeCount(0);
-				setConversations((prev) =>
-					prev.map((c) => ({
-						...c,
-						unreadCounts: {
-							...c.unreadCounts,
-							[user?._id || ""]: 0,
-						},
-					})),
-				);
+				fetchConversations();
 			}
 			navigateToTab(tab);
 		},
@@ -1804,10 +1926,15 @@ export default function App() {
 				const data = await res.json();
 				if (res.ok && data.success) {
 					// If following is true, remove user from suggestions
+					// and then refresh with fresh recommendations from the server
 					if (data.following) {
 						setSuggestions((prev) =>
 							prev.filter((u) => u._id !== userId),
 						);
+						// After a brief delay to let the removal settle,
+						// fetch fresh suggestions — the server now excludes the
+						// just-followed user and the suggestions cache was cleared.
+						setTimeout(() => fetchSuggestions(), 400);
 					}
 				} else {
 					throw new Error(
@@ -1880,7 +2007,7 @@ export default function App() {
 		<ErrorBoundary>
 			<div className="relative isolate z-0 min-h-dvh h-dvh mobile-shell text-slate-800 dark:text-zinc-100 selection:bg-zinc-800/10 dark:selection:bg-white/10 antialiased font-ui flex flex-col justify-start bg-transparent transition-colors duration-500 overflow-x-hidden">
 				{/* Background Liquid Glob Dynamic Mesh Grid */}
-				<BackgroundGradients />
+				{isLargeScreen && <BackgroundGradients />}
 
 				{/* Global Fullscreen Image Viewer Modal (lazy) */}
 				<Suspense fallback={null}>
@@ -1924,7 +2051,7 @@ export default function App() {
 									id="auth-section"
 									className="min-h-screen w-full flex flex-col items-center justify-center px-6 py-20 relative z-10 bg-transparent overflow-hidden">
 									<div className="absolute inset-0 w-full h-full pointer-events-none select-none z-0 opacity-40 mix-blend-screen">
-										{!isMobileDevice && (
+										{isLargeScreen && (
 											<Suspense fallback={null}>
 												<LiquidEther
 													colors={[
@@ -2078,7 +2205,7 @@ export default function App() {
 											/>
 
 											<div className="space-y-1">
-												<span className="text-[9px] font-extrabold uppercase tracking-widest text-zinc-600 dark:text-zinc-400">
+												<span className="text-[10px] font-extrabold uppercase tracking-widest text-zinc-600 dark:text-zinc-400">
 													⚡ INSTANT NOTIFICATION
 												</span>
 												<p className="text-xs text-zinc-200 leading-snug">
@@ -2091,7 +2218,7 @@ export default function App() {
 												</p>
 
 												{alert.post && (
-													<p className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-450 leading-none truncate max-w-50">
+													<p className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-450 leading-none truncate max-w-50">
 														"{alert.post?.title}"
 													</p>
 												)}
@@ -2117,12 +2244,12 @@ export default function App() {
 
 							{/* Main Content Area Routing with Global Full Widescreen Grid */}
 							{publicFeedMode && !user && (
-								<div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800/50 bg-zinc-950/80 backdrop-blur-xl">
+								<div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-zinc-800/50 bg-zinc-950/80 backdrop-blur-xl">
 									<div>
 										<h2 className="text-sm font-bold text-white">
 											Explore Public Feed
 										</h2>
-										<p className="text-[10px] text-zinc-400 mt-0.5">
+										<p className="text-[11px] text-zinc-400 mt-0.5">
 											Browsing posts — sign in to interact
 										</p>
 									</div>
@@ -2133,7 +2260,7 @@ export default function App() {
 												setShowSignupForm(false);
 												scrollToAuthSection();
 											}}
-											className="rounded-full bg-white/10 hover:bg-white/20 border border-zinc-700/50 px-4 py-1.5 text-[10px] font-bold text-zinc-200 transition-all cursor-pointer">
+											className="rounded-full bg-white/10 hover:bg-white/20 border border-zinc-700/50 px-4 py-1.5 text-[12px] md:text-sm font-bold text-zinc-200 transition-all cursor-pointer">
 											Sign In
 										</button>
 										<button
@@ -2142,7 +2269,7 @@ export default function App() {
 												setShowSignupForm(true);
 												scrollToSignupSection();
 											}}
-											className="rounded-full bg-white text-black hover:bg-zinc-200 px-4 py-1.5 text-[10px] font-bold transition-all cursor-pointer">
+											className="rounded-full bg-white text-black hover:bg-zinc-200 px-4 py-1.5 text-[12px] md:text-sm font-bold transition-all cursor-pointer">
 											Create Account
 										</button>
 									</div>
@@ -2153,7 +2280,7 @@ export default function App() {
 									<div className={`w-full h-full max-w-none lg:max-w-7xl ${currentTab === "chat" && hasActiveConversation ? "px-1" : "px-1.5"} lg:px-8 mx-auto overflow-hidden`}>
 										<div className="grid grid-cols-1 md:grid-cols-12 gap-0 md:gap-6 lg:gap-7 items-stretch w-full h-full">
 											{user && (
-												<div className={`hidden md:block md:col-span-4 lg:col-span-3 h-full overflow-hidden shrink-0 pb-12 pt-3.5 lg:pl-0 lg:pt-0 ${currentTab === "chat" && hasActiveConversation ? "pl-1.5" : "pl-3.5"}`}>
+												<div className={`hidden md:block md:col-span-4 lg:col-span-3 h-full overflow-hidden shrink-0 pb-safe-bottom pt-3.5 lg:pt-0 ${currentTab === "chat" && hasActiveConversation ? "lg:pr-1.5" : ""}`}>
 													<LeftSidebar
 														user={user}
 														currentTab={currentTab}
@@ -2193,7 +2320,7 @@ export default function App() {
 														: !user
 															? "col-span-12 overflow-y-auto"
 															: "md:col-span-8 lg:col-span-6 xl:col-span-6 overflow-y-auto"
-												} w-full h-full ${currentTab === "chat" ? "pb-0" : "pb-24 md:pb-0"} ${currentTab === "chat" && hasActiveConversation ? "pt-1.5 pr-0 md:pt-3.5 md:pr-1.5 lg:pt-0 lg:pr-0" : "md:pr-3.5 md:pt-3.5 lg:pr-0 lg:pt-0"}`}>
+												} w-full h-full ${currentTab === "chat" ? "pb-0" : "pb-24 md:pb-0"} ${currentTab === "chat" && hasActiveConversation ? "pt-1.5 pr-0 md:pt-3.5 lg:pt-0" : "md:pr-3.5 md:pt-3.5 lg:pt-0"}`}>
 
 												{commentsOpen && (
 													<motion.button
@@ -2550,51 +2677,77 @@ export default function App() {
 											</div>{" "}
 											{/* Right Sidebar: Dual Liquid Glass Containers for Suggestions & Features */}
 											{user && currentTab !== "chat" && (
-												<div className="lg:col-span-3 w-full space-y-5 hidden lg:flex flex-col h-full overflow-hidden select-none shrink-0 pb-24">
+												<div className="lg:col-span-3 w-full space-y-5 hidden lg:flex flex-col h-full overflow-hidden select-none shrink-0 pb-safe-bottom">
 													{/* 1. People Recommendations Box with macOS spring animations */}
 													<GlassCard
 														animate={true}
 														className="p-6">
-														<h3 className="text-[10px] font-black tracking-widest text-zinc-400 dark:text-zinc-550 uppercase mb-4 pr-0.5">
+														<h3 className="text-[11px] font-black tracking-widest text-zinc-400 dark:text-zinc-550 uppercase mb-4 pr-0.5">
 															RECOMMENDED USERS
 														</h3>
 
-														{loadingSuggestions ? (
-															<div className="space-y-4 py-2">
-																{[1, 2, 3].map(
-																	(n) => (
-																		<div
-																			key={
-																				n
-																			}
-																			className="flex items-center gap-3 animate-pulse">
-																			<div className="h-9 w-9 rounded-full bg-zinc-200 dark:bg-zinc-800/60" />
-																			<div className="flex-1 space-y-1.5">
-																				<div className="h-3 w-2/3 bg-zinc-200 dark:bg-zinc-800/60 rounded" />
-																				<div className="h-2 w-1/3 bg-zinc-200 dark:bg-zinc-800/60 rounded" />
+														<AnimatePresence mode="wait">
+															{loadingSuggestions ? (
+																<motion.div
+																	key="loading"
+																	initial={{ opacity: 0 }}
+																	animate={{ opacity: 1 }}
+																	exit={{ opacity: 0 }}
+																	transition={{ duration: 0.2 }}
+																	className="space-y-4 py-2">
+																	{[1, 2, 3].map(
+																		(n) => (
+																			<div
+																				key={n}
+																				className="flex items-center justify-between gap-3"
+																				style={{
+																					'--shimmer-delay': `${(n - 1) * 0.15}s`,
+																				} as React.CSSProperties}>
+																				<div className="flex items-center gap-3">
+																					{/* Avatar shimmer */}
+																					<div className="h-9 w-9 rounded-full shimmer-bg shrink-0" />
+																					<div className="flex flex-col gap-1.5">
+																						{/* Name shimmer — same width as text-xs extrabold */}
+																						<div className="h-3 w-[88px] shimmer-bg rounded" />
+																						{/* Username shimmer — same width as [10px] font-bold */}
+																						<div className="h-[10px] w-[64px] shimmer-bg rounded" />
+																					</div>
+																				</div>
+																				{/* Follow button shimmer */}
+																				<div className="h-9 w-9 rounded-full shimmer-bg shrink-0" />
 																			</div>
-																		</div>
-																	),
-																)}
-															</div>
-														) : suggestions.length ===
-															0 ? (
-															<p className="text-[10px] text-zinc-400 dark:text-zinc-550 pl-0.5 py-4 leading-relaxed font-mono uppercase">
-																No new
-																recommendations
-																at this time
-															</p>
-														) : (
-															<div className="space-y-4">
-																{suggestions.map(
-																	(
-																		sugUser,
-																	) => (
-																		<div
-																			key={
-																				sugUser._id
-																			}
-																			className="flex items-center justify-between gap-3 group/item">
+																		),
+																	)}
+																</motion.div>
+															) : suggestions.length === 0 ? (
+																<motion.p
+																	key="empty"
+																	initial={{ opacity: 0, y: 5 }}
+																	animate={{ opacity: 1, y: 0 }}
+																	exit={{ opacity: 0, y: -5 }}
+																	transition={{ duration: 0.2 }}
+																	className="text-[11px] text-zinc-400 dark:text-zinc-550 pl-0.5 py-4 leading-relaxed font-mono uppercase">
+																	No new recommendations at this time
+																</motion.p>
+															) : (
+																<motion.div
+																	key="cards"
+																	initial={{ opacity: 0 }}
+																	animate={{ opacity: 1 }}
+																	exit={{ opacity: 0 }}
+																	transition={{ duration: 0.2 }}
+																	className="space-y-4">
+																	<AnimatePresence mode="popLayout">
+																		{suggestions.map(
+																			(sugUser) => (
+																				<motion.div
+																					key={sugUser._id}
+																					layout
+																					initial={{ opacity: 0, y: 16, scale: 0.95 }}
+																					animate={{ opacity: 1, y: 0, scale: 1 }}
+																					exit={{ opacity: 0, y: -8, scale: 0.9 }}
+																					transition={{ duration: 0.25, ease: "easeOut" }}
+																					className="flex items-center justify-between gap-3 group/item">
 																			<div
 																				onClick={() =>
 																					handleUserSelection(
@@ -2617,7 +2770,7 @@ export default function App() {
 																							sugUser.fullName
 																						}
 																					</span>
-																					<span className="text-[9px] font-bold text-zinc-400 dark:text-zinc-550">
+																					<span className="text-[10px] font-bold text-zinc-400 dark:text-zinc-550">
 																						@
 																						{
 																							sugUser.username
@@ -2661,12 +2814,13 @@ export default function App() {
 																				) : (
 																					<UserPlus className="h-4 w-4" />
 																				)}
-																			</motion.button>
-																		</div>
-																	),
-																)}
-															</div>
-														)}
+																			</motion.button>																			</motion.div>
+																			),
+																		)}
+																	</AnimatePresence>
+																</motion.div>
+															)}
+														</AnimatePresence>
 														{suggestions.length >
 															0 && (
 																<button
@@ -2827,6 +2981,12 @@ export default function App() {
 								setCallState(null);
 							}}
 							onAcceptCall={async () => {
+								// Snapshot ref values at the START of the async flow
+								// to avoid stale closure issues with callState.
+								const acceptData = callAcceptDataRef.current;
+								const partnerId = acceptData?.partnerId || callState.partnerId;
+								const callType = acceptData?.type || callState.type;
+
 								try {
 									// Clean up any existing PC/stream
 									if (peerConnectionRef.current) {
@@ -2837,24 +2997,65 @@ export default function App() {
 											.getTracks()
 											.forEach((t) => t.stop());
 									}
-									const stream =
-										await navigator.mediaDevices.getUserMedia(
-											{
+									let stream: MediaStream;
+									try {
+										stream = await navigator.mediaDevices.getUserMedia({
+											audio: {
+												echoCancellation: true,
+												noiseSuppression: true,
+												autoGainControl: true,
+											},
+											video: callType === "video" ? {
+												width: { ideal: 1280 },
+												height: { ideal: 720 },
+												frameRate: { ideal: 30 }
+											} : false,
+										});
+									} catch (videoErr) {
+										logger.warn("Callee: getUserMedia with HD video constraints failed, trying basic video constraints", videoErr);
+										try {
+											if (callType === "video") {
+												stream = await navigator.mediaDevices.getUserMedia({
+													audio: {
+														echoCancellation: true,
+														noiseSuppression: true,
+														autoGainControl: true,
+													},
+													video: true,
+												});
+											} else {
+												throw videoErr;
+											}
+										} catch (fallbackErr) {
+											logger.warn("Callee: getUserMedia with basic video failed, falling back to audio only", fallbackErr);
+											stream = await navigator.mediaDevices.getUserMedia({
 												audio: {
 													echoCancellation: true,
 													noiseSuppression: true,
 													autoGainControl: true,
 												},
-												video:
-													callState.type === "video",
-											},
-										);
+												video: false,
+											});
+										}
+									}
 									localStreamRef.current = stream;
 
 									const pc = new RTCPeerConnection({
 										iceServers: ICE_SERVERS,
 									});
 									peerConnectionRef.current = pc;
+
+									// Set remote description first so transceivers are initialized from the offer
+									const offer = pendingCallOfferRef.current;
+									if (offer?.sdp) {
+										await pc.setRemoteDescription(
+											new RTCSessionDescription(
+												offer.sdp,
+											),
+										);
+									} else {
+										throw new Error("No pending offer found to accept");
+									}
 
 									// Add audio track
 									stream
@@ -2863,51 +3064,22 @@ export default function App() {
 											pc.addTrack(track, stream),
 										);
 
-									// Add video track via addTransceiver for SVC (same as caller setup)
+									// Add video tracks (browser will automatically bind to offered transceivers)
 									const videoTracks = stream.getVideoTracks();
 									if (
-										callState.type === "video" &&
+										callType === "video" &&
 										videoTracks.length > 0
 									) {
-										const videoCodec =
-											getPreferredVideoCodec();
-										const videoTransceiver =
-											pc.addTransceiver(videoTracks[0], {
-												streams: [stream],
-												direction: "sendrecv",
-												sendEncodings: [
-													{
-														rid: "q",
-														active: true,
-														maxBitrate: 2_500_000,
-													},
-												],
-											});
-										if (videoCodec) {
-											try {
-												(
-													videoTransceiver as any
-												).setCodecPreferences([
-													videoCodec,
-												]);
-											} catch {
-												/* codec preference not supported */
-											}
-										}
-										for (
-											let i = 1;
-											i < videoTracks.length;
-											i++
-										) {
-											pc.addTrack(videoTracks[i], stream);
-										}
+										videoTracks.forEach((track) =>
+											pc.addTrack(track, stream),
+										);
 									}
 
 									pc.onicecandidate = (e) => {
 										if (e.candidate) {
 											socket.emit("call:ice-candidate", {
 												targetUserId:
-													callState.partnerId,
+													partnerId,
 												candidate: e.candidate,
 											});
 										}
@@ -2918,7 +3090,6 @@ export default function App() {
 											"Call: received remote track (callee)",
 											{ kind: e.track.kind },
 										);
-										// Store the remote stream immediately in the ref so CallUI can wire it
 										const stream = e.streams[0];
 										if (stream) {
 											remoteStreamRef.current = stream;
@@ -2934,15 +3105,12 @@ export default function App() {
 
 									// ── ICE connection state monitoring (callee) ─────
 									callPartnerIdRef.current =
-										callState.partnerId;
+										partnerId;
 									pc.oniceconnectionstatechange = () => {
 										const state = pc.iceConnectionState;
 										logger.info(
 											"ICE connection state changed (callee)",
-											{
-												state,
-												partnerId: callState.partnerId,
-											},
+											{ state, partnerId },
 										);
 										setIceConnectionState(state);
 
@@ -2997,37 +3165,29 @@ export default function App() {
 										}
 									};
 
-									const offer = pendingCallOfferRef.current;
-									if (offer?.sdp) {
-										await pc.setRemoteDescription(
-											new RTCSessionDescription(
-												offer.sdp,
-											),
-										);
-										const answer = await pc.createAnswer();
-										answer.sdp = setOpusBitrate(
-											answer.sdp || "",
-										);
-										await pc.setLocalDescription(answer);
+									const answer = await pc.createAnswer();
+									answer.sdp = setOpusBitrate(
+										answer.sdp || "",
+									);
+									await pc.setLocalDescription(answer);
 
-										// Configure VP9 SVC for adaptive video quality (callee side)
-										if (callState.type === "video") {
-											tryConfigureVideoSvc(pc).catch(
-												() => { },
-											);
-										}
-
-										socket.emit("call:answer", {
-											targetUserId: callState.partnerId,
-											sdp: pc.localDescription,
-										});
+									// Configure VP9 SVC for adaptive video quality (callee side)
+									if (callType === "video") {
+										tryConfigureVideoSvc(pc).catch(
+											() => { },
+										);
 									}
 
+									socket.emit("call:answer", {
+										targetUserId: partnerId,
+										sdp: pc.localDescription,
+									});
+
 									// Start bandwidth-aware bitrate monitor (callee side)
-									if (callState.type === "video") {
+									if (callType === "video") {
 										const stopMonitor = startBitrateMonitor(
 											pc,
-											callState.type,
+											callType,
 										);
 										(pc as any).__bitrateMonitorCleanup =
 											stopMonitor;
@@ -3039,7 +3199,7 @@ export default function App() {
 											? { ...prev, status: "active" }
 											: prev,
 									);
-								} catch (err) {
+								} catch (err: any) {
 									logger.error("Failed to accept call", err);
 									if (localStreamRef.current) {
 										localStreamRef.current
@@ -3053,7 +3213,8 @@ export default function App() {
 										new CustomEvent("showToast", {
 											detail: {
 												message:
-													"Failed to accept call.",
+													"Failed to accept call. " +
+													(err?.message || "Please try again."),
 												type: "error",
 											},
 										}),

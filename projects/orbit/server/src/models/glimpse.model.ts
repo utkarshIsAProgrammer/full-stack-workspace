@@ -33,35 +33,34 @@ const glimpseSchema = new mongoose.Schema(
         },
       ],
       default: [],
-      validate: {
-        validator: function (v: any[]) {
-          return v.length <= 1;
-        },
-        message: "Maximum 1 viewer allowed!",
-      },
     },
 
-    maxViews: {
-      type: Number,
-      default: 1,
+    reactions: {
+      type: [
+        {
+          user: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            required: true,
+          },
+          emoji: {
+            type: String,
+            required: true,
+          },
+          createdAt: { type: Date, default: Date.now },
+        },
+      ],
+      default: [],
     },
 
     expiresAt: {
       type: Date,
       required: true,
+      default: () => new Date(Date.now() + 12 * 60 * 60 * 1000), // 12 hours
     },
   },
   { timestamps: true, collection: "glances" }
 );
-
-// Virtual: how many views are remaining
-glimpseSchema.virtual("viewsRemaining").get(function () {
-  return Math.max(0, this.maxViews - this.viewers.length);
-});
-
-// Ensure virtuals are included in JSON/output
-glimpseSchema.set("toJSON", { virtuals: true });
-glimpseSchema.set("toObject", { virtuals: true });
 
 // TTL index — MongoDB auto-deletes documents after expiresAt
 glimpseSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

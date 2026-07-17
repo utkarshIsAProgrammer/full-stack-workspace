@@ -10,7 +10,6 @@ import {
 	Bookmark,
 	Send,
 	Image,
-	Video,
 	Loader2,
 	Eye,
 	Share2,
@@ -19,6 +18,9 @@ import {
 	MessageCircle,
 	Pencil,
 	RotateCcw,
+	Play,
+	Volume2,
+	VolumeX,
 } from "lucide-react";
 import { Post, Comment, User } from "../types";
 import GlassCard from "./GlassCard";
@@ -255,6 +257,34 @@ export default function Feed({
 	const [error, setError] = useState<string | null>(null);
 
 	const containerRef = useRef<HTMLDivElement>(null);
+
+	// Video playback state per post
+	const [videoEnded, setVideoEnded] = useState<Record<string, boolean>>({});
+	const [videoMuted, setVideoMuted] = useState<Record<string, boolean>>({});
+	const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
+
+	const handleVideoEnded = (postId: string) => {
+		setVideoEnded((prev) => ({ ...prev, [postId]: true }));
+	};
+
+	const handleReplayVideo = (postId: string, e: React.MouseEvent) => {
+		e.stopPropagation();
+		const video = videoRefs.current[postId];
+		if (video) {
+			video.currentTime = 0;
+			video.play().catch(() => {});
+			setVideoEnded((prev) => ({ ...prev, [postId]: false }));
+		}
+	};
+
+	const handleToggleMute = (postId: string, e: React.MouseEvent) => {
+		e.stopPropagation();
+		const video = videoRefs.current[postId];
+		if (video) {
+			video.muted = !video.muted;
+			setVideoMuted((prev) => ({ ...prev, [postId]: !prev[postId] }));
+		}
+	};
 
 	// Pull-to-refresh state
 	const [pullDistance, setPullDistance] = useState(0);
@@ -560,12 +590,15 @@ export default function Feed({
 							}
 							return c;
 						});
-						// Also add the reply to the comments list so CommentNode's reply fetching finds it
-						if (
-							!updated.some((c) => c._id === replyWithParent._id)
-						) {
-							return [replyWithParent, ...updated];
-						}
+						// Dispatch to the parent CommentNode instead of adding to top-level list
+						window.dispatchEvent(
+							new CustomEvent("commentReplyAdded", {
+								detail: {
+									parentCommentId,
+									reply: replyWithParent,
+								},
+							}),
+						);
 						return updated;
 					}
 					return [comment, ...prev];
@@ -1471,10 +1504,57 @@ export default function Feed({
 		}
 	};
 
-	// Trigger post view registration after 2 seconds
+	// Trigger post view registration via API
 	const registerViewCount = (postId: string) => {
 		apiFetch(`/api/posts/${postId}/view`, { method: "POST" });
 	};
+
+	// IntersectionObserver-based view tracking with 3s visibility requirement
+	const viewTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+	const viewTrackedRef = useRef<Set<string>>(new Set());
+
+	useEffect(() => {
+		if (loading || posts.length === 0) return;
+
+		const observer = new IntersectionObserver(
+			(entries) => {
+				entries.forEach((entry) => {
+					const postId = entry.target.getAttribute("data-post-id");
+					if (!postId) return;
+
+					if (entry.isIntersecting) {
+						// Start 3-second timer if not already tracked or pending
+						if (!viewTrackedRef.current.has(postId) && !viewTimersRef.current.has(postId)) {
+							const timer = setTimeout(() => {
+								viewTrackedRef.current.add(postId);
+								registerViewCount(postId);
+								viewTimersRef.current.delete(postId);
+							}, 3000);
+							viewTimersRef.current.set(postId, timer);
+						}
+					} else {
+						// Left viewport before 3 seconds — cancel timer
+						const timer = viewTimersRef.current.get(postId);
+						if (timer) {
+							clearTimeout(timer);
+							viewTimersRef.current.delete(postId);
+						}
+					}
+				});
+			},
+			{ threshold: 0.3 },
+		);
+
+		// Observe all post cards
+		const postCards = document.querySelectorAll("[data-post-id]");
+		postCards.forEach((card) => observer.observe(card));
+
+		return () => {
+			observer.disconnect();
+			viewTimersRef.current.forEach((timer) => clearTimeout(timer));
+			viewTimersRef.current.clear();
+		};
+	}, [posts, loading]);
 
 	// Comments Loading mechanics for expanded threads drawer
 	const loadComments = async (postId: string) => {
@@ -1533,11 +1613,27 @@ export default function Feed({
 				setReplyToCommentId(null);
 				// Directly prepend the returned comment for instant feedback
 				if (data.comment) {
-					setComments((prev) => {
-						if (prev.some((c) => c._id === data.comment._id))
-							return prev;
-						return [data.comment, ...prev];
-					});
+					// If it's a reply, dispatch to the parent CommentNode
+					if (data.comment.parent) {
+						const parentId = typeof data.comment.parent === "object"
+							? data.comment.parent._id || data.comment.parent
+							: data.comment.parent;
+						window.dispatchEvent(
+							new CustomEvent("commentReplyAdded", {
+								detail: {
+									parentCommentId: parentId,
+									reply: data.comment,
+								},
+							}),
+						);
+					} else {
+						// Top-level comment — prepend
+						setComments((prev) => {
+							if (prev.some((c) => c._id === data.comment._id))
+								return prev;
+							return [data.comment, ...prev];
+						});
+					}
 				}
 			} else {
 				// Rollback on failure
@@ -1664,7 +1760,7 @@ export default function Feed({
 							marginTop: isRefreshing ? 0 : -pullDistance / 2,
 						}}>
 						<div
-							className={`flex items-center gap-2 text-[10px] text-zinc-400 ${isRefreshing ? "" : ""}`}>
+							className={`flex items-center gap-2 text-[11px] text-zinc-400 ${isRefreshing ? "" : ""}`}>
 							<svg
 								className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
 								style={
@@ -1703,7 +1799,7 @@ export default function Feed({
 				<div className="mb-6 px-1.5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
 					<div className="min-w-0">
 						{" "}
-						<h2 className="font-sans text-xl md:text-3xl font-bold tracking-tight text-slate-900 dark:text-zinc-100">
+						<h2 className="font-sans text-2xl md:text-4xl font-bold tracking-tight text-slate-900 dark:text-zinc-100">
 							{searchQuery
 								? `Search Results: "${searchQuery}"`
 								: showSavesOnly
@@ -1712,7 +1808,7 @@ export default function Feed({
 										? "Your Reposts"
 										: "Home Feed"}
 						</h2>
-						<p className="text-sm text-slate-500 dark:text-zinc-400">
+						<p className="text-base text-slate-500 dark:text-zinc-400">
 							{searchQuery
 								? "Relevant posts matching your search."
 								: showSavesOnly
@@ -1729,7 +1825,7 @@ export default function Feed({
 								if (onClearSinglePost) onClearSinglePost();
 								setSelectedPost(null);
 							}}
-							className="flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900 px-4 py-1.5 text-xs font-bold text-zinc-300 transition-all hover:bg-zinc-800 hover:text-white hover:border-zinc-500/25 cursor-pointer">
+							className="flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900 px-4 py-1.5 text-[12px] md:text-sm font-bold text-zinc-300 transition-all hover:bg-zinc-800 hover:text-white hover:border-zinc-500/25 cursor-pointer">
 							<X className="h-3.5 w-3.5" /> Close Filter
 						</button>
 					)}
@@ -1769,7 +1865,7 @@ export default function Feed({
 												className="h-9 w-9 shrink-0 self-start rounded-full object-cover border border-zinc-800 shadow-sm cursor-pointer hover:opacity-80 transition-opacity"
 											/>
 
-											<div className="w-full space-y-3">
+											<div className="flex-1 min-w-0 space-y-3">
 												{/* Post Title input */}
 												<div className="flex items-center gap-2">
 													<input
@@ -1785,7 +1881,7 @@ export default function Feed({
 																"title",
 															);
 														}}
-														className="flex-1 bg-transparent text-xs font-bold text-white placeholder-zinc-500 outline-none focus:placeholder-zinc-400"
+														className="flex-1 bg-transparent text-[12px] md:text-sm font-bold text-white placeholder-zinc-500 outline-none focus:placeholder-zinc-400 rounded-none"
 													/>
 													<CharCounter
 														current={title.length}
@@ -1805,7 +1901,7 @@ export default function Feed({
 														onChange={
 															handleContentChange
 														}
-														className="w-full bg-transparent text-[11px] text-zinc-300 placeholder-zinc-500 outline-none resize-none leading-relaxed focus:placeholder-zinc-400 relative"
+														className="w-full bg-transparent text-[12px] md:text-sm text-zinc-300 placeholder-zinc-500 outline-none resize-none leading-relaxed focus:placeholder-zinc-400 relative rounded-none px-1"
 													/>
 													<div className="flex items-center justify-end">
 														<CharCounter
@@ -1826,7 +1922,7 @@ export default function Feed({
 														candidateUsers.length >
 															0 && (
 															<div className="absolute top-full left-0 z-50 w-64 max-w-[calc(100vw-2rem)] rounded-3xl border border-zinc-800 bg-zinc-900 p-2.5 shadow-xl">
-																<p className="px-2.5 pb-1.5 text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+																<p className="px-2.5 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
 																	People to
 																	Mention
 																</p>
@@ -1842,7 +1938,7 @@ export default function Feed({
 																						u.username,
 																					)
 																				}
-																				className="flex items-center gap-2.5 rounded-full px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer">
+																				className="flex items-center gap-2.5 rounded-full px-2.5 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer">
 																				<UserAvatar
 																					src={
 																						u
@@ -1853,12 +1949,12 @@ export default function Feed({
 																					className="h-5.5 w-5.5 rounded-full object-cover border border-zinc-800"
 																				/>
 																				<div>
-																					<p className="font-bold text-zinc-200 text-[11px]">
+																					<p className="font-bold text-zinc-200 text-[12px]">
 																						{
 																							u.fullName
 																						}
 																					</p>
-																					<p className="text-[10px] text-zinc-500">
+																					<p className="text-[11px] text-zinc-500">
 																						@
 																						{
 																							u.username
@@ -1965,13 +2061,12 @@ export default function Feed({
 										{/* Video preview in composer */}
 										{postVideoPreview && (
 											<div className="mt-2 relative overflow-hidden rounded-2xl border border-zinc-800 bg-black/60 max-w-md">
-												<video
-													src={postVideoPreview}
-													className="w-full max-h-48"
-													controls
-													preload="metadata"
-													playsInline
-												/>
+								<video
+									src={postVideoPreview}
+									className="w-full max-h-48"
+									preload="metadata"
+									playsInline
+								/>
 												<button
 													type="button"
 													onClick={() => {
@@ -2086,7 +2181,7 @@ export default function Feed({
 											<button
 												type="submit"
 												disabled={submittingPost}
-												className={`flex items-center gap-1.5 rounded-full bg-white text-xs font-bold text-black hover:bg-zinc-100 transition-all disabled:opacity-40 cursor-pointer shadow-sm animate-none ${
+												className={`flex items-center gap-1.5 rounded-full bg-white text-[12px] md:text-sm font-bold text-black hover:bg-zinc-100 transition-all disabled:opacity-40 cursor-pointer shadow-sm animate-none ${
 													isKeyboardOpen
 														? "px-4 py-2"
 														: "px-5 py-2.5"
@@ -2117,14 +2212,14 @@ export default function Feed({
 									) : (
 										<Sparkles className="h-8 w-8 text-zinc-500/40 animate-pulse" />
 									)}
-									<h3 className="mt-4 text-base font-bold text-zinc-200">
+									<h3 className="mt-4 text-lg font-bold text-zinc-200">
 										{showSavesOnly
 											? "No Saved Posts"
 											: showRepostsOnly
 												? "No Reposts Yet"
 												: "No Posts Available"}
 									</h3>
-									<p className="mx-auto mt-2 max-w-sm text-xs text-zinc-400 leading-relaxed">
+									<p className="mx-auto mt-2 max-w-sm text-sm text-zinc-400 leading-relaxed">
 										{showSavesOnly
 											? "Save posts to curate your personal collection—they will appear here for quick access."
 											: showRepostsOnly
@@ -2205,7 +2300,7 @@ export default function Feed({
 																		: "🔄"}
 																</span>
 																<span
-																	className={`text-[9px] font-bold uppercase tracking-wider ${swipeOffset > 0 ? "text-red-400" : "text-green-400"}`}>
+																	className={`text-[10px] font-bold uppercase tracking-wider ${swipeOffset > 0 ? "text-red-400" : "text-green-400"}`}>
 																	{swipeOffset >
 																	0
 																		? "Like"
@@ -2275,10 +2370,9 @@ export default function Feed({
 																					.author
 																					.username,
 																			)
-																		}
-																		className="font-sans text-xs font-bold text-white cursor-pointer hover:underline"
-																		role="button"
-																		tabIndex={
+																		}className="font-sans text-sm font-bold text-white cursor-pointer hover:underline"
+																						role="button"
+																						tabIndex={
 																			0
 																		}
 																		onKeyPress={(
@@ -2298,7 +2392,7 @@ export default function Feed({
 																				.fullName
 																		}
 																	</h4>
-																	<p className="text-[10px] text-zinc-400 font-bold">
+																	<p className="text-[11px] text-zinc-400 font-bold">
 																		@
 																		{
 																			post
@@ -2320,11 +2414,11 @@ export default function Feed({
 
 														{/* Content block */}
 														<div className="space-y-2.5">
-															<h3 className="font-sans text-base md:text-lg font-bold text-zinc-100 tracking-tight leading-snug">
+															<h3 className="font-sans text-lg md:text-xl font-bold text-zinc-100 tracking-tight leading-snug">
 																{post.title}
 															</h3>
 															<div className="space-y-1">
-																<p className="text-sm md:text-base text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">
+																<p className="text-base md:text-lg text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">
 																	{renderFormattedContent(
 																		post.content && post.content.length > 300 && !expandedPosts[post._id]
 																			? post.content.slice(0, 300) + "..."
@@ -2340,7 +2434,7 @@ export default function Feed({
 																				[post._id]: !prev[post._id],
 																			}));
 																		}}
-																		className="text-xs font-bold text-zinc-400 hover:text-white transition-colors cursor-pointer block mt-1">
+																		className="text-sm font-bold text-zinc-400 hover:text-white transition-colors cursor-pointer block mt-1">
 																		{expandedPosts[post._id] ? "See less" : "See more"}
 																	</button>
 																)}
@@ -2350,22 +2444,45 @@ export default function Feed({
 														{/* Video attachment */}
 														{post.video?.url ? (
 															<div className="mt-4 overflow-hidden rounded-2xl border border-zinc-800 bg-black/60">
+																<div className="relative">
 																<video
+																	ref={(el) => { videoRefs.current[post._id] = el; }}
 																	src={
 																		post
 																			.video
 																			.url
-																	}
+																		}
 																	className="w-full max-h-96"
-																	controls
 																	preload="metadata"
+																	autoPlay
+																	muted={videoMuted[post._id] ?? true}
 																	playsInline
-																	onPlay={() =>
-																		registerViewCount(
-																			post._id,
-																		)
-																	}
+																	loop={false}
+																	onEnded={() => handleVideoEnded(post._id)}
 																/>
+																{/* Mute toggle button */}
+																<button
+																	onClick={(e) => handleToggleMute(post._id, e)}
+																	className="absolute bottom-3 left-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/50 hover:bg-black/70 text-white transition-all cursor-pointer"
+																	title={videoMuted[post._id] ? "Unmute" : "Mute"}
+																>
+																	{videoMuted[post._id] ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+																</button>
+																{/* Replay overlay */}
+																{videoEnded[post._id] && (
+																	<div
+																		className="absolute inset-0 flex items-center justify-center bg-black/30 cursor-pointer z-10"
+																		onClick={(e) => handleReplayVideo(post._id, e)}
+																	>
+																		<div className="flex flex-col items-center gap-2">
+																			<div className="rounded-full bg-white/20 p-4 backdrop-blur-sm hover:bg-white/30 transition-all">
+																				<Play className="h-7 w-7 text-white fill-white" />
+																			</div>
+																			<span className="text-xs font-bold text-white/80">Replay</span>
+																		</div>
+																	</div>
+																)}
+															</div>
 															</div>
 														) : null}
 
@@ -2377,11 +2494,6 @@ export default function Feed({
 																<ImageCarousel
 																	images={
 																		post.images
-																	}
-																	onImageLoad={() =>
-																		registerViewCount(
-																			post._id,
-																		)
 																	}
 																	onImageClick={(
 																		url,
@@ -2420,11 +2532,6 @@ export default function Feed({
 																			.url
 																	}
 																	alt="attachment media"
-																	onLoad={() =>
-																		registerViewCount(
-																			post._id,
-																		)
-																	}
 																	className="w-full object-cover aspect-4/5 max-h-200 transition-transform duration-500 group-hover/image:scale-[1.02]"
 																/>
 															</div>
@@ -2441,7 +2548,7 @@ export default function Feed({
 																		!!post.likedByMe,
 																	)
 																}
-																className={`flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
+																className={`flex items-center gap-1.5 text-sm font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
 																aria-label={`${post.likedByMe ? "Unlike" : "Like"} post (${post.likesCount} likes)`}>
 																<motion.span
 																	whileTap={
@@ -2493,7 +2600,7 @@ export default function Feed({
 																		post._id,
 																	);
 																}}
-																className={`flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
+																className={`flex items-center gap-1.5 text-sm font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
 																aria-label={`View comments (${post.commentsCount} comments)`}>
 																<motion.span
 																	whileHover={
@@ -2523,7 +2630,7 @@ export default function Feed({
 																		!!post.repostedByMe,
 																	)
 																}
-																className={`flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
+																className={`flex items-center gap-1.5 text-sm font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
 																aria-label={`${post.repostedByMe ? "Undo repost" : "Repost"} post (${post.repostsCount} reposts)`}>
 																<motion.span
 																	whileTap={
@@ -2572,7 +2679,7 @@ export default function Feed({
 																		!!post.savedByMe,
 																	)
 																}
-																className={`flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
+																className={`flex items-center gap-1.5 text-sm font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
 																aria-label={`${post.savedByMe ? "Remove from saved" : "Save post"} (${post.savesCount} saves)`}>
 																<motion.span
 																	whileTap={
@@ -2612,7 +2719,7 @@ export default function Feed({
 
 															{/* Viewer / Reach stats */}
 															<span
-																className="flex items-center gap-1 text-[10px] text-zinc-500 select-none"
+																className="flex items-center gap-1 text-[11px] text-zinc-500 select-none"
 																aria-label={`${post.viewsCount || 0} views`}>
 																<Eye
 																	className="h-3 w-3"
@@ -2669,10 +2776,10 @@ export default function Feed({
 						) : posts.length === 0 ? (
 							<GlassCard className="flex flex-col items-center justify-center py-16 text-center shadow-sm rounded-4xl">
 								<Sparkles className="h-8 w-8 text-zinc-500/40 animate-pulse" />
-								<h3 className="mt-4 text-base font-bold text-zinc-200">
+								<h3 className="mt-4 text-lg font-bold text-zinc-200">
 									No posts found
 								</h3>
-								<p className="mx-auto mt-2 max-w-sm text-xs text-zinc-400 leading-relaxed">
+								<p className="mx-auto mt-2 max-w-sm text-sm text-zinc-400 leading-relaxed">
 									No posts are available in this feed.
 								</p>
 							</GlassCard>
@@ -2680,12 +2787,13 @@ export default function Feed({
 							<div className="space-y-5">
 								<AnimatePresence>
 									{posts.map((post) => (
-										<motion.div
-											key={post._id}
-											initial={
-												isMobile
-													? undefined
-													: { opacity: 0, y: 15 }
+									<motion.div
+										key={post._id}
+										data-post-id={post._id}
+										initial={
+											isMobile
+												? undefined
+												: { opacity: 0, y: 15 }
 											}
 											animate={
 												isMobile
@@ -2741,7 +2849,7 @@ export default function Feed({
 																	: "🔄"}
 															</span>
 															<span
-																className={`text-[9px] font-bold uppercase tracking-wider ${swipeOffset > 0 ? "text-red-400" : "text-green-400"}`}>
+																className={`text-[10px] font-bold uppercase tracking-wider ${swipeOffset > 0 ? "text-red-400" : "text-green-400"}`}>
 																{swipeOffset > 0
 																	? "Like"
 																	: "Repost"}
@@ -2795,14 +2903,14 @@ export default function Feed({
 																				.username,
 																		)
 																	}
-																	className="font-sans text-xs font-bold text-white cursor-pointer hover:underline">
+																	className="font-sans text-sm font-bold text-white cursor-pointer hover:underline">
 																	{
 																		post
 																			.author
 																			.fullName
 																	}
 																</h4>
-																<p className="text-[10px] text-zinc-400 font-bold">
+																<p className="text-[11px] text-zinc-400 font-bold">
 																	@
 																	{
 																		post
@@ -2813,7 +2921,7 @@ export default function Feed({
 															</div>
 														</div>
 
-														<span className="text-[10px] font-medium text-zinc-500">
+														<span className="text-[11px] font-medium text-zinc-500">
 															{getRelativeDate(
 																post.createdAt,
 															)}
@@ -2822,10 +2930,10 @@ export default function Feed({
 
 													{/* Content block */}
 													<div className="space-y-2.5">
-														<h3 className="font-sans text-base md:text-lg font-bold text-zinc-100 tracking-tight leading-snug">
+														<h3 className="font-sans text-lg md:text-xl font-bold text-zinc-100 tracking-tight leading-snug">
 															{post.title}
 														</h3>
-														<p className="text-sm md:text-base text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">
+														<p className="text-base md:text-lg text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">
 															{renderFormattedContent(
 																post.content,
 															)}
@@ -2835,21 +2943,49 @@ export default function Feed({
 													{/* Video attachment */}
 													{post.video?.url ? (
 														<div className="mt-4 overflow-hidden rounded-2xl border border-zinc-800 bg-black/60">
+															<div className="relative">
 															<video
+																ref={(el) => { videoRefs.current[post._id] = el; }}
 																src={
 																	post.video
 																		.url
 																}
 																className="w-full max-h-96"
-																controls
 																preload="metadata"
+																autoPlay
+																muted={videoMuted[post._id] ?? true}
 																playsInline
+																loop={false}
 																onPlay={() =>
 																	registerViewCount(
 																		post._id,
 																	)
 																}
+																onEnded={() => handleVideoEnded(post._id)}
 															/>
+															{/* Mute toggle button */}
+															<button
+																onClick={(e) => handleToggleMute(post._id, e)}
+																className="absolute bottom-3 left-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/50 hover:bg-black/70 text-white transition-all cursor-pointer"
+																title={videoMuted[post._id] ? "Unmute" : "Mute"}
+															>
+																{videoMuted[post._id] ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+															</button>
+															{/* Replay overlay */}
+															{videoEnded[post._id] && (
+																<div
+																	className="absolute inset-0 flex items-center justify-center bg-black/30 cursor-pointer z-10"
+																	onClick={(e) => handleReplayVideo(post._id, e)}
+																>
+																	<div className="flex flex-col items-center gap-2">
+																		<div className="rounded-full bg-white/20 p-4 backdrop-blur-sm hover:bg-white/30 transition-all">
+																			<Play className="h-7 w-7 text-white fill-white" />
+																		</div>
+																		<span className="text-xs font-bold text-white/80">Replay</span>
+																	</div>
+																</div>
+															)}
+														</div>
 														</div>
 													) : null}
 
@@ -2922,7 +3058,7 @@ export default function Feed({
 																	!!post.likedByMe,
 																)
 															}
-															className="flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none cursor-pointer">
+															className="flex items-center gap-1.5 text-sm font-semibold select-none group focus:outline-none cursor-pointer">
 															<motion.span
 																whileTap={{
 																	scale: 1.4,
@@ -2961,7 +3097,7 @@ export default function Feed({
 																	post._id,
 																);
 															}}
-															className="flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none cursor-pointer">
+															className="flex items-center gap-1.5 text-sm font-semibold select-none group focus:outline-none cursor-pointer">
 															<motion.span
 																whileHover={{
 																	scale: 1.1,
@@ -2983,7 +3119,7 @@ export default function Feed({
 																	!!post.repostedByMe,
 																)
 															}
-															className="flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none cursor-pointer">
+															className="flex items-center gap-1.5 text-sm font-semibold select-none group focus:outline-none cursor-pointer">
 															<motion.span
 																whileTap={{
 																	rotate: 180,
@@ -3020,7 +3156,7 @@ export default function Feed({
 																	!!post.savedByMe,
 																)
 															}
-															className="flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none cursor-pointer">
+															className="flex items-center gap-1.5 text-sm font-semibold select-none group focus:outline-none cursor-pointer">
 															<motion.span
 																whileTap={{
 																	scale: 1.3,
@@ -3050,7 +3186,7 @@ export default function Feed({
 														</button>
 
 														{/* Viewer / Reach stats */}
-														<span className="flex items-center gap-1 text-[10px] text-zinc-500 select-none">
+														<span className="flex items-center gap-1 text-[11px] text-zinc-500 select-none">
 															<Eye className="h-3 w-3" />
 															{post.viewsCount ||
 																0}
@@ -3124,10 +3260,10 @@ export default function Feed({
 									className="relative z-10 w-full max-w-4xl h-[85vh] md:h-[70vh] rounded-4xl border border-white/5 bg-zinc-950/95 backdrop-blur-3xl p-5 md:p-7 shadow-[0_-30px_70px_-10px_rgba(0,0,0,0.95)] flex flex-col justify-between">
 									<div className="mb-4 flex items-center justify-between shrink-0 border-b border-white/5 pb-4">
 										<div>
-											<h3 className="font-sans text-[15px] font-bold text-white uppercase tracking-wider">
+											<h3 className="font-sans text-[12px] md:text-sm font-bold text-white uppercase tracking-wider">
 												Comments
 											</h3>
-											<p className="text-[11px] text-zinc-500 mt-0.5">
+											<p className="text-[12px] text-zinc-500 mt-0.5">
 												Share your thoughts on this status
 											</p>
 										</div>
@@ -3184,7 +3320,7 @@ export default function Feed({
 											noValidate
 											className="mt-2 border-t border-white/3 pt-4 shrink-0">
 											{replyToCommentId && (
-												<div className="flex items-center justify-between mb-3 px-4 text-[11px] text-zinc-400 bg-white/3 py-2 rounded-full border border-white/5">
+												<div className="flex items-center justify-between mb-3 px-4 text-[12px] text-zinc-400 bg-white/3 py-2 rounded-full border border-white/5">
 													<span>
 														Replying to thread
 													</span>
@@ -3217,7 +3353,7 @@ export default function Feed({
 																"comment",
 															);
 														}}
-														className="w-full rounded-full border border-white/5 bg-zinc-900/40 px-4 py-2 text-xs md:text-[13px] text-white placeholder-zinc-550 outline-none focus:border-white/10 focus:bg-zinc-900/60 transition-all pr-14 shadow-inner"
+														className="w-full rounded-full border border-white/5 bg-zinc-900/40 px-4 py-2.5 text-[12px] md:text-sm leading-normal text-white placeholder-zinc-550 outline-none focus:border-white/10 focus:bg-zinc-900/60 transition-all pr-14 shadow-inner"
 													/>
 													<div className="absolute right-3.5 top-1/2 -translate-y-1/2">
 														<CharCounter

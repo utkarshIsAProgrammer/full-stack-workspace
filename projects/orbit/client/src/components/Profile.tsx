@@ -1492,7 +1492,7 @@ export default function Profile({
 						/>
 						<div className="relative flex flex-col items-center gap-2">
 							<Image className="h-8 w-8 text-zinc-600" />
-							<span className="text-[10px] text-zinc-600 font-medium uppercase tracking-wider">
+							<span className="text-[11px] text-zinc-600 font-medium uppercase tracking-wider">
 								No banner
 							</span>
 						</div>
@@ -1658,7 +1658,7 @@ export default function Profile({
 									<Icon className="h-3.5 w-3.5" />
 									{tab.label}
 									<span
-										className={`rounded-full px-1.5 py-0.5 text-xs font-medium ${
+										className={`rounded-full px-1.5 py-0.5 text-[12px] md:text-sm font-medium ${
 											active
 												? "bg-white text-black"
 												: "bg-slate-100 dark:bg-zinc-800 text-zinc-400"
@@ -2356,7 +2356,7 @@ export default function Profile({
 									<div className="grid grid-cols-2 gap-4">
 										{/* Avatar Upload */}
 										<div className="space-y-1.5 text-center">
-											<label className="text-xs font-medium text-zinc-400">
+											<label className="text-[12px] md:text-sm font-medium text-zinc-400">
 												Profile Pic
 											</label>{" "}
 											<div className="relative flex h-20 w-20 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
@@ -2433,7 +2433,7 @@ export default function Profile({
 
 										{/* Banner Upload */}
 										<div className="space-y-1.5 text-center">
-											<label className="text-xs font-medium text-zinc-400">
+											<label className="text-[12px] md:text-sm font-medium text-zinc-400">
 												Banner
 											</label>
 											<div className="relative flex h-20 w-full items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
@@ -2521,7 +2521,7 @@ export default function Profile({
 												onChange={(e) =>
 													setFullName(e.target.value)
 												}
-												className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-xs md:text-[13px] text-white focus:outline-none focus:border-zinc-600 focus:bg-zinc-900 transition-all font-medium"
+												className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white focus:outline-none focus:border-zinc-600 focus:bg-zinc-900 transition-all font-medium"
 											/>
 										</div>
 
@@ -2536,7 +2536,7 @@ export default function Profile({
 													setBio(e.target.value)
 												}
 												placeholder="Write something about yourself..."
-												className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-xs md:text-[13px] text-white focus:outline-none focus:border-zinc-600 focus:bg-zinc-900 transition-all resize-none font-medium"
+												className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white focus:outline-none focus:border-zinc-600 focus:bg-zinc-900 transition-all resize-none font-medium"
 												maxLength={150}
 											/>
 										</div>
@@ -2546,13 +2546,13 @@ export default function Profile({
 										<button
 											type="button"
 											onClick={() => setEditOpen(false)}
-											className="flex-1 rounded-full border border-zinc-800 py-3.5 text-sm font-medium text-zinc-400 hover:bg-zinc-800 hover:text-white shadow-sm cursor-pointer">
+											className="flex-1 rounded-full border border-zinc-800 py-3.5 text-[12px] md:text-sm font-medium text-zinc-400 hover:bg-zinc-800 hover:text-white shadow-sm cursor-pointer">
 											Cancel
 										</button>
 										<button
 											type="submit"
 											disabled={saving}
-											className="flex-1 rounded-full bg-white py-3.5 text-sm font-semibold text-black hover:bg-zinc-200 disabled:opacity-50 transition-all shadow-md cursor-pointer">
+											className="flex-1 rounded-full bg-white py-3.5 text-[12px] md:text-sm font-semibold text-black hover:bg-zinc-200 disabled:opacity-50 transition-all shadow-md cursor-pointer">
 											{saving ? "Saving..." : "Save"}
 										</button>
 									</div>
@@ -2606,20 +2606,20 @@ export default function Profile({
 									value={editPostTitle}
 									onChange={(e) => setEditPostTitle(e.target.value)}
 									placeholder="Post title"
-									className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-sm text-white outline-none focus:border-zinc-600 transition-all"
+									className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white outline-none focus:border-zinc-600 transition-all"
 								/>
 								<textarea
 									value={editPostContent}
 									onChange={(e) => setEditPostContent(e.target.value)}
 									placeholder="Post content"
 									rows={5}
-									className="w-full rounded-xl border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-sm text-white outline-none focus:border-zinc-600 transition-all resize-none"
+									className="w-full rounded-xl border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white outline-none focus:border-zinc-600 transition-all resize-none"
 								/>
 
 								{/* Existing images — show with remove button */}
 								{editPostExistingImages.length > 0 && (
 									<div>
-										<label className="text-xs font-medium text-zinc-400 pl-3 mb-2 block">Current Images</label>
+										<label className="text-[12px] md:text-sm font-medium text-zinc-400 pl-3 mb-2 block">Current Images</label>
 										<div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
 											{editPostExistingImages.map((img) => (
 												<div key={img.public_id} className="relative shrink-0 overflow-hidden rounded-xl border border-zinc-800 w-20 h-20 group">
@@ -2640,7 +2640,7 @@ export default function Profile({
 								{/* New image previews */}
 								{editPostNewPreviews.length > 0 && (
 									<div>
-										<label className="text-xs font-medium text-zinc-400 pl-3 mb-2 block">New Images</label>
+										<label className="text-[12px] md:text-sm font-medium text-zinc-400 pl-3 mb-2 block">New Images</label>
 										<div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
 											{editPostNewPreviews.map((preview, idx) => (
 												<div key={idx} className="relative shrink-0 overflow-hidden rounded-xl border border-zinc-800 w-20 h-20 group">
@@ -2668,7 +2668,7 @@ export default function Profile({
 									/>
 									<button
 										type="button"
-										className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-700 py-3 text-sm font-medium text-zinc-400 hover:border-zinc-500 hover:text-zinc-300 transition-all pointer-events-none"
+										className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-700 py-3 text-[12px] md:text-sm font-medium text-zinc-400 hover:border-zinc-500 hover:text-zinc-300 transition-all pointer-events-none"
 									>
 										<Image className="h-4 w-4" /> Add Image
 									</button>
@@ -2686,7 +2686,7 @@ export default function Profile({
 										setEditPostNewFiles([]);
 										setEditPostExistingImages([]);
 									}}
-									className="flex-1 rounded-full border border-zinc-800 py-3.5 text-sm font-medium text-zinc-400 hover:bg-zinc-800 hover:text-white cursor-pointer"
+									className="flex-1 rounded-full border border-zinc-800 py-3.5 text-[12px] md:text-sm font-medium text-zinc-400 hover:bg-zinc-800 hover:text-white cursor-pointer"
 								>
 									Cancel
 								</button>
@@ -2891,7 +2891,7 @@ export default function Profile({
 			{(pullDistance > 0 || isRefreshing) && (
 				<div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center justify-center">
 					<div
-						className={`flex items-center gap-2 text-[10px] text-zinc-400 ${isRefreshing ? "" : ""}`}>
+						className={`flex items-center gap-2 text-[11px] text-zinc-400 ${isRefreshing ? "" : ""}`}>
 						<svg
 							className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
 							style={

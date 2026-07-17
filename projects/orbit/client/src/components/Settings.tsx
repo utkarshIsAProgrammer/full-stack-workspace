@@ -317,7 +317,7 @@ export default function Settings({
 								{/* Images Upload */}
 								<div className="grid grid-cols-2 gap-4">
 									<div className="space-y-1 col-span-1 text-center">
-										<span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+										<span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
 											Profile Pic
 										</span>
 										<div className="relative flex h-16 w-16 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
@@ -377,7 +377,7 @@ export default function Settings({
 									</div>
 
 									<div className="space-y-1 col-span-1 text-center">
-										<span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+										<span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
 											Banner Image
 										</span>
 										<div className="relative flex h-16 w-full items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
@@ -440,7 +440,7 @@ export default function Settings({
 								<div className="space-y-1.5 label text-left">
 									<label
 										htmlFor="settings-fullname"
-										className="text-sm md:text-[14px] font-semibold text-zinc-300 pl-4">
+										className="text-[12px] md:text-sm font-semibold text-zinc-300 pl-4">
 										Full Name
 									</label>
 									<input
@@ -453,7 +453,7 @@ export default function Settings({
 											clearFieldError("fullName");
 										}}
 										maxLength={50}
-										className="w-full rounded-full border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-xs md:text-[13px] font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
+										className="w-full rounded-full border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
 									/>
 									<div className="flex items-center justify-between px-1">
 										<ValidationMessage
@@ -469,7 +469,7 @@ export default function Settings({
 								<div className="space-y-1.5 label text-left">
 									<label
 										htmlFor="settings-bio"
-										className="text-sm md:text-[14px] font-semibold text-zinc-300 pl-4">
+										className="text-[12px] md:text-sm font-semibold text-zinc-300 pl-4">
 										Bio
 									</label>
 									<textarea
@@ -477,7 +477,7 @@ export default function Settings({
 										rows={3}
 										value={bio}
 										onChange={(e) => setBio(e.target.value)}
-										className="w-full !rounded-xl border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-xs md:text-[13px] font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all resize-none leading-relaxed"
+										className="w-full !rounded-xl border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all resize-none leading-relaxed"
 										maxLength={300}
 										spellCheck={false}
 									/>
@@ -492,7 +492,7 @@ export default function Settings({
 								<button
 									type="submit"
 									disabled={savingProfile}
-									className="w-full rounded-full bg-black py-3 text-[11px] max-sm:text-[10px] font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 font-sans transition-all disabled:opacity-40 shadow-md cursor-pointer">
+									className="w-full rounded-full bg-black py-3 text-[12px] md:text-sm font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 font-sans transition-all disabled:opacity-40 shadow-md cursor-pointer">
 									{savingProfile
 										? "Saving..."
 										: "Save Changes"}
@@ -537,7 +537,7 @@ export default function Settings({
 								<div className="space-y-1.5 text-left">
 									<label
 										htmlFor="settings-current-password"
-										className="text-sm md:text-[14px] font-semibold text-zinc-300 pl-4">
+										className="text-[12px] md:text-sm font-semibold text-zinc-300 pl-4">
 										Current Password
 									</label>
 									<div className="relative">
@@ -559,7 +559,7 @@ export default function Settings({
 													"currentPassword",
 												);
 											}}
-											className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 pl-4 pr-11 text-xs md:text-[13px] font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
+											className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 pl-4 pr-11 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
 										/>
 										<button
 											type="button"
@@ -584,7 +584,7 @@ export default function Settings({
 								<div className="space-y-1.5 text-left">
 									<label
 										htmlFor="settings-new-password"
-										className="text-sm md:text-[14px] font-semibold text-zinc-300 pl-4">
+										className="text-[12px] md:text-sm font-semibold text-zinc-300 pl-4">
 										New Password
 									</label>
 									<div className="relative">
@@ -602,7 +602,7 @@ export default function Settings({
 												setNewPassword(e.target.value);
 												clearFieldError("newPassword");
 											}}
-											className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 pl-4 pr-11 text-xs md:text-[13px] font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
+											className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 pl-4 pr-11 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
 										/>
 										<button
 											type="button"
@@ -627,7 +627,7 @@ export default function Settings({
 								<div className="space-y-1.5 text-left">
 									<label
 										htmlFor="settings-confirm-password"
-										className="text-sm md:text-[14px] font-semibold text-zinc-300 pl-4">
+										className="text-[12px] md:text-sm font-semibold text-zinc-300 pl-4">
 										Confirm New Password
 									</label>
 									<input
@@ -639,7 +639,7 @@ export default function Settings({
 											setConfirmPassword(e.target.value);
 											clearFieldError("confirmPassword");
 										}}
-										className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 px-3.5 text-xs md:text-[13px] font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
+										className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
 									/>
 									<ValidationMessage
 										message={fieldErrors.confirmPassword}
@@ -649,7 +649,7 @@ export default function Settings({
 								<button
 									type="submit"
 									disabled={savingPassword}
-									className="w-full rounded-full bg-black py-3 text-[11px] max-sm:text-[10px] font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 font-sans transition-all disabled:opacity-40 shadow-md cursor-pointer">
+									className="w-full rounded-full bg-black py-3 text-[12px] md:text-sm font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 font-sans transition-all disabled:opacity-40 shadow-md cursor-pointer">
 									{savingPassword
 										? "Updating password..."
 										: "Update Password"}
@@ -691,7 +691,7 @@ export default function Settings({
 								<div className="space-y-1.5">
 									<label
 										htmlFor="settings-delete-email"
-										className="text-sm md:text-[14px] font-semibold text-zinc-300 pl-4">
+										className="text-[12px] md:text-sm font-semibold text-zinc-300 pl-4">
 										To delete your account, enter your{" "}
 										<span className="font-extrabold text-white">
 											Email Address
@@ -710,7 +710,7 @@ export default function Settings({
 											setDeleteEmail(e.target.value);
 											clearFieldError("deleteEmail");
 										}}
-										className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 px-3.5 text-xs md:text-[13px] font-medium text-white focus:outline-none focus:border-rose-500 focus:bg-zinc-900 transition-all"
+										className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-rose-500 focus:bg-zinc-900 transition-all"
 									/>
 									<ValidationMessage
 										message={fieldErrors.deleteEmail}
@@ -720,7 +720,7 @@ export default function Settings({
 								<div className="space-y-1.5 text-left">
 									<label
 										htmlFor="settings-delete-password"
-										className="text-sm md:text-[14px] font-semibold text-zinc-300 pl-4">
+										className="text-[12px] md:text-sm font-semibold text-zinc-300 pl-4">
 										And your current{" "}
 										<span className="font-extrabold text-white">
 											Password
@@ -747,7 +747,7 @@ export default function Settings({
 													"deletePassword",
 												);
 											}}
-											className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 pl-4 pr-11 text-xs md:text-[13px] font-medium text-white focus:outline-none focus:border-rose-500 focus:bg-zinc-900 transition-all"
+											className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 pl-4 pr-11 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-rose-500 focus:bg-zinc-900 transition-all"
 										/>
 										<button
 											type="button"
@@ -777,7 +777,7 @@ export default function Settings({
 										!deleteEmail ||
 										!deletePassword
 									}
-									className="w-full rounded-full bg-rose-600 hover:bg-rose-700 py-3 text-[11px] max-sm:text-[10px] font-bold uppercase tracking-widest text-white transition-all disabled:opacity-30 disabled:hover:bg-rose-600">
+									className="w-full rounded-full bg-rose-600 hover:bg-rose-700 py-3 text-[12px] md:text-sm font-bold uppercase tracking-widest text-white transition-all disabled:opacity-30 disabled:hover:bg-rose-600">
 									{deletingAccount
 										? "Deleting account..."
 										: "Permanently Delete Account"}
@@ -797,7 +797,7 @@ export default function Settings({
 								<h3 className="text-xs font-black uppercase tracking-widest text-white">
 									Sign Out of Orbit
 								</h3>
-								<p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 leading-normal max-w-xs mx-auto uppercase tracking-tight">
+								<p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 leading-normal max-w-xs mx-auto uppercase tracking-tight">
 									Are you sure you want to sign out? You will
 									need to sign back in to view your feeds and
 									chat with friends.
@@ -808,13 +808,13 @@ export default function Settings({
 								<button
 									type="button"
 									onClick={() => switchSubTab("profile")}
-									className="rounded-full border border-zinc-800 bg-zinc-950/20 px-6 py-2.5 text-xs font-bold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-all cursor-pointer uppercase tracking-wider">
+									className="rounded-full border border-zinc-800 bg-zinc-950/20 px-6 py-2.5 text-[12px] md:text-sm font-bold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-all cursor-pointer uppercase tracking-wider">
 									Cancel
 								</button>
 								<button
 									type="button"
 									onClick={onLogout}
-									className="rounded-full bg-red-600 text-white hover:bg-red-500 dark:bg-red-700 dark:hover:bg-red-600 px-6 py-2.5 text-xs font-black uppercase tracking-widest transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-lg shadow-red-500/15">
+									className="rounded-full bg-red-600 text-white hover:bg-red-500 dark:bg-red-700 dark:hover:bg-red-600 px-6 py-2.5 text-[12px] md:text-sm font-black uppercase tracking-widest transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-lg shadow-red-500/15">
 									Confirm Log Out
 								</button>
 							</div>
@@ -828,7 +828,7 @@ export default function Settings({
 						<button
 							type="button"
 							onClick={() => switchSubTab("profile")}
-							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[11px] font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
+							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
 								activeSubTab === "profile"
 									? "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm scale-102"
 									: "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
@@ -840,7 +840,7 @@ export default function Settings({
 						<button
 							type="button"
 							onClick={() => switchSubTab("password")}
-							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[11px] font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
+							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
 								activeSubTab === "password"
 									? "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm scale-102"
 									: "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
@@ -852,7 +852,7 @@ export default function Settings({
 						<button
 							type="button"
 							onClick={() => switchSubTab("account")}
-							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[11px] font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
+							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
 								activeSubTab === "account"
 									? "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm scale-102"
 									: "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
@@ -864,7 +864,7 @@ export default function Settings({
 						<button
 							type="button"
 							onClick={() => switchSubTab("logout")}
-							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[11px] font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
+							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
 								activeSubTab === "logout"
 									? "bg-red-600 text-white dark:bg-red-650 dark:text-white"
 									: "text-red-500 dark:text-red-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"

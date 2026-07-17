@@ -212,13 +212,26 @@ export const initSocket = async (server: http.Server) => {
       };
 
       // Fire immediately (no await — don't block connection for this)
-      broadcastOnline();
-
-      // Redis: persist presence in background (failure is non-critical)
-      setCache(`presence:user:${s.userId}`, "online", 86400).catch(err => {
-        logger.error("Failed to set user presence in Redis", { error: err instanceof Error ? err.message : String(err), userId: s.userId });
-      });
+      broadcastOnline();	// Redis: persist presence in background with short TTL (60s) — don't rely on deleteCache alone
+	      setCache(`presence:user:${s.userId}`, "online", 60).catch(err => {
+	        logger.error("Failed to set user presence in Redis", { error: err instanceof Error ? err.message : String(err), userId: s.userId });
+	      });
     }
+
+    // Presence heartbeat — client sends this periodically to refresh their online status.
+    // Without this, brief network blips (e.g. mobile backgrounding, tab switches) can
+    // cause the user to fall out of onlineUsers, making them appear offline to partners.
+    socket.on("presence:heartbeat", () => {
+      if (!s.userId) return;
+
+      // Refresh in-memory presence (may have been cleared by a stale disconnect event)
+      onlineUsers.add(s.userId);
+
+      // Refresh Redis TTL so getUserPresenceStatus() returns "online"
+      setCache(`presence:user:${s.userId}`, "online", 60).catch(err => {
+        logger.error("Failed to refresh presence in Redis on heartbeat", { error: err instanceof Error ? err.message : String(err), userId: s.userId });
+      });
+    });
 
     // Join conversation room
     socket.on("chat:join", async ({ conversationId }) => {
@@ -783,20 +796,36 @@ export const emitNewMessage = (conversationId: string, message: any) => {
 /**
  * Emits a message edit event to the conversation room.
  */
-export const emitMessageEdit = (conversationId: string, message: any) => {
+export const emitMessageEdit = (conversationId: string, message: any, participantIds?: string[]) => {
   try {
     io.to(`conversation:${conversationId}`).emit("message:edit", message);
+    
+    // Also emit to each participant's personal room so the conversations list updates
+    // when they are not actively viewing this conversation
+    if (participantIds && participantIds.length > 0) {
+      for (const pId of participantIds) {
+        io.to(`user:${pId}`).emit("message:edit", message);
+      }
+    }
   } catch (error: any) {
     logger.error("Failed to emit message:edit", { error: error.message, conversationId });
   }
-};
-
-/**
- * Emits a message deletion event to the conversation room.
+};	/**
+ * Emits a message deletion event to the conversation room and each participant's personal room.
+ * Broadcasting to personal rooms ensures the conversation list updates even when the user
+ * is not actively viewing the conversation.
  */
-export const emitMessageDelete = (conversationId: string, messageId: string) => {
+export const emitMessageDelete = (conversationId: string, messageId: string, participantIds?: string[]) => {
   try {
     io.to(`conversation:${conversationId}`).emit("message:delete", { messageId });
+    
+    // Also emit to each participant's personal room so the conversation list updates
+    // when they are not actively viewing this conversation
+    if (participantIds && participantIds.length > 0) {
+      for (const pId of participantIds) {
+        io.to(`user:${pId}`).emit("message:delete", { messageId });
+      }
+    }
   } catch (error: any) {
     logger.error("Failed to emit message:delete", { error: error.message, conversationId, messageId });
   }

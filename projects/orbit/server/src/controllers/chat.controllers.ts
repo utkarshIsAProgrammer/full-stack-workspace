@@ -663,8 +663,13 @@ export const editMessage = async (
 			.populate("sender", "username fullName profilePic")
 			.lean();
 
-		// Emit live update to conversation room
-		emitMessageEdit(message.conversation.toString(), populatedMessage);
+		// Emit live update to conversation room and each participant's personal room
+		const convEditParticipantIds = conversation?.participants?.map((p: any) => p.toString()) || [];
+		emitMessageEdit(
+			message.conversation.toString(),
+			populatedMessage,
+			convEditParticipantIds,
+		);
 
 		return res.status(200).json({
 			success: true,
@@ -756,10 +761,12 @@ export const deleteMessage = async (
 			await clearChatCache(message.conversation.toString(), conversation.participants.map(p => p.toString()));
 		}
 
-		// Emit live deletion to conversation room
+		// Emit live deletion — includes participant IDs so personal rooms get the update
+		const convParticipants = conversation?.participants?.map((p: any) => p.toString()) || [];
 		emitMessageDelete(
 			message.conversation.toString(),
 			message._id.toString(),
+			convParticipants,
 		);
 
 		return res.status(200).json({

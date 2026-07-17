@@ -66,12 +66,12 @@ export default function ConfirmDialog({
 						<div className="mt-5 flex items-center justify-end gap-2.5">
 							<button
 								onClick={onCancel}
-								className="rounded-full border border-zinc-800 px-4 py-2 text-xs font-bold text-zinc-400 hover:bg-zinc-800 hover:text-white transition-all">
+								className="rounded-full border border-zinc-800 px-4 py-2 text-[12px] md:text-sm font-bold text-zinc-400 hover:bg-zinc-800 hover:text-white transition-all">
 								{cancelLabel}
 							</button>
 							<button
 								onClick={onConfirm}
-								className={`rounded-full px-4 py-2 text-xs font-bold text-white transition-all ${
+								className={`rounded-full px-4 py-2 text-[12px] md:text-sm font-bold text-white transition-all ${
 									variant === "danger"
 										? "bg-red-500 hover:bg-red-400 shadow-md shadow-red-500/20"
 										: "bg-white text-black hover:bg-zinc-200 shadow-md"

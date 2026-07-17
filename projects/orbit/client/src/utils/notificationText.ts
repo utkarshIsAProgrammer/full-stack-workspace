@@ -22,6 +22,10 @@ export const getNotificationText = (type: NotificationType): string => {
       return "reacted to your comment!";
     case "message_reply":
       return "replied to your message!";
+    case "glimpse_reaction":
+      return "reacted to your glance!";
+    case "glimpse_reply":
+      return "replied to your glance!";
     default:
       return "interacted with you!";
   }
@@ -48,6 +52,10 @@ export const getFloatingToastText = (type: NotificationType): string => {
       return "reacted to your comment!";
     case "message_reply":
       return "replied to your chat message!";
+    case "glimpse_reaction":
+      return "liked your glance!";
+    case "glimpse_reply":
+      return "responded to your glance!";
     default:
       return "joined your orbit!";
   }

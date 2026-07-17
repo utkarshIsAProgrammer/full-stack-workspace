@@ -136,6 +136,45 @@ export default function CommentNode({
 			);
 	}, [comment._id]);
 
+	// Keep a ref mirroring showReplies so the event handler can read the latest value
+	const showRepliesRef = useRef(showReplies);
+	showRepliesRef.current = showReplies;
+
+	// Listen for realtime replies added to this comment
+	useEffect(() => {
+		const handleReplyAdded = (
+			e: CustomEvent<{ parentCommentId: string; reply: Comment }>,
+		) => {
+			const { parentCommentId, reply } = e.detail;
+			if (parentCommentId === comment._id) {
+				setReplies((prev) => {
+					if (prev.some((r) => r._id === reply._id)) return prev;
+					return [...prev, reply];
+				});
+				setLocalRepliesCount((prev) => prev + 1);
+
+				const wasShowing = showRepliesRef.current;
+				// Auto-show replies so the user sees it right away
+				setShowReplies(true);
+
+				// If replies weren't already visible, fetch the full list from server
+				// so pre-existing replies from other users also appear, not just this one
+				if (!wasShowing) {
+					loadReplies();
+				}
+			}
+		};
+		window.addEventListener(
+			"commentReplyAdded",
+			handleReplyAdded as EventListener,
+		);
+		return () =>
+			window.removeEventListener(
+				"commentReplyAdded",
+				handleReplyAdded as EventListener,
+			);
+	}, [comment._id]);
+
 	// Listen for realtime comment deletion (remove from replies list)
 	useEffect(() => {
 		const handleCommentDeleted = (
@@ -624,18 +663,18 @@ export default function CommentNode({
 				{showDeleteConfirm && (
 					<div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-zinc-950/95 backdrop-blur-md">
 						<div className="text-center space-y-3 px-4">
-							<p className="text-[11px] font-semibold text-zinc-300">
+							<p className="text-[12px] font-semibold text-zinc-300">
 								Delete this comment permanently?
 							</p>
 							<div className="flex items-center justify-center gap-2">
 								<button
 									onClick={handleDelete}
-									className="rounded-full bg-red-500/90 px-3.5 py-1.5 text-[9px] font-bold text-white hover:bg-red-500 transition-colors cursor-pointer">
+									className="rounded-full bg-red-500/90 px-3.5 py-1.5 text-[12px] md:text-sm font-bold text-white hover:bg-red-500 transition-colors cursor-pointer">
 									Delete
 								</button>
 								<button
 									onClick={() => setShowDeleteConfirm(false)}
-									className="rounded-full bg-zinc-800 px-3.5 py-1.5 text-[9px] font-bold text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer">
+									className="rounded-full bg-zinc-800 px-3.5 py-1.5 text-[12px] md:text-sm font-bold text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer">
 									Cancel
 								</button>
 							</div>
@@ -657,14 +696,14 @@ export default function CommentNode({
 								onClick={() =>
 									onUserSelected(comment.author.username)
 								}
-								className="font-sans text-[11px] font-bold text-white leading-none cursor-pointer hover:text-white/80 transition-colors">
+								className="font-sans text-[12px] font-bold text-white leading-none cursor-pointer hover:text-white/80 transition-colors">
 								{comment.author.fullName}
 							</h5>
-							<span className="text-[10px] text-zinc-500 font-medium">
+							<span className="text-[11px] text-zinc-500 font-medium">
 								@{comment.author.username}
 							</span>
 							<span className="text-[9px] text-zinc-650 font-bold">•</span>
-							<span className="text-[10px] text-zinc-500 font-medium">
+							<span className="text-[11px] text-zinc-500 font-medium">
 								{getRelativeDate(comment.createdAt)}
 								{comment.isEdited && (
 									<span className="ml-1 italic opacity-60">
@@ -707,7 +746,7 @@ export default function CommentNode({
 						<textarea
 							value={editText}
 							onChange={(e) => setEditText(e.target.value)}
-							className="w-full rounded-full border border-white/5 bg-zinc-950/60 px-2.5 py-1.5 text-xs md:text-[13px] text-zinc-200 placeholder-zinc-550 outline-none focus:border-white/15 focus:bg-zinc-950/80 resize-none transition-all"
+							className="w-full rounded-full border border-white/5 bg-zinc-950/60 px-2.5 py-1.5 text-[12px] md:text-sm text-zinc-200 placeholder-zinc-550 outline-none focus:border-white/15 focus:bg-zinc-950/80 resize-none transition-all"
 							rows={2}
 							maxLength={1000}
 							spellCheck={false}
@@ -716,7 +755,7 @@ export default function CommentNode({
 						<div className="flex items-center gap-2">
 							<button
 								onClick={handleEdit}
-								className="flex items-center gap-1 rounded-full bg-white text-black px-3.5 py-1.5 text-[9px] font-bold hover:bg-zinc-200 transition-colors cursor-pointer">
+								className="flex items-center gap-1 rounded-full bg-white text-black px-3.5 py-1.5 text-[12px] md:text-sm font-bold hover:bg-zinc-200 transition-colors cursor-pointer">
 								<Check className="h-3 w-3" /> Save
 							</button>
 							<button
@@ -724,14 +763,14 @@ export default function CommentNode({
 									setIsEditing(false);
 									setEditText(comment.content);
 								}}
-								className="flex items-center gap-1 rounded-full bg-zinc-800 px-3.5 py-1.5 text-[9px] font-bold text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer">
+								className="flex items-center gap-1 rounded-full bg-zinc-800 px-3.5 py-1.5 text-[12px] md:text-sm font-bold text-zinc-300 hover:bg-zinc-700 transition-colors cursor-pointer">
 								<XIcon className="h-3 w-3" /> Cancel
 							</button>
 						</div>
 					</div>
 				) : (
 					<div className="space-y-1">
-						<p className="text-[12px] text-zinc-300 select-text leading-relaxed font-sans pr-2">
+						<p className="text-[13px] text-zinc-300 select-text leading-relaxed font-sans pr-2">
 							{renderFormattedContent(
 								comment.content.length > 240 && !isExpanded
 									? comment.content.slice(0, 240) + "..."
@@ -741,7 +780,7 @@ export default function CommentNode({
 						{comment.content.length > 240 && (
 							<button
 								onClick={() => setIsExpanded(!isExpanded)}
-								className="text-[10px] font-bold text-zinc-400 hover:text-white transition-colors cursor-pointer block mt-0.5">
+								className="text-[11px] font-bold text-zinc-400 hover:text-white transition-colors cursor-pointer block mt-0.5">
 								{isExpanded ? "See less" : "See more"}
 							</button>
 						)}
@@ -766,7 +805,7 @@ export default function CommentNode({
 										damping: 25,
 									}}
 									onClick={() => handleReaction(emoji)}
-									className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] border transition-colors cursor-pointer ${
+									className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[12px] md:text-sm border transition-colors cursor-pointer ${
 										data.hasReacted
 											? "bg-white/10 border-white/20 text-white"
 											: "bg-white/3 border-white/5 text-zinc-400 hover:bg-white/5"
@@ -786,7 +825,7 @@ export default function CommentNode({
 					{user && (
 						<button
 							onClick={handleLikeToggle}
-							className="flex items-center gap-1 text-[11px] font-medium text-zinc-500 hover:text-red-450 transition-colors cursor-pointer group">
+							className="flex items-center gap-1 text-[12px] font-medium text-zinc-500 hover:text-red-450 transition-colors cursor-pointer group">
 							<motion.span
 								key={likedByMe ? "liked" : "unliked"}
 								initial={{ scale: likedByMe ? 1.25 : 1 }}
@@ -813,7 +852,7 @@ export default function CommentNode({
 					{user && (
 						<button
 							onClick={() => onReply(comment._id)}
-							className="flex items-center gap-1 text-[11px] font-medium text-zinc-500 hover:text-white transition-colors cursor-pointer">
+							className="flex items-center gap-1 text-[12px] font-medium text-zinc-500 hover:text-white transition-colors cursor-pointer">
 							<Reply className="h-3 w-3" /> Reply
 						</button>
 					)}
@@ -834,7 +873,7 @@ export default function CommentNode({
 									comment,
 								);
 							}}
-							className="flex items-center gap-1 text-[11px] font-medium text-zinc-500 hover:text-white transition-colors cursor-pointer">
+							className="flex items-center gap-1 text-[12px] font-medium text-zinc-500 hover:text-white transition-colors cursor-pointer">
 							<Smile className="h-3 w-3" /> React
 						</button>
 					)}
@@ -858,12 +897,12 @@ export default function CommentNode({
 			{showReplies && (
 				<div className="space-y-2 mt-2">
 					{loadingReplies ? (
-						<div className="flex items-center gap-2 text-[10px] text-zinc-500 ml-6">
+						<div className="flex items-center gap-2 text-[11px] text-zinc-500 ml-6">
 							<span className="h-3 w-3 animate-spin rounded-full border border-zinc-600 border-t-zinc-300"></span>
 							Loading replies...
 						</div>
 					) : replies.length === 0 ? (
-						<div className="text-[10px] text-zinc-500 ml-6 italic">
+						<div className="text-[11px] text-zinc-500 ml-6 italic">
 							No replies yet.
 						</div>
 					) : (
@@ -1150,7 +1189,7 @@ export default function CommentNode({
 										setCustomEmojiInput("");
 									}
 								}}
-								className="w-full rounded-full border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs md:text-[13px] text-white outline-none focus:border-white text-center"
+								className="w-full rounded-full border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-[12px] md:text-sm text-white outline-none focus:border-white text-center"
 								autoFocus
 								autoComplete="off"
 								placeholder="Tap for emoji"

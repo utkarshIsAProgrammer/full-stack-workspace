@@ -157,24 +157,28 @@ Controllers contain the actual logic for handling requests.
 
 ```typescript
 export const createPost = async (req, res) => {
-  try {
-    // 1. Get data from request
-    const { title, content } = req.body;
+	try {
+		// 1. Get data from request
+		const { title, content } = req.body;
 
-    // 2. Validate data
-    if (!title || !content) {
-      return res.status(400).json({ message: "Missing required fields" });
-    }
+		// 2. Validate data
+		if (!title || !content) {
+			return res.status(400).json({ message: "Missing required fields" });
+		}
 
-    // 3. Save to database
-    const post = await Post.create({ title, content, author: req.user._id });
+		// 3. Save to database
+		const post = await Post.create({
+			title,
+			content,
+			author: req.user._id,
+		});
 
-    // 4. Send response
-    res.status(201).json({ success: true, data: post });
-  } catch (error) {
-    // 5. Handle errors
-    res.status(500).json({ message: "Server error" });
-  }
+		// 4. Send response
+		res.status(201).json({ success: true, data: post });
+	} catch (error) {
+		// 5. Handle errors
+		res.status(500).json({ message: "Server error" });
+	}
 };
 ```
 
@@ -186,24 +190,24 @@ Models define what data looks like in the database.
 
 ```typescript
 const postSchema = new mongoose.Schema({
-  title: {
-    type: String,
-    required: true,
-    trim: true,
-  },
-  content: {
-    type: String,
-    required: true,
-  },
-  author: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
+	title: {
+		type: String,
+		required: true,
+		trim: true,
+	},
+	content: {
+		type: String,
+		required: true,
+	},
+	author: {
+		type: mongoose.Schema.Types.ObjectId,
+		ref: "User",
+		required: true,
+	},
+	createdAt: {
+		type: Date,
+		default: Date.now,
+	},
 });
 ```
 
@@ -232,13 +236,13 @@ router.post("/", protect, uploadMiddleware, createPost);
 
 ```typescript
 export const myNewFunction = async (req, res) => {
-  try {
-    // Your logic here
-    const result = await SomeModel.find();
-    res.json({ success: true, data: result });
-  } catch (error) {
-    res.status(500).json({ message: "Error occurred" });
-  }
+	try {
+		// Your logic here
+		const result = await SomeModel.find();
+		res.json({ success: true, data: result });
+	} catch (error) {
+		res.status(500).json({ message: "Error occurred" });
+	}
 };
 ```
 
@@ -262,11 +266,11 @@ curl http://localhost:5000/api/my-endpoint
 
 ```typescript
 const schema = new mongoose.Schema({
-  existingField: String,
-  newField: {
-    type: String,
-    default: "default value",
-  },
+	existingField: String,
+	newField: {
+		type: String,
+		default: "default value",
+	},
 });
 ```
 
@@ -280,8 +284,8 @@ const schema = new mongoose.Schema({
 import { z } from "zod";
 
 export const mySchema = z.object({
-  name: z.string().min(3).max(50),
-  email: z.string().email(),
+	name: z.string().min(3).max(50),
+	email: z.string().email(),
 });
 ```
 
@@ -291,13 +295,13 @@ export const mySchema = z.object({
 import { mySchema } from "../schemas/mySchema";
 
 export const myFunction = async (req, res) => {
-  const result = mySchema.safeParse(req.body);
+	const result = mySchema.safeParse(req.body);
 
-  if (!result.success) {
-    return res.status(400).json({ errors: result.error.issues });
-  }
+	if (!result.success) {
+		return res.status(400).json({ errors: result.error.issues });
+	}
 
-  // Proceed with valid data
+	// Proceed with valid data
 };
 ```
 
@@ -313,12 +317,12 @@ Expected response:
 
 ```json
 {
-  "success": true,
-  "message": "Server is healthy!",
-  "checks": {
-    "database": "connected",
-    "redis": "connected"
-  }
+	"success": true,
+	"message": "Server is healthy!",
+	"checks": {
+		"database": "connected",
+		"redis": "connected"
+	}
 }
 ```
 

@@ -277,7 +277,7 @@ export default function Explore({
       {/* Search Header */}
       <div className="mb-6 px-1.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <span className="text-[9px] font-mono tracking-[0.25em] font-black text-zinc-400 uppercase flex items-center gap-1.5">
+          <span className="text-[10px] font-mono tracking-[0.25em] font-black text-zinc-400 uppercase flex items-center gap-1.5">
             <Compass className="h-6 w-6 text-white shrink-0" /> EXPLORE
           </span>
           <h2 className="font-sans text-xl font-black uppercase tracking-tight text-slate-900 dark:text-zinc-100 md:text-2xl mt-1">
@@ -293,12 +293,12 @@ export default function Explore({
           placeholder={`Search ${activeSegment === "users" ? "users" : "posts"}`}
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          className="w-full rounded-full border border-zinc-800 bg-zinc-950/60 backdrop-blur-xl py-3.5 pl-14 pr-24 text-xs md:text-[13px] font-medium text-slate-850 dark:text-zinc-100 placeholder-slate-400 dark:placeholder-zinc-550 outline-none focus:border-white focus:ring-2 focus:ring-white/20 transition-all shadow-md relative z-10"
+          className="w-full rounded-full border border-zinc-800 bg-zinc-950/60 backdrop-blur-xl py-3.5 pl-14 pr-24 text-[12px] md:text-sm font-medium text-slate-850 dark:text-zinc-100 placeholder-slate-400 dark:placeholder-zinc-550 outline-none focus:border-white focus:ring-2 focus:ring-white/20 transition-all shadow-md relative z-10"
         />
         <Search className="absolute left-5 top-1/2 -translate-y-1/2 h-5 w-5 text-zinc-400 z-10" />
         <button
           type="submit"
-          className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white text-black px-5 py-2 text-sm font-semibold transition-all hover:bg-zinc-200 active:scale-95 cursor-pointer shadow-lg z-10"
+          className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white text-black px-5 py-2 text-[12px] md:text-sm font-semibold transition-all hover:bg-zinc-200 active:scale-95 cursor-pointer shadow-lg z-10"
         >
           Search
         </button>
@@ -312,7 +312,7 @@ export default function Explore({
             setCandidates([]);
             setPostCandidates([]);
           }}
-          className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-all cursor-pointer ${activeSegment === "users"
+          className={`flex items-center gap-2 rounded-full px-4 py-2 text-[12px] md:text-sm font-medium transition-all cursor-pointer ${activeSegment === "users"
             ? "bg-zinc-900 text-white dark:bg-white dark:text-black"
             : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
             }`}
@@ -326,7 +326,7 @@ export default function Explore({
             setCandidates([]);
             setPostCandidates([]);
           }}
-          className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-all cursor-pointer ${activeSegment === "posts"
+          className={`flex items-center gap-2 rounded-full px-4 py-2 text-[12px] md:text-sm font-medium transition-all cursor-pointer ${activeSegment === "posts"
             ? "bg-zinc-900 text-white dark:bg-white dark:text-black"
             : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
             }`}
@@ -338,7 +338,7 @@ export default function Explore({
       <div className="space-y-4">
         {/* Results Stream column */}
         <div className="space-y-4">            {followError && (
-              <div className="mb-4 flex items-start gap-2 rounded-3xl border border-red-500/20 bg-red-500/5 p-3.5 text-xs text-red-400">
+              <div className="mb-4 flex items-start gap-2 rounded-3xl border border-red-500/20 bg-red-500/5 p-3.5 text-sm text-red-400">
                 <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                 <span>{followError}</span>
               </div>
@@ -376,7 +376,7 @@ export default function Explore({
                           >
                             {usr.fullName}
                           </h4>
-                          <span className="text-xs text-slate-500 dark:text-zinc-500 block truncate">@{usr.username}</span>
+                          <span className="text-sm text-slate-500 dark:text-zinc-500 block truncate">@{usr.username}</span>
                         </div>
                       </div>                          {user && user._id !== usr._id && (
                         <button
@@ -389,7 +389,7 @@ export default function Explore({
                               setFollowError("Follow action failed. Please try again.");
                             }
                           }}
-                          className={`shrink-0 text-xs font-semibold px-4 py-2 rounded-full transition-all cursor-pointer transform hover:scale-105 active:scale-95 ${followingStates[usr._id]
+                          className={`shrink-0 text-sm font-semibold px-4 py-2 rounded-full transition-all cursor-pointer transform hover:scale-105 active:scale-95 ${followingStates[usr._id]
                             ? "bg-zinc-900 text-white dark:bg-zinc-800 dark:text-white border border-zinc-300 dark:border-zinc-600 shadow-md"
                             : "bg-black text-white hover:bg-zinc-800 shadow-lg"
                             }`}

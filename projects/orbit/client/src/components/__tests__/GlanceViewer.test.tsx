@@ -28,6 +28,9 @@ vi.mock("lucide-react", () => ({
   X: (props: any) => <span {...props}>X</span>,
   Eye: (props: any) => <span {...props}>Eye</span>,
   Users: (props: any) => <span {...props}>Users</span>,
+  MoreHorizontal: (props: any) => <span {...props}>MoreHorizontal</span>,
+  Heart: (props: any) => <span {...props}>Heart</span>,
+  MessageSquare: (props: any) => <span {...props}>MessageSquare</span>,
 }));
 
 const imageGlance = {

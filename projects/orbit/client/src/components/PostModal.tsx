@@ -225,7 +225,7 @@ export default function PostModal({
 										clearFieldError("title");
 									}}
 									autoFocus
-									className="flex-1 bg-transparent text-xs font-bold text-slate-900 dark:text-zinc-100 placeholder-slate-400 dark:placeholder-zinc-600 outline-none"
+									className="flex-1 bg-transparent text-[12px] md:text-sm font-bold text-slate-900 dark:text-zinc-100 placeholder-slate-400 dark:placeholder-zinc-600 outline-none"
 								/>
 								<CharCounter current={title.length} max={500} />
 							</div>
@@ -239,7 +239,7 @@ export default function PostModal({
 									clearFieldError("content");
 								}}
 								maxLength={5000}
-								className="w-full resize-none bg-transparent text-xs text-slate-800 dark:text-zinc-300 placeholder-slate-500 dark:placeholder-zinc-500 outline-none"
+								className="w-full resize-none bg-transparent text-[12px] md:text-sm text-slate-800 dark:text-zinc-300 placeholder-slate-500 dark:placeholder-zinc-500 outline-none"
 							/>
 							<div className="flex items-center justify-end mt-1">
 								<CharCounter
@@ -368,7 +368,7 @@ export default function PostModal({
 								<button
 									type="submit"
 									disabled={submittingPost}
-									className="rounded-full bg-white text-black hover:bg-zinc-200 border border-white/20 px-6 py-2 text-sm font-bold disabled:opacity-50 transition-all font-sans cursor-pointer">
+									className="rounded-full bg-white text-black hover:bg-zinc-200 border border-white/20 px-6 py-2 text-[12px] md:text-sm font-bold disabled:opacity-50 transition-all font-sans cursor-pointer">
 									{submittingPost ? (
 										<Loader2 className="h-4 w-4 animate-spin" />
 									) : (

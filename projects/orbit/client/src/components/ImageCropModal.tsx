@@ -153,10 +153,10 @@ export default function ImageCropModal({
 					{/* Header */}
 					<div className="flex items-center justify-between border-b border-zinc-800 bg-black p-4 relative z-10">
 						<div className="text-left">
-							<h3 className="font-sans text-sm font-black text-black dark:text-white uppercase tracking-wider">
+							<h3 className="font-sans text-base font-black text-black dark:text-white uppercase tracking-wider">
 								{title}
 							</h3>
-							<p className="text-[10px] text-zinc-500 font-bold">
+							<p className="text-[11px] text-zinc-500 font-bold">
 								Drag to reposition, pinch/scroll to zoom
 							</p>
 						</div>
@@ -188,14 +188,14 @@ export default function ImageCropModal({
 
 					{/* Dimension Selector Bar */}
 					<div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 bg-zinc-900/60 p-3 relative z-10 justify-start">
-						<span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mr-2">
+						<span className="text-[11px] font-black uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mr-2">
 							Dimensions:
 						</span>
 
 						<button
 							type="button"
 							onClick={() => setAspect(1)}
-							className={`px-3 py-1 rounded-full text-xs font-bold tracking-tight transition cursor-pointer ${
+							className={`px-3 py-1 rounded-full text-[12px] md:text-sm font-bold tracking-tight transition cursor-pointer ${
 								aspect === 1
 									? "bg-black text-white dark:bg-white dark:text-black"
 									: "bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800"
@@ -205,7 +205,7 @@ export default function ImageCropModal({
 						<button
 							type="button"
 							onClick={() => setAspect(4 / 5)}
-							className={`px-3 py-1 rounded-full text-xs font-bold tracking-tight transition cursor-pointer ${
+							className={`px-3 py-1 rounded-full text-[12px] md:text-sm font-bold tracking-tight transition cursor-pointer ${
 								aspect === 4 / 5
 									? "bg-black text-white dark:bg-white dark:text-black"
 									: "bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800"
@@ -215,7 +215,7 @@ export default function ImageCropModal({
 						<button
 							type="button"
 							onClick={() => setAspect(16 / 9)}
-							className={`px-3 py-1 rounded-full text-xs font-bold tracking-tight transition cursor-pointer ${
+							className={`px-3 py-1 rounded-full text-[12px] md:text-sm font-bold tracking-tight transition cursor-pointer ${
 								aspect === 16 / 9
 									? "bg-black text-white dark:bg-white dark:text-black"
 									: "bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800"
@@ -229,7 +229,7 @@ export default function ImageCropModal({
 						<div className="flex flex-col w-full sm:w-1/2 gap-3">
 							{/* Zoom slider */}
 							<div className="flex items-center gap-4">
-								<span className="text-xs font-semibold text-zinc-500 w-12 text-left">
+								<span className="text-sm font-semibold text-zinc-500 w-12 text-left">
 									Zoom
 								</span>
 								<input
@@ -248,7 +248,7 @@ export default function ImageCropModal({
 							</div>
 							{/* Rotate slider */}
 							<div className="flex items-center gap-4">
-								<span className="text-xs font-semibold text-zinc-500 w-12 text-left">
+								<span className="text-sm font-semibold text-zinc-500 w-12 text-left">
 									Rotate
 								</span>
 								<input
@@ -268,7 +268,7 @@ export default function ImageCropModal({
 						</div>
 						<button
 							onClick={createCrop}
-							className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-black dark:bg-white px-6 py-3 text-sm font-bold text-white dark:text-black hover:scale-105 transition-transform cursor-pointer">
+							className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-black dark:bg-white px-6 py-3 text-[12px] md:text-sm font-bold text-white dark:text-black hover:scale-105 transition-transform cursor-pointer">
 							Apply Crop <Check className="h-4 w-4" />
 						</button>
 					</div>

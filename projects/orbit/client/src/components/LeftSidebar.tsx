@@ -68,7 +68,7 @@ export default React.memo(function LeftSidebar({
 								<h1 className="text-lg font-bold text-slate-900 dark:text-zinc-50 tracking-tight font-logo">
 									Orbit
 								</h1>
-								<p className="text-[10px] text-zinc-500 dark:text-zinc-400 tracking-wide">
+								<p className="text-[11px] text-zinc-500 dark:text-zinc-400 tracking-wide">
 									your inner circle
 								</p>
 							</div>
@@ -89,7 +89,7 @@ export default React.memo(function LeftSidebar({
 										aria-current={
 											active ? "page" : undefined
 										}
-										className={`flex w-full items-center gap-2.5 rounded-2xl px-3 py-2 text-xs font-semibold transition-all cursor-pointer ${
+										className={`flex w-full items-center gap-2.5 rounded-2xl px-3 py-2 text-[12px] md:text-sm font-semibold transition-all cursor-pointer ${
 											active
 												? "bg-zinc-900 text-white dark:bg-zinc-800 dark:text-white shadow-md"
 												: "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
@@ -121,7 +121,7 @@ export default React.memo(function LeftSidebar({
 						<button
 							onClick={() => setPostModalOpen(true)}
 							aria-label="Create new post"
-							className="w-full bg-white text-black font-semibold text-xs rounded-full py-2.25 px-4 flex items-center justify-center md:justify-start gap-2.5 transition-all shadow-lg active:scale-95 cursor-pointer hover:bg-zinc-100 hover:shadow-xl">
+							className="w-full bg-white text-black font-semibold text-sm rounded-full py-2.25 px-4 flex items-center justify-center md:justify-start gap-2.5 transition-all shadow-lg active:scale-95 cursor-pointer hover:bg-zinc-100 hover:shadow-xl">
 							<Feather
 								className="h-3.5 w-3.5"
 								aria-hidden="true"

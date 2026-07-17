@@ -11,9 +11,9 @@ export default function BackgroundGradients({}: BackgroundGradientsProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mouseCoordsRef = useRef({ x: 0, y: 0 });
   const interpMouseRef = useRef({ x: 0, y: 0 });
-  const [isMobile, setIsMobile] = useState(() => {
+  const [isLargeScreen, setIsLargeScreen] = useState(() => {
     if (typeof window === "undefined") return false;
-    return window.innerWidth < 768 || window.matchMedia("(pointer: coarse)").matches;
+    return window.innerWidth >= 768;
   });
   const [disableCanvas, setDisableCanvas] = useState(() => {
     if (typeof navigator !== "undefined" && (navigator as any).brave) {
@@ -23,19 +23,16 @@ export default function BackgroundGradients({}: BackgroundGradientsProps) {
   });
 
   useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(
-        window.innerWidth < 768 ||
-        window.matchMedia("(pointer: coarse)").matches
-      );
+    const checkScreen = () => {
+      setIsLargeScreen(window.innerWidth >= 768);
     };
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
+    checkScreen();
+    window.addEventListener("resize", checkScreen);
+    return () => window.removeEventListener("resize", checkScreen);
   }, []);
 
   useEffect(() => {
-    if (isMobile || disableCanvas) return;
+    if (!isLargeScreen || disableCanvas) return;
     const handleMouseMove = (e: MouseEvent) => {
       // Normalize coordinate drift (-1 to 1)
       const x = (e.clientX / window.innerWidth) * 2 - 1;
@@ -47,11 +44,11 @@ export default function BackgroundGradients({}: BackgroundGradientsProps) {
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
     };
-  }, [isMobile, disableCanvas]);
+  }, [isLargeScreen, disableCanvas]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || isMobile || disableCanvas || !hasWebGL()) return;
+    if (!canvas || !isLargeScreen || disableCanvas || !hasWebGL()) return;
 
     let renderer: THREE.WebGLRenderer | null = null;
     let geometry: THREE.PlaneGeometry | null = null;
@@ -246,7 +243,7 @@ export default function BackgroundGradients({}: BackgroundGradientsProps) {
         } catch {}
       }
     };
-  }, [isMobile, disableCanvas]);
+  }, [isLargeScreen, disableCanvas]);
 
   return (
     <div
@@ -261,7 +258,7 @@ export default function BackgroundGradients({}: BackgroundGradientsProps) {
       <div className="absolute w-[50vw] h-[50vw] max-w-125 max-h-125 rounded-full filter blur-[120px] opacity-10 bg-linear-to-br from-zinc-900 to-black right-[15%] bottom-[10%] animate-pulse" />
 
       {/* WebGL ThreeJS Liquid Canvas */}
-      {!isMobile && !disableCanvas && <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block" />}
+      {isLargeScreen && !disableCanvas && <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block" />}
     </div>
   );
 }

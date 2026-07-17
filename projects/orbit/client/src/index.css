@@ -27,6 +27,42 @@ button {
 	}
 }
 
+/* ─── Design Tokens ────────────────────────────────────────────── */
+:root {
+	--app-height: 100dvh;
+	--safe-area-bottom: env(safe-area-inset-bottom, 0px);
+	--dock-offset: 6.25rem;
+
+	/* Z-index scale */
+	--z-base: 0;
+	--z-content: 10;
+	--z-dock: 120;
+	--z-alert: 140;
+	--z-toast: 160;
+	--z-modal: 300;
+
+	/* Border radius scale */
+	--radius-sm: 0.5rem;      /* 8px  — small chips, badges */
+	--radius-md: 0.75rem;     /* 12px — medium surfaces */
+	--radius-lg: 1rem;        /* 16px — cards */
+	--radius-xl: 1.25rem;     /* 20px — large cards */
+	--radius-2xl: 1.5rem;     /* 24px — dialogs, modals */
+	--radius-full: 9999px;    /* pills, inputs */
+
+	/* Shadow depth scale */
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+	--shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.4);
+	--shadow-xl: 0 20px 60px -15px rgba(0, 0, 0, 0.5);
+	--shadow-glow: 0 0 20px rgba(255, 255, 255, 0.05);
+
+	/* Transition defaults */
+	--transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+	--transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+	--transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+	--transition-spring: 500ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
 /* ─── Cross-browser backdrop-filter support (Tailwind v4 doesn't auto-prefix) ─── */
 [class*="backdrop-blur"] {
 	-webkit-backdrop-filter: var(--tw-backdrop-blur);
@@ -39,28 +75,41 @@ button {
 	}
 }
 
-/* Custom globally applied styles on HTML root - completely hide any scrollbars */
+/* ─── Custom scrollbars ────────────────────────────────────────── */
+
+/* Thin, dark-theme scrollbar that appears only while scrolling */
 *::-webkit-scrollbar {
-	display: none !important;
+	width: 4px;
+	height: 4px;
 }
 
+*::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+	background: rgba(113, 113, 122, 0.25);
+	border-radius: 9999px;
+	transition: background var(--transition-base);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+	background: rgba(113, 113, 122, 0.45);
+}
+
+/* Firefox thin scrollbar */
 * {
-	-ms-overflow-style: none !important;
-	/* IE and Edge */
-	scrollbar-width: none !important;
-	/* Firefox */
+	scrollbar-width: thin;
+	scrollbar-color: rgba(113, 113, 122, 0.25) transparent;
 }
 
-:root {
-	--app-height: 100dvh;
-	--safe-area-bottom: env(safe-area-inset-bottom, 0px);
-	--dock-offset: 6.25rem;
-	--z-base: 0;
-	--z-content: 10;
-	--z-dock: 120;
-	--z-alert: 140;
-	--z-toast: 160;
-	--z-modal: 300;
+/* Hide scrollbar only on elements with .scrollbar-none */
+.scrollbar-none::-webkit-scrollbar {
+	display: none;
+}
+
+.scrollbar-none {
+	scrollbar-width: none;
 }
 
 html {
@@ -73,6 +122,12 @@ html {
 
 @media (max-width: 1023px) {
 	html {
+		font-size: 14px;
+	}
+}
+
+@media (max-width: 639px) {
+	html {
 		font-size: 13.5px;
 	}
 }
@@ -80,7 +135,6 @@ html {
 html.dark {
 	background-color: #09090b;
 	color: #ffffff;
-	scrollbar-color: rgba(255, 255, 255, 0.15) rgba(0, 0, 0, 0.3);
 }
 
 body {
@@ -92,10 +146,11 @@ body {
 	overscroll-behavior: none;
 }
 
+/* ─── Default input styling ────────────────────────────────────── */
 input:not([type="checkbox"]):not([type="radio"]),
 textarea,
 select {
-	border-radius: 9999px;
+	border-radius: var(--radius-full);
 }
 
 /* Custom autofill styles to prevent browser ugly backgrounds and text colors */
@@ -113,8 +168,7 @@ select:-webkit-autofill:focus {
 	transition: background-color 5000s ease-in-out 0s;
 }
 
-
-
+/* ─── Layout layers ────────────────────────────────────────────── */
 .mobile-shell {
 	position: relative;
 	isolation: isolate;
@@ -140,6 +194,11 @@ select:-webkit-autofill:focus {
 
 .app-modal-layer {
 	z-index: var(--z-modal);
+}
+
+/* Safe area bottom padding utility — respects device notches and home indicators */
+.pb-safe-bottom {
+	padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 html.dark body {
@@ -168,6 +227,7 @@ html.dark body {
 	z-index: var(--z-dock) !important;
 }
 
+/* ─── Image & video defaults ───────────────────────────────────── */
 img,
 video {
 	max-width: 100%;
@@ -175,6 +235,13 @@ video {
 	display: block;
 }
 
+img {
+	-webkit-touch-callout: none;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+/* ─── Responsive base ──────────────────────────────────────────── */
 @media (max-width: 768px) {
 	body {
 		padding-bottom: env(safe-area-inset-bottom);
@@ -195,7 +262,7 @@ video {
 	}
 }
 
-/* Ensure intuitive interactive pointer cursor feedback on all clickable entities across the application */
+/* ─── Interactive cursor defaults ──────────────────────────────── */
 button,
 [role="button"],
 a,
@@ -212,7 +279,7 @@ nav div,
 	cursor: pointer !important;
 }
 
-/* Improve typography and spacing for better readability */
+/* ─── Typography ───────────────────────────────────────────────── */
 h1,
 h2,
 h3,
@@ -223,18 +290,16 @@ h6 {
 	line-height: 1.2;
 }
 
-p,
-span,
-div {
-	letter-spacing: -0.01em;
+/* ─── Interactive defaults ─────────────────────────────────────── */
+
+/* Base transition on all interactive elements */
+button,
+a,
+[role="button"] {
+	transition: all var(--transition-base);
 }
 
-/* Improve button hover states and transitions */
-button {
-	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* Improve focus states for accessibility — neutral focus ring */
+/* Focus states for accessibility — neutral focus ring */
 *:focus-visible {
 	outline: 2px solid rgba(113, 113, 122, 0.4);
 	outline-offset: 2px;
@@ -285,7 +350,7 @@ select {
 	box-shadow: none !important;
 }
 
-/* ─── Waveform animation for voice note recording indicator ─────────── */
+/* ─── Waveform animation for voice note recording indicator ────── */
 @keyframes waveform {
 	0% {
 		transform: scaleY(0.3);
@@ -301,7 +366,54 @@ select {
 	animation: waveform 0.5s ease-in-out infinite alternate;
 }
 
-/* Respect reduced motion preferences */
+/* ─── Fade-in animation for page content ───────────────────────── */
+@keyframes fade-in-up {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.animate-fade-in-up {
+	animation: fade-in-up 0.3s ease-out;
+}
+
+/* ─── Skeleton shimmer animation ───────────────────────────────── */
+@keyframes shimmer {
+	0% {
+		background-position: -200% 0;
+	}
+	100% {
+		background-position: 200% 0;
+	}
+}
+
+.skeleton-shimmer {
+	background: linear-gradient(
+		90deg,
+		rgba(39, 39, 42, 0.4) 25%,
+		rgba(63, 63, 70, 0.6) 50%,
+		rgba(39, 39, 42, 0.4) 75%
+	);
+	background-size: 200% 100%;
+	animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* ─── Card hover lift ──────────────────────────────────────────── */
+.card-hover-lift {
+	transition: transform var(--transition-base), box-shadow var(--transition-base);
+}
+
+.card-hover-lift:hover {
+	transform: translateY(-2px);
+	box-shadow: var(--shadow-lg);
+}
+
+/* ─── Respect reduced motion preferences ───────────────────────── */
 @media (prefers-reduced-motion: reduce) {
 
 	*,
@@ -313,18 +425,15 @@ select {
 	}
 }
 
-/* Reusable surface border for consistent dark theme — use Tailwind's border-zinc-800/opacity instead */
-
 /* ─── Mobile Performance: Reduce animations and effects on small screens ─── */
 @media (max-width: 768px) {
 
-	/* Disable all non-essential heavy motion animations on mobile */
+	/* Slow down non-essential animations but keep them if not using prefers-reduced-motion */
 	*,
 	*::before,
 	*::after {
-		animation-duration: 0.01ms !important;
-		animation-iteration-count: 1 !important;
-		transition-duration: 0.1s !important;
+		animation-duration: 0.3s !important;
+		transition-duration: 0.15s !important;
 	}
 
 	/* Re-enable essential micro-animations (spinner, pulse loaders, waveform) */
@@ -335,7 +444,7 @@ select {
 		animation-iteration-count: infinite !important;
 	}
 
-	/* Prevent costly backdrop-blur on mobile */
+	/* Prevent costly backdrop-blur on mobile — use solid backgrounds instead */
 	.backdrop-blur-xl,
 	.backdrop-blur-2xl,
 	.backdrop-blur-md,
@@ -345,12 +454,21 @@ select {
 		-webkit-backdrop-filter: none !important;
 	}
 
-	/* Simplify shadows on mobile */
-	.shadow-2xl,
-	.shadow-xl,
-	.shadow-lg,
+	/* Simplify shadows on mobile — keep minimal depth hierarchy */
+	.shadow-2xl {
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+	}
+	.shadow-xl {
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+	}
+	.shadow-lg {
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18) !important;
+	}
 	.shadow-md {
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12) !important;
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15) !important;
+	}
+	.shadow-sm {
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12) !important;
 	}
 
 	/* Disable hover scale transforms on touch devices */
@@ -378,11 +496,13 @@ select {
 	}
 
 	/* Mobile chat: prevent zoom on input focus, prevent overscroll */
-	input,
-	textarea,
-	select {
-		font-size: 16px !important;
-		/* prevents iOS auto-zoom on focus */
+	/* iOS only: prevent auto-zoom on focus */
+	@supports (-webkit-touch-callout: none) {
+		input:not([type="checkbox"]):not([type="radio"]),
+		textarea,
+		select {
+			font-size: 16px !important;
+		}
 	}
 
 	/* Chat specific mobile fixes */
@@ -401,7 +521,7 @@ select {
 	}
 }
 
-/* Mobile: dynamic viewport height for all browsers that support dvh */
+/* ─── Mobile: dynamic viewport height ──────────────────────────── */
 /* 100dvh excludes browser chrome (address bar, etc.) on mobile - prevents 'top part missing' issue */
 @supports (height: 100dvh) {
 	.h-screen-force {

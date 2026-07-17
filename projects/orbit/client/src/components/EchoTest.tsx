@@ -279,7 +279,7 @@ export default function EchoTest() {
 
         {/* Recording duration selector */}
         <div className="flex items-center gap-3 mb-5">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+          <label className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-zinc-400">
             Duration:
           </label>
           <div className="flex gap-1.5">
@@ -288,7 +288,7 @@ export default function EchoTest() {
                 key={d}
                 onClick={() => { if (testState.phase === "idle") setRecordingDuration(d); }}
                 disabled={testState.phase !== "idle"}
-                className={`h-7 min-w-[2rem] rounded-full text-[10px] font-bold transition-all cursor-pointer ${
+                className={`h-7 min-w-[2rem] rounded-full text-[12px] md:text-sm font-bold transition-all cursor-pointer ${
                   recordingDuration === d
                     ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
                     : testState.phase === "idle"
@@ -344,7 +344,7 @@ export default function EchoTest() {
           {testState.phase === "idle" && (
             <button
               onClick={startRecording}
-              className="flex items-center gap-2 rounded-full bg-indigo-500 hover:bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white transition-all cursor-pointer"
+              className="flex items-center gap-2 rounded-full bg-indigo-500 hover:bg-indigo-600 px-5 py-2.5 text-[12px] md:text-sm font-bold text-white transition-all cursor-pointer"
             >
               <Mic className="h-4 w-4" />
               Start Test
@@ -353,7 +353,7 @@ export default function EchoTest() {
           {(testState.phase === "recording" || testState.phase === "playing") && (
             <button
               onClick={stopTest}
-              className="flex items-center gap-2 rounded-full bg-rose-500 hover:bg-rose-600 px-5 py-2.5 text-xs font-bold text-white transition-all cursor-pointer"
+              className="flex items-center gap-2 rounded-full bg-rose-500 hover:bg-rose-600 px-5 py-2.5 text-[12px] md:text-sm font-bold text-white transition-all cursor-pointer"
             >
               <Square className="h-4 w-4" />
               {testState.phase === "recording" ? "Stop Recording" : "Stop Playback"}
@@ -362,7 +362,7 @@ export default function EchoTest() {
           {testState.phase === "done" && (
             <button
               onClick={stopTest}
-              className="flex items-center gap-2 rounded-full bg-zinc-700 hover:bg-zinc-600 px-5 py-2.5 text-xs font-bold text-white transition-all cursor-pointer"
+              className="flex items-center gap-2 rounded-full bg-zinc-700 hover:bg-zinc-600 px-5 py-2.5 text-[12px] md:text-sm font-bold text-white transition-all cursor-pointer"
             >
               <RefreshCw className="h-4 w-4" />
               Test Again

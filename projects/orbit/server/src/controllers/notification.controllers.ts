@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import Notification from "../models/notification.model";
-import { getCache, setCache, clearByPattern } from "../configs/cache";
+import { getCache, setCache, deleteCache, clearByPattern } from "../configs/cache";
 import { logger } from "../utilities/logger";
 import {
 	AppError,
@@ -158,9 +158,7 @@ export const getNotifications = async (req: Request, res: Response) => {
 		});
 		throw new AppError("Internal server error!");
 	}
-};
-
-// mark notifications as read
+};	// mark notifications as read
 export const markAsRead = async (req: Request, res: Response) => {
 	try {
 		const userId = req.user?._id;
@@ -169,6 +167,13 @@ export const markAsRead = async (req: Request, res: Response) => {
 		if (!userId) {
 			throw new UnauthorizedError("Unauthorized access!");
 		}
+
+		// Helper to clear all notification caches — both the list cache and the
+		// unread count cache (which has a different key pattern: `notifications:unread:userId`)
+		const clearNotificationCaches = async (uid: string) => {
+			await clearByPattern(`notifications:${uid}:*`);
+			await deleteCache(`notifications:unread:${uid}`);
+		};
 
 		// if notificationId is provided, mark only that single notification as read
 		if (notificationId) {
@@ -190,8 +195,8 @@ export const markAsRead = async (req: Request, res: Response) => {
 				await notification.save();
 			}
 
-			// invalidate cache
-			clearByPattern(`notifications:${userId.toString()}:*`);
+			// invalidate caches
+			await clearNotificationCaches(userId.toString());
 
 			return res.status(200).json({
 				success: true,
@@ -205,8 +210,8 @@ export const markAsRead = async (req: Request, res: Response) => {
 			{ isRead: true },
 		);
 
-		// invalidate cache
-		clearByPattern(`notifications:${userId.toString()}:*`);
+		// invalidate caches
+		await clearNotificationCaches(userId.toString());
 
 		return res.status(200).json({
 			success: true,
@@ -269,8 +274,9 @@ export const clearAllNotifications = async (req: Request, res: Response) => {
 
 		await Notification.deleteMany({ recipient: userId });
 
-		// invalidate cache
-		clearByPattern(`notifications:${userId.toString()}:*`);
+		// invalidate both caches (list + unread count)
+		await clearByPattern(`notifications:${userId.toString()}:*`);
+		await deleteCache(`notifications:unread:${userId.toString()}`);
 
 		return res.status(200).json({
 			success: true,

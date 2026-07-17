@@ -25,6 +25,7 @@ import {
 	Video,
 	FileText,
 	Music,
+	ChevronDown,
 } from "lucide-react";
 import { Socket } from "socket.io-client";
 import {
@@ -41,6 +42,7 @@ import { logger } from "../utils/logger";
 import ValidationMessage from "./ValidationMessage";
 import MessageBubble from "./MessageBubble";
 import ConfirmDialog from "./ConfirmDialog";
+import ConversationListItem from "./ConversationListItem";
 import { validateChatMessage, extractEmoji } from "../utils/validation";
 
 interface ChatProps {
@@ -159,6 +161,66 @@ export default function Chat({
 	} | null>(null);
 	const [selectedForwardConvIds, setSelectedForwardConvIds] = useState<string[]>([]);
 
+	// Camera capture state
+	const [showCamera, setShowCamera] = useState(false);
+	const cameraVideoRef = useRef<HTMLVideoElement>(null);
+	const cameraStreamRef = useRef<MediaStream | null>(null);
+
+	const handleOpenCamera = async () => {
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({
+				video: { facingMode: "environment", width: { ideal: 1080 }, height: { ideal: 1920 } },
+				audio: false,
+			});
+			cameraStreamRef.current = stream;
+			setShowCamera(true);
+			// Wait for video to be ready then play
+			setTimeout(() => {
+				if (cameraVideoRef.current) {
+					cameraVideoRef.current.srcObject = stream;
+					cameraVideoRef.current.play().catch(() => {});
+				}
+			}, 50);
+		} catch (err) {
+			logger.error("Failed to open camera", err);
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: { message: "Camera access denied. Please allow camera permissions.", type: "error" },
+				})
+			);
+		}
+	};
+
+	const handleCapturePhoto = () => {
+		const video = cameraVideoRef.current;
+		if (!video) return;
+		const canvas = document.createElement("canvas");
+		canvas.width = video.videoWidth || 1080;
+		canvas.height = video.videoHeight || 1920;
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return;
+		ctx.drawImage(video, 0, 0);
+		canvas.toBlob((blob) => {
+			if (!blob) return;
+			const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
+			const preview = URL.createObjectURL(blob);
+			setAttachments((prev) => [...prev, file]);
+			setAttachmentPreviews((prev) => [...prev, preview]);
+			handleCloseCamera();
+		}, "image/jpeg", 0.9);
+	};
+
+	const handleCloseCamera = () => {
+		setShowCamera(false);
+		if (cameraStreamRef.current) {
+			cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+			cameraStreamRef.current = null;
+		}
+		if (cameraVideoRef.current) {
+			cameraVideoRef.current.srcObject = null;
+		}
+	};
+
 	// Mobile detection state
 	const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
@@ -176,6 +238,8 @@ export default function Chat({
 	const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
 	const messagesTopSentinelRef = useRef<HTMLDivElement>(null);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
+	const messagesContainerRef = useRef<HTMLDivElement>(null);
+	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
 	// Refs for socket listener closures — prevents listener re-registration on conversation/user change
 	const selectedConvRef = useRef(selectedConv);
@@ -332,28 +396,23 @@ export default function Chat({
 					return [...filtered, message];
 				});
 				// Auto-scroll to bottom so messages are visible (and thus get marked as seen)
-				setTimeout(() => {
-					messagesEndRef.current?.scrollIntoView({
-						behavior: "smooth",
-					});
-				}, 50);
+				scrollToBottom();
 			}
 
-			// Update conversations list to show last message
+			// Update conversations list to show last message and re-sort.
+			// For the active conversation, keep unread at 0 (already set by chat:join).
+			// For other conversations, do NOT increment unreadCounts here — let the
+			// `chat:notification` event (server-authoritative) handle badge counts.
+			// This prevents race conditions where multiple handlers increment the same
+			// count, causing badge desync that reappears on page refresh.
 			setConversations((prev) => {
 				return prev
 					.map((c) => {
 						if (c._id === message.conversation) {
-							const isMeRecipient =
-								message.recipient === currentUser._id;
 							const updatedUnread =
 								currentConv && currentConv._id === c._id
 									? 0
-									: isMeRecipient
-										? (c.unreadCounts?.[currentUser._id] ||
-												0) + 1
-										: c.unreadCounts?.[currentUser._id] ||
-											0;
+									: c.unreadCounts?.[currentUser._id] || 0;
 
 							return {
 								...c,
@@ -448,13 +507,11 @@ export default function Chat({
 						: m,
 				),
 			);
-			const currentConv = selectedConvRef.current;
+			// Update ALL conversations — this event now comes via both conversation room
+			// and personal room, so we need to update regardless of active conversation
 			setConversations((prev) =>
 				prev.map((c) => {
-					if (
-						c._id === currentConv?._id &&
-						c.lastMessage?._id === messageId
-					) {
+					if (c.lastMessage?._id === messageId) {
 						return {
 							...c,
 							lastMessage: {
@@ -713,6 +770,28 @@ export default function Chat({
 		};
 	}, [socket]);
 
+		// Track scroll position to show/hide the scroll-to-bottom button
+	useEffect(() => {
+		const container = messagesContainerRef.current;
+		if (!container) return;
+
+		const handleScroll = () => {
+			const threshold = 200; // px from bottom before showing the button
+			const isAtBottom =
+				container.scrollHeight -
+					container.scrollTop -
+					container.clientHeight <
+				threshold;
+			setShowScrollToBottom(!isAtBottom);
+		};
+
+		// Run once initially to set the correct state
+		handleScroll();
+
+		container.addEventListener("scroll", handleScroll, { passive: true });
+		return () => container.removeEventListener("scroll", handleScroll);
+	}, [selectedConv]);
+
 	// Fetch older messages (infinite scroll up)
 	const fetchOlderMessages = async () => {
 		if (!messagesCursor || loadingOlderMessages || !selectedConv) return;
@@ -785,19 +864,18 @@ export default function Chat({
 		return () => observer.disconnect();
 	}, [messagesHasMore, loadingOlderMessages, messagesCursor, selectedConv]);
 
-	// Scroll to bottom — reset scroll position first to prevent mobile jump
+	// Scroll to bottom — uses double requestAnimationFrame to wait for React commit + paint.
+	// This ensures messages are actually rendered in the DOM before scrolling,
+	// and the smooth behavior lands at the correct position every time.
 	const scrollToBottom = () => {
-		// First, scroll the container to the very bottom instantly (no smooth behavior)
-		// to prevent the 'scrolled up' look on mobile when a conversation is opened
-		const container = document.querySelector(
-			'[class*="overflow-y-auto"][class*="scrollbar-thin"]',
-		);
-		if (container) {
-			container.scrollTop = container.scrollHeight;
-		}
-		setTimeout(() => {
-			messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-		}, 100);
+		// Also hide the scroll-to-bottom button since we're going to the bottom
+		setShowScrollToBottom(false);
+
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+			});
+		});
 	};
 
 	// Trigger typing notification — use refs to avoid stale closure in setTimeout
@@ -1672,6 +1750,30 @@ export default function Chat({
 		const msgId = editingMessage._id;
 		const txt = editText;
 
+		// Optimistic update for messages and conversations
+		setMessages((prev) =>
+			prev.map((m) =>
+				m._id === msgId
+					? { ...m, text: txt, isEdited: true }
+					: m,
+			),
+		);
+		setConversations((prev) =>
+			prev.map((c) => {
+				if (c.lastMessage?._id === msgId) {
+					return {
+						...c,
+						lastMessage: {
+							...c.lastMessage,
+							text: txt,
+							isEdited: true,
+						},
+					};
+				}
+				return c;
+			}),
+		);
+
 		setEditingMessage(null);
 		setEditText("");
 
@@ -1688,7 +1790,7 @@ export default function Chat({
 		} catch (e) {
 			logger.error(e);
 		}
-	}; // Delete message for current user only
+	};	// Delete message for current user only
 	const handleDeleteForMe = async (messageId: string) => {
 		const currentUserId = user._id;
 		// Optimistic: mark as deleted for current user
@@ -1707,6 +1809,23 @@ export default function Chat({
 						}
 					: m,
 			),
+		);
+		// Also optimistically update the conversations list's lastMessage
+		setConversations((prev) =>
+			prev.map((c) => {
+				if (c.lastMessage?._id === messageId) {
+					return {
+						...c,
+						lastMessage: {
+							...c.lastMessage,
+							isDeleted: true,
+							text: "This message was deleted",
+							attachments: [],
+						},
+					};
+				}
+				return c;
+			}),
 		);
 
 		if (messageId.startsWith("pending-") || messageId.startsWith("temp-")) {
@@ -1748,7 +1867,7 @@ export default function Chat({
 
 	// Delete message (for everyone - within 5 min)
 	const handleDeleteMessage = async (messageId: string) => {
-		// 1. Optimistic UI update
+		// 1. Optimistic UI update for messages AND conversations
 		setMessages((prev) =>
 			prev.map((m) =>
 				m._id === messageId
@@ -1760,6 +1879,23 @@ export default function Chat({
 						}
 					: m,
 			),
+		);
+		// Also optimistically update the conversations list's lastMessage
+		setConversations((prev) =>
+			prev.map((c) => {
+				if (c.lastMessage?._id === messageId) {
+					return {
+						...c,
+						lastMessage: {
+							...c.lastMessage,
+							isDeleted: true,
+							text: "This message was deleted",
+							attachments: [],
+						},
+					};
+				}
+				return c;
+			}),
 		);
 
 		if (messageId.startsWith("pending-") || messageId.startsWith("temp-")) {
@@ -2177,7 +2313,7 @@ export default function Chat({
 										onChange={(e) =>
 											handleUserSearch(e.target.value)
 										}
-										className="w-full rounded-full border border-zinc-800 bg-zinc-950/50 py-2 pl-10 pr-4 text-xs md:text-[13px] font-bold text-white placeholder-zinc-550 focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
+										className="w-full rounded-full border border-zinc-800 bg-zinc-950/50 py-2 pl-10 pr-4 text-[12px] md:text-sm font-bold text-white placeholder-zinc-550 focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
 									/>
 								</div>
 
@@ -2206,7 +2342,7 @@ export default function Chat({
 													<Loader2 className="h-4 w-4 animate-spin text-zinc-550" />
 												</div>
 											) : searchResults.length === 0 ? (
-												<p className="text-[10px] text-zinc-550 text-center py-6 font-mono uppercase">
+												<p className="text-[11px] text-zinc-550 text-center py-6 font-mono uppercase">
 													No users found
 												</p>
 											) : (
@@ -2265,109 +2401,24 @@ export default function Chat({
 								) : conversations.length === 0 ? (
 									<div className="text-center py-20 px-4">
 										<MessageSquare className="mx-auto h-8 w-8 text-zinc-600 mb-2" />
-										<h4 className="text-[11px] font-extrabold text-zinc-400 uppercase tracking-widest leading-relaxed">
+										<h4 className="text-[12px] font-extrabold text-zinc-400 uppercase tracking-widest leading-relaxed">
 											No conversations yet
 										</h4>
-										<p className="text-[10px] text-zinc-550 mt-1 font-mono uppercase">
+										<p className="text-[11px] text-zinc-550 mt-1 font-mono uppercase">
 											Search for a user to start chatting
 										</p>
 									</div>
 								) : (
-									conversations.map((conv) => {
-										const partner = getPartner(conv);
-										const presence =
-											getPartnerPresence(conv);
-										const unread =
-											conv.unreadCounts?.[user._id] || 0;
-
-										return (
-											<div
-												key={conv._id}
-												onClick={() =>
-													setSelectedConv(conv)
-												}
-												className="flex items-center gap-3 rounded-2xl p-2.5 cursor-pointer transition-all border hover:bg-zinc-900/30 text-zinc-300 border-transparent">
-												<div className="relative shrink-0">
-													<UserAvatar
-														src={
-															partner.profilePic
-																?.url
-														}
-														alt={partner.fullName}
-														className="h-9 w-9 rounded-full object-cover border border-zinc-800"
-													/>
-													{presence === "online" && (
-														<span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-zinc-950 shadow-md" />
-													)}
-												</div>
-
-												<div className="flex-1 min-w-0 text-left">
-													<div className="flex justify-between items-start gap-1">
-														<span className="text-[11px] font-black leading-tight truncate text-zinc-100 uppercase tracking-wide">
-															{partner.fullName}
-														</span>
-														{conv.lastMessage && (
-															<span className="text-[8.5px] font-mono text-zinc-500 shrink-0 mt-0.5">
-																{formatMessageTime(
-																	conv
-																		.lastMessage
-																		.createdAt,
-																)}
-															</span>
-														)}
-													</div>
-													<div className="flex justify-between items-center gap-2 mt-1">
-														<p className="text-[10px] truncate leading-tight flex-1 text-zinc-400">
-															{conv.lastMessage
-																?.isDeleted ? (
-																<span className="italic">
-																	deleted
-																	message
-																</span>
-															) : conv.lastMessage
-																	?.text ? (
-																conv.lastMessage
-																	.text
-															) : conv.lastMessage
-																	?.attachments &&
-															  conv.lastMessage
-																	.attachments
-																	.length >
-																	0 ? (
-																<span className="font-semibold text-zinc-300">
-																	sent
-																	attachment
-																</span>
-															) : (
-																<span className="italic">
-																	Start a
-																	conversation
-																</span>
-															)}
-														</p>
-
-														{unread > 0 && (
-															<span className="h-4.5 min-w-4.5 px-1 rounded-full bg-white text-[9px] font-extrabold text-black flex items-center justify-center shadow-sm border border-zinc-200 shrink-0">
-																{unread}
-															</span>
-														)}
-
-														<button
-															onClick={(e) =>
-																handleDeleteConversation(
-																	conv._id,
-																	e,
-																)
-															}
-															className="h-6 w-6 rounded-full flex items-center justify-center text-zinc-500 hover:text-red-450 hover:bg-white/5 transition-all cursor-pointer shrink-0 ml-1"
-															title="Delete Conversation">
-															<Trash2 className="h-3.5 w-3.5" />
-														</button>
-													</div>
-												</div>
-											</div>
-										);
-									})
+									conversations.map((conv) => (
+										<ConversationListItem
+											key={conv._id}
+											conv={conv}
+											user={user}
+											onSelect={() => setSelectedConv(conv)}
+											onDelete={(e) => handleDeleteConversation(conv._id, e)}
+											formatMessageTime={formatMessageTime}
+										/>
+									))
 								)}
 							</div>
 						</motion.div>
@@ -2447,14 +2498,16 @@ export default function Chat({
 									</button>
 									<button
 										onClick={(e) => handleClearChat(e)}
-										className="flex h-7 px-2.5 items-center gap-1.5 rounded-full border border-zinc-200/10 hover:border-red-500/20 bg-white/5 hover:bg-red-500/10 text-zinc-400 hover:text-red-400 transition-all cursor-pointer shadow-sm text-[9px] font-black uppercase tracking-wider"
+										className="flex h-7 px-2.5 items-center gap-1.5 rounded-full border border-zinc-200/10 hover:border-red-500/20 bg-white/5 hover:bg-red-500/10 text-zinc-400 hover:text-red-400 transition-all cursor-pointer shadow-sm text-[12px] md:text-sm font-black uppercase tracking-wider"
 										title="Clear All Chat History">
 										<Trash2 className="h-3.5 w-3.5" />
 									</button>
 								</div>
 							</div>
 
-							<div className="flex-1 overflow-y-auto p-1.5 space-y-2.5 min-h-0 md:p-3">
+							<div
+								ref={messagesContainerRef}
+								className="flex-1 overflow-y-auto p-1.5 space-y-2.5 min-h-0 relative md:p-3">
 								{loadingMsgs ? (
 									<div className="space-y-4 p-2">
 										{/* First batch loading — show 4 message bubble skeletons */}
@@ -2469,7 +2522,7 @@ export default function Chat({
 										<h4 className="text-[11px] font-extrabold text-zinc-400 uppercase tracking-widest">
 											Say hello!
 										</h4>
-										<p className="text-[10px] text-zinc-550 mt-1 font-mono uppercase max-w-xs leading-relaxed">
+										<p className="text-[11px] text-zinc-550 mt-1 font-mono uppercase max-w-xs leading-relaxed">
 											Send the first message to start the
 											conversation
 										</p>
@@ -2584,6 +2637,22 @@ export default function Chat({
 									</>
 								)}
 								<div ref={messagesEndRef} />
+
+								{/* Floating scroll-to-bottom button */}
+								<AnimatePresence>
+									{showScrollToBottom && (
+										<motion.button
+											initial={{ opacity: 0, y: 10, scale: 0.9 }}
+											animate={{ opacity: 1, y: 0, scale: 1 }}
+											exit={{ opacity: 0, y: 10, scale: 0.9 }}
+											transition={{ duration: 0.2, ease: "easeOut" }}
+											onClick={() => scrollToBottom()}
+											className="absolute bottom-2 right-2 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-zinc-800/90 backdrop-blur-md border border-zinc-700/50 text-zinc-300 hover:text-white hover:bg-zinc-700 hover:border-zinc-500 shadow-lg transition-all cursor-pointer"
+											title="Scroll to bottom">
+											<ChevronDown className="h-4 w-4" />
+										</motion.button>
+									)}
+								</AnimatePresence>
 							</div>
 
 							<AnimatePresence>
@@ -2647,14 +2716,14 @@ export default function Chat({
 										<div className="flex items-start gap-2.5 mb-3 bg-zinc-900/60 p-3 rounded-2xl border border-zinc-800/60 max-w-md">
 											<div className="w-0.5 h-full min-h-[2.5rem] rounded-full bg-blue-500/40 shrink-0" />
 											<div className="flex-1 min-w-0 text-left">
-												<p className="text-[10px] font-black text-blue-400 uppercase tracking-wider leading-tight">
+												<p className="text-[11px] font-black text-blue-400 uppercase tracking-wider leading-tight">
 													Replying to{" "}
 													{
 														replyToMessage.sender
 															.fullName
 													}
 												</p>
-												<p className="text-[11px] text-zinc-400 truncate mt-0.5 leading-relaxed">
+												<p className="text-[12px] text-zinc-400 truncate mt-0.5 leading-relaxed">
 													{replyToMessage.text ||
 														(replyToMessage.attachments &&
 														replyToMessage
@@ -2737,7 +2806,7 @@ export default function Chat({
 													setEditText(e.target.value);
 													clearFieldError("edit");
 												}}
-												className="w-full rounded-full border border-white/20 bg-zinc-900 px-4 py-2 text-xs md:text-[13px] text-white outline-none"
+												className="w-full rounded-full border border-white/20 bg-zinc-900 px-4 py-2 text-[12px] md:text-sm text-white outline-none"
 											/>
 											<span className="absolute right-4 top-3 text-[8.5px] font-mono text-zinc-550 uppercase">
 												Editing
@@ -2792,7 +2861,7 @@ export default function Chat({
 													id="voice-preview-progress"
 												/>
 											</div>
-											<span className="text-[10px] font-mono text-zinc-400 tabular-nums">
+											<span className="text-[11px] font-mono text-zinc-400 tabular-nums">
 												{recordingDuration}s
 											</span>
 										</div>
@@ -2842,8 +2911,8 @@ export default function Chat({
 										onSubmit={handleSendMessage}
 										className="flex gap-2 items-center w-full">
 										<div className="grow relative flex items-center">
-											{/* Media Send Icon inside left corner */}
-											<div className="absolute left-1.5 z-20 w-8 h-8 flex items-center justify-center">
+											{/* Media Send Icon inside left corner */}												<div className="absolute left-1.5 z-20 flex items-center gap-1">
+												<div className="w-8 h-8 flex items-center justify-center relative">
 												<input
 													type="file"
 													accept="*/*"
@@ -2862,6 +2931,8 @@ export default function Chat({
 												</button>
 											</div>
 
+											</div>
+
 											<input
 												type="text"
 												placeholder={isListeningText ? "Listening..." : "Type a message..."}
@@ -2873,7 +2944,7 @@ export default function Chat({
 													clearFieldError("message");
 													handleTyping();
 												}}
-												className={`w-full rounded-full border border-zinc-800 bg-zinc-950/40 text-xs md:text-[13px] placeholder:text-xs md:placeholder:text-[13px] text-slate-100 placeholder-zinc-500 outline-none focus:border-white focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-zinc-700 pl-10.5 ${
+												className={`w-full rounded-full border border-zinc-800 bg-zinc-950/40 text-[12px] md:text-sm placeholder:text-[12px] md:placeholder:text-sm text-slate-100 placeholder-zinc-500 outline-none focus:border-white focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-zinc-700 pl-10.5 ${
 													isListeningText
 														? "border-purple-500/50 bg-purple-950/20 text-purple-200"
 														: ""
@@ -2913,7 +2984,7 @@ export default function Chat({
 														/>
 													))}
 												</span>
-												<span className="text-[11px] font-mono text-red-400 tabular-nums font-bold">
+												<span className="text-[12px] font-mono text-red-400 tabular-nums font-bold">
 													{recordingDuration}s
 												</span>
 											</div>
@@ -2961,8 +3032,38 @@ export default function Chat({
 							</div>
 						</motion.div>
 					)}
-				</AnimatePresence>
-			</GlassCard>
+				</AnimatePresence>				</GlassCard>
+
+			{/* Camera capture overlay */}
+			{showCamera && createPortal(
+				<div className="fixed inset-0 z-[500] bg-black flex flex-col">
+					<video
+						ref={cameraVideoRef}
+						autoPlay
+						playsInline
+						muted
+						className="flex-1 w-full object-cover"
+					/>
+					<div className="flex items-center justify-between px-8 py-6 bg-black/80">
+						<button
+							type="button"
+							onClick={handleCloseCamera}
+							className="h-10 w-20 rounded-full border border-zinc-600 text-zinc-400 hover:text-white hover:border-zinc-400 font-bold text-xs transition-all cursor-pointer"
+						>
+							Cancel
+						</button>
+						<button
+							type="button"
+							onClick={handleCapturePhoto}
+							className="h-16 w-16 rounded-full bg-white border-4 border-zinc-300 hover:border-white transition-all cursor-pointer flex items-center justify-center"
+						>
+							<div className="h-12 w-12 rounded-full bg-white border-2 border-zinc-900" />
+						</button>
+						<div className="w-20" />
+					</div>
+				</div>,
+				document.body
+			)}
 
 			{contextMenu && (
 				<>
@@ -3022,7 +3123,7 @@ export default function Chat({
 								{/* Actions list */}
 								<div className="p-4 space-y-1">
 									<div className="px-4 py-1.5 mb-2 text-center border-b border-zinc-800/40 select-none">
-										<span className="text-[10px] font-bold text-zinc-400">
+										<span className="text-[11px] font-bold text-zinc-400">
 											{new Date(contextMenu.message.createdAt).toLocaleString("en-US", {
 												dateStyle: "medium",
 												timeStyle: "short",

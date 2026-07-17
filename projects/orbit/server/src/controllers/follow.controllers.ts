@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { User } from "../models/user.model";
 import Follow from "../models/follow.model";
-import { getCache, setCache, clearFollowCache, clearUserByUsernameCache, clearUserByIdCache } from "../configs/cache";
+import { getCache, setCache, clearByPattern, clearFollowCache, clearUserByUsernameCache, clearUserByIdCache } from "../configs/cache";
 import {
   createNotification,
   deleteInteractionNotification,
@@ -88,6 +88,8 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
       if (followerUser?.username) await clearUserByUsernameCache(followerUser.username);
       await clearUserByIdCache(userId);
       await clearUserByIdCache(follower.toString());
+      await clearByPattern(`users:suggested:${follower.toString()}:*`);
+      await clearByPattern(`users:suggested:${userId}:*`);
 
       // emit follow event
       if (updatedTargetUser) {

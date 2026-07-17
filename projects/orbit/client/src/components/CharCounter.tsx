@@ -14,7 +14,7 @@ export default function CharCounter({ current, max, className = "" }: CharCounte
   }
 
   return (
-    <span className={`text-[10px] font-mono font-medium transition-colors duration-200 ${color} ${className}`}>
+    <span className={`text-[11px] font-mono font-medium transition-colors duration-200 ${color} ${className}`}>
       {current}/{max}
     </span>
   );

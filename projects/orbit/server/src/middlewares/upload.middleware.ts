@@ -184,6 +184,24 @@ const glimpseMediaFilter = (req: any, file: any, cb: any) => {
   cb(null, true);
 };
 
+// Video duration check middleware (must be applied after multer)
+// Validates that video files are no longer than 60 seconds
+// This is a best-effort check at the middleware level; the definitive
+// check happens in the controller after Cloudinary returns duration info.
+const checkVideoDuration = (req: any, res: any, next: any) => {
+  const file = req.file;
+  if (!file || !file.mimetype.startsWith("video/")) {
+    return next();
+  }
+
+  // If Cloudinary already provides duration, check it
+  if ((file as any).duration && (file as any).duration > 60) {
+    return next(new Error("Video duration must not exceed 1 minute!"));
+  }
+
+  next();
+};
+
 const uploadGlimpseMedia = multer({
   storage: glimpseMediaStorage,
   fileFilter: glimpseMediaFilter,

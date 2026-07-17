@@ -77,7 +77,7 @@ export interface Comment {
   reactions?: CommentReaction[];
 }
 
-export type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message_reply";
+export type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message_reply" | "glimpse_reaction" | "glimpse_reply";
 
 export interface Notification {
   _id: string;
@@ -94,6 +94,7 @@ export interface Notification {
     title: string;
     slug: string;
   } | null;
+  glimpse?: { _id: string } | null;
   comment?: {
     _id: string;
     content: string;
@@ -175,8 +176,11 @@ export interface Glance {
     user: { _id: string; username: string; fullName: string; profilePic?: CloudinaryImage } | string; 
     viewedAt: string; 
   }[];
-  maxViews: number;
-  viewsRemaining: number;
+  reactions?: {
+    user: string | { _id: string; username: string; fullName: string; profilePic?: CloudinaryImage };
+    emoji: string;
+    createdAt?: string;
+  }[];
   viewedByMe: boolean;
   expiresAt: string;
   createdAt: string;

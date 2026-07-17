@@ -80,7 +80,7 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
             )}
             <button
               onClick={this.handleReset}
-              className="mt-2 cursor-pointer rounded-full bg-zinc-100 px-5 py-2 text-xs font-bold text-black transition-all hover:bg-white active:scale-95"
+              className="mt-2 cursor-pointer rounded-full bg-zinc-100 px-5 py-2 text-[12px] md:text-sm font-bold text-black transition-all hover:bg-white active:scale-95"
             >
               Try again
             </button>

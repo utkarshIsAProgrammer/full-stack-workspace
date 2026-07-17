@@ -361,19 +361,30 @@ export default function Notifications({
 					icon: SmilePlus,
 					color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/30",
 					text: "reacted to your comment",
-				};
-			case "message_reply":
-				return {
-					icon: MessageSquare,
-					color: "text-sky-600 bg-sky-50 dark:bg-sky-950/20 border-sky-200 dark:border-sky-900/30",
-					text: "replied to your message",
-				};
-			default:
-				return {
-					icon: Bell,
-					color: "text-zinc-500 bg-zinc-800 border-zinc-700",
-					text: "interacted with you",
-				};
+				};    case "message_reply":
+      return {
+        icon: MessageSquare,
+        color: "text-sky-600 bg-sky-50 dark:bg-sky-950/20 border-sky-200 dark:border-sky-900/30",
+        text: "replied to your message",
+      };
+    case "glimpse_reaction":
+      return {
+        icon: Heart,
+        color: "text-rose-600 bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/30",
+        text: "reacted to your glance",
+      };
+    case "glimpse_reply":
+      return {
+        icon: MessageSquare,
+        color: "text-violet-600 bg-violet-50 dark:bg-violet-950/20 border-violet-200 dark:border-violet-900/30",
+        text: "replied to your glance",
+      };
+    default:
+      return {
+        icon: Bell,
+        color: "text-zinc-500 bg-zinc-800 border-zinc-700",
+        text: "interacted with you",
+      };
 		}
 	};
 
@@ -421,12 +432,12 @@ export default function Notifications({
 					<div className="flex items-center gap-2">
 						<button
 							onClick={handleMarkAllRead}
-							className="rounded-full border border-zinc-800 bg-zinc-900 px-4 py-1.5 text-xs font-semibold text-slate-700 dark:text-zinc-300 transition-all hover:bg-slate-50 dark:hover:bg-zinc-800 hover:text-slate-900 dark:hover:text-zinc-100 cursor-pointer">
+							className="rounded-full border border-zinc-800 bg-zinc-900 px-4 py-1.5 text-[12px] md:text-sm font-semibold text-slate-700 dark:text-zinc-300 transition-all hover:bg-slate-50 dark:hover:bg-zinc-800 hover:text-slate-900 dark:hover:text-zinc-100 cursor-pointer">
 							Mark all read
 						</button>
 						<button
 							onClick={handleClearAll}
-							className="rounded-full border border-red-900/30 bg-red-950/20 px-4 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 transition-all hover:bg-red-100 dark:hover:bg-red-900/40 cursor-pointer">
+							className="rounded-full border border-red-900/30 bg-red-950/20 px-4 py-1.5 text-[12px] md:text-sm font-semibold text-red-600 dark:text-red-400 transition-all hover:bg-red-100 dark:hover:bg-red-900/40 cursor-pointer">
 							Clear all
 						</button>
 					</div>
@@ -434,7 +445,7 @@ export default function Notifications({
 			</div>
 
 			{error && (
-				<div className="mb-6 flex items-start gap-2.5 rounded-3xl border border-red-900/30 bg-red-950/25 p-4.5 text-xs text-red-800 dark:text-red-400">
+				<div className="mb-6 flex items-start gap-2.5 rounded-3xl border border-red-900/30 bg-red-950/25 p-4.5 text-sm text-red-800 dark:text-red-400">
 					<AlertCircle className="h-4.5 w-4.5 shrink-0 text-red-600" />
 					<span>{error}</span>
 				</div>
@@ -445,10 +456,10 @@ export default function Notifications({
 					<div className="flex h-14 w-14 items-center justify-center rounded-full bg-zinc-1 bg-zinc-800 border border-zinc-700 text-black dark:text-white shadow-sm animate-pulse font-sans">
 						<Bell className="h-6 w-6" />
 					</div>
-					<h3 className="mt-4 text-base font-bold text-slate-800 dark:text-zinc-200">
+					<h3 className="mt-4 text-lg font-bold text-slate-800 dark:text-zinc-200">
 						All quiet here
 					</h3>
-					<p className="mx-auto mt-2 max-w-sm text-xs text-slate-400 dark:text-zinc-400 leading-relaxed">
+					<p className="mx-auto mt-2 max-w-sm text-sm text-slate-400 dark:text-zinc-400 leading-relaxed">
 						When someone likes, comments, follows, or mentions you,
 						you'll see it here.
 					</p>
@@ -523,13 +534,13 @@ export default function Notifications({
 													}
 												/>
 												<span
-													className={`absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border text-[10px] ${details.color}`}>
+													className={`absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border text-[11px] ${details.color}`}>
 													<NotifIcon className="h-3 w-3" />
 												</span>
 											</div>
 
 											<div className="space-y-1">
-												<p className="text-sm text-slate-700 dark:text-zinc-200">
+												<p className="text-base text-slate-700 dark:text-zinc-200">
 													<span
 														onClick={() =>
 															onUserClick(
@@ -556,7 +567,7 @@ export default function Notifications({
 																	.slug,
 															)
 														}
-														className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-zinc-800 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 border border-zinc-750 hover:bg-zinc-700 hover:text-white font-sans whitespace-nowrap shadow-sm">
+														className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-zinc-800 px-3.5 py-1.5 text-[12px] md:text-sm font-semibold text-zinc-200 border border-zinc-750 hover:bg-zinc-700 hover:text-white font-sans whitespace-nowrap shadow-sm">
 														{notif.post.title
 															.length > 50
 															? notif.post.title.slice(
@@ -568,13 +579,13 @@ export default function Notifications({
 												)}
 
 												{notif.comment && (
-													<p className="mt-1.5 border-l-2 border-zinc-700 pl-2 text-xs italic text-zinc-400 leading-relaxed line-clamp-2">
+													<p className="mt-1.5 border-l-2 border-zinc-700 pl-2 text-sm italic text-zinc-400 leading-relaxed line-clamp-2">
 														"{notif.comment.content}
 														"
 													</p>
 												)}
 
-												<div className="flex items-center gap-1.5 text-[10px] text-slate-400 dark:text-zinc-500 pt-1">
+												<div className="flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-zinc-500 pt-1">
 													<Clock className="h-3.5 w-3.5" />
 													<span>
 														{getRelativeTime(
@@ -654,12 +665,12 @@ export default function Notifications({
 												className="h-8 w-8 rounded-full object-cover border border-zinc-800"
 											/>
 											<div className="text-left">
-												<p className="text-xs font-bold text-zinc-200">
+												<p className="text-sm font-bold text-zinc-200">
 													{contextMenu.notif.sender
 														?.fullName ||
 														"Anonymous"}
 												</p>
-												<p className="text-[10px] text-zinc-500">
+												<p className="text-[11px] text-zinc-500">
 													{
 														getNotifDetails(
 															contextMenu.notif
@@ -682,7 +693,7 @@ export default function Notifications({
 													);
 													setContextMenu(null);
 												}}
-												className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer">
+												className="w-full px-3 py-2.5 text-left text-sm font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer">
 												<ExternalLink className="h-3.5 w-3.5 text-zinc-400" />
 												Go to post
 											</button>
@@ -696,7 +707,7 @@ export default function Notifications({
 													);
 													setContextMenu(null);
 												}}
-												className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer">
+												className="w-full px-3 py-2.5 text-left text-sm font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer">
 												<ExternalLink className="h-3.5 w-3.5 text-zinc-400" />
 												View profile
 											</button>
@@ -709,7 +720,7 @@ export default function Notifications({
 													);
 													setContextMenu(null);
 												}}
-												className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer">
+												className="w-full px-3 py-2.5 text-left text-sm font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer">
 												<Eye className="h-3.5 w-3.5 text-zinc-400" />
 												Mark as read
 											</button>
@@ -718,7 +729,7 @@ export default function Notifications({
 												onClick={() => {
 													setContextMenu(null);
 												}}
-												className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer">
+												className="w-full px-3 py-2.5 text-left text-sm font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer">
 												<EyeOff className="h-3.5 w-3.5 text-zinc-400" />
 												Already read
 											</button>
@@ -729,7 +740,7 @@ export default function Notifications({
 													contextMenu.notif,
 												)
 											}
-											className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer">
+											className="w-full px-3 py-2.5 text-left text-sm font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 cursor-pointer">
 											<Copy className="h-3.5 w-3.5 text-zinc-400" />
 											Copy text
 										</button>
@@ -739,13 +750,13 @@ export default function Notifications({
 													contextMenu.notif._id,
 												);
 											}}
-											className="w-full px-3 py-2.5 text-left text-xs font-bold text-red-400 hover:bg-red-500/10 rounded-xl flex items-center gap-2.5 cursor-pointer">
+											className="w-full px-3 py-2.5 text-left text-sm font-bold text-red-400 hover:bg-red-500/10 rounded-xl flex items-center gap-2.5 cursor-pointer">
 											<Trash2 className="h-3.5 w-3.5 text-red-400" />
 											Delete
 										</button>
 										<button
 											onClick={() => setContextMenu(null)}
-											className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-400 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 border border-zinc-800/50 mt-1.5 cursor-pointer">
+											className="w-full px-3 py-2.5 text-left text-sm font-bold text-zinc-400 hover:bg-zinc-850 rounded-xl flex items-center gap-2.5 border border-zinc-800/50 mt-1.5 cursor-pointer">
 											<X className="h-3.5 w-3.5 text-zinc-400" />
 											Cancel
 										</button>
@@ -782,7 +793,7 @@ export default function Notifications({
 												);
 												setContextMenu(null);
 											}}
-											className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
+											className="w-full px-3 py-2.5 text-left text-sm font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
 											<ExternalLink className="h-3.5 w-3.5" />
 											Go to post
 										</button>
@@ -796,7 +807,7 @@ export default function Notifications({
 												);
 												setContextMenu(null);
 											}}
-											className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
+											className="w-full px-3 py-2.5 text-left text-sm font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
 											<ExternalLink className="h-3.5 w-3.5" />
 											View profile
 										</button>
@@ -809,7 +820,7 @@ export default function Notifications({
 												);
 												setContextMenu(null);
 											}}
-											className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
+											className="w-full px-3 py-2.5 text-left text-sm font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
 											<Eye className="h-3.5 w-3.5" />
 											Mark as read
 										</button>
@@ -818,7 +829,7 @@ export default function Notifications({
 											onClick={() => {
 												setContextMenu(null);
 											}}
-											className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-400 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
+											className="w-full px-3 py-2.5 text-left text-sm font-bold text-zinc-400 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
 											<EyeOff className="h-3.5 w-3.5" />
 											Already read
 										</button>
@@ -829,7 +840,7 @@ export default function Notifications({
 												contextMenu.notif,
 											)
 										}
-										className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
+										className="w-full px-3 py-2.5 text-left text-sm font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
 										<Copy className="h-3.5 w-3.5" />
 										Copy text
 									</button>
@@ -839,13 +850,13 @@ export default function Notifications({
 												contextMenu.notif._id,
 											);
 										}}
-										className="w-full px-3 py-2.5 text-left text-xs font-bold text-red-400 hover:bg-red-500/10 rounded-xl flex items-center gap-2 cursor-pointer">
+										className="w-full px-3 py-2.5 text-left text-sm font-bold text-red-400 hover:bg-red-500/10 rounded-xl flex items-center gap-2 cursor-pointer">
 										<Trash2 className="h-3.5 w-3.5" />
 										Delete
 									</button>
 									<button
 										onClick={() => setContextMenu(null)}
-										className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-400 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
+										className="w-full px-3 py-2.5 text-left text-sm font-bold text-zinc-400 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
 										<X className="h-3.5 w-3.5" />
 										Cancel
 									</button>
