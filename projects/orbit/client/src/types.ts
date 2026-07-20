@@ -1,9 +1,7 @@
 export interface CloudinaryImage {
   url: string;
   public_id?: string;
-}
-
-export interface User {
+}	export interface User {
   _id: string;
   username: string;
   fullName: string;
@@ -18,6 +16,19 @@ export interface User {
   viewsCount: number;
   sharesCount: number;
   createdAt: string;
+  isPrivate?: boolean;
+  isOnboarded?: boolean;
+  notificationsEnabled?: boolean;
+  isAdmin?: boolean;
+}
+
+export interface PostPoll {
+  options: {
+    text: string;
+    votes: string[];
+  }[];
+  expiresAt: string | null;
+  totalVotes: number;
 }
 
 export interface Post {
@@ -40,10 +51,26 @@ export interface Post {
     fullName: string;
     profilePic?: CloudinaryImage;
   };
+  collaborator?: {
+    _id: string;
+    username: string;
+    fullName: string;
+    profilePic?: CloudinaryImage;
+  } | null;
+  collabAccepted?: boolean;
+  hashtags?: string[];
+  mentions?: string[];
+  poll?: PostPoll | null;
+  isQuoteRepost?: boolean;
+  quoteContent?: string;
+  isEdited?: boolean;
+  status?: "draft" | "scheduled" | "published";
+  scheduledAt?: string | null;
   createdAt: string;
   likedByMe?: boolean;
   savedByMe?: boolean;
   repostedByMe?: boolean;
+  myVote?: string | null;
 }
 
 export interface CommentReaction {
@@ -77,7 +104,7 @@ export interface Comment {
   reactions?: CommentReaction[];
 }
 
-export type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message_reply" | "glimpse_reaction" | "glimpse_reply";
+export type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message_reply" | "glimpse_reaction" | "glimpse_reply" | "poll_vote" | "collab_invite" | "follow_request" | "daily_reward" | "streak_reminder" | "room_invite";
 
 export interface Notification {
   _id: string;
@@ -98,6 +125,10 @@ export interface Notification {
   comment?: {
     _id: string;
     content: string;
+  } | null;
+  room?: {
+    _id: string;
+    title: string;
   } | null;
   isRead: boolean;
   createdAt: string;
@@ -154,6 +185,7 @@ export interface Message {
   isEdited?: boolean;
   isDeleted?: boolean;
   deletedFor?: string[];
+  forwardedFrom?: string;
   _pending?: boolean;
   _pendingConv?: string;
   _failed?: boolean;
@@ -184,10 +216,80 @@ export interface Glance {
   viewedByMe: boolean;
   expiresAt: string;
   createdAt: string;
+  highlighted?: boolean;
+  highlightLabel?: string;
+  highlightOrder?: number;
 }
 
 export type Glimpse = Glance;
 
+export interface Community {
+  _id: string;
+  name: string;
+  description?: string;
+  image?: { url: string; public_id?: string };
+  creator: {
+    _id: string;
+    username: string;
+    fullName: string;
+    profilePic?: CloudinaryImage;
+  };
+  members: {
+    user: {
+      _id: string;
+      username: string;
+      fullName: string;
+      profilePic?: CloudinaryImage;
+    };
+    joinedAt: string;
+  }[];
+  memberCount: number;
+  isMember?: boolean;
+  pinnedMessages?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommunityMessage {
+  _id: string;
+  community: string;
+  sender: {
+    _id: string;
+    username: string;
+    fullName: string;
+    profilePic?: CloudinaryImage;
+  };
+  text: string;
+  replyTo?: ({
+    _id: string;
+    sender: {
+      _id: string;
+      username: string;
+      fullName: string;
+      profilePic?: CloudinaryImage;
+    };
+    text: string;
+    attachments?: {
+      url: string;
+      public_id?: string;
+      type: "voice_note" | "image" | "gif" | "video" | "file";
+      duration?: number;
+    }[];
+    createdAt: string;
+  }) | null;
+  attachments?: {
+    url: string;
+    public_id?: string;
+    type: "voice_note" | "image" | "gif" | "video" | "file";
+    duration?: number;
+  }[];
+  isEdited?: boolean;
+  isDeleted?: boolean;
+  deletedFor?: string[];
+  reactions?: MessageReaction[];
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface Conversation {
   _id: string;

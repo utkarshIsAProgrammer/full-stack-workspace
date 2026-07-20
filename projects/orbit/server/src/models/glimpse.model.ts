@@ -58,6 +58,21 @@ const glimpseSchema = new mongoose.Schema(
       required: true,
       default: () => new Date(Date.now() + 12 * 60 * 60 * 1000), // 12 hours
     },
+
+    // Story highlights (permanent pinning)
+    highlighted: {
+      type: Boolean,
+      default: false,
+    },
+    highlightLabel: {
+      type: String,
+      default: "",
+      maxlength: [50, "Highlight label must be less than 50 characters!"],
+    },
+    highlightOrder: {
+      type: Number,
+      default: 0,
+    },
   },
   { timestamps: true, collection: "glances" }
 );

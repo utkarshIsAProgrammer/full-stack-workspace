@@ -76,6 +76,7 @@ const commentSchema = new mongoose.Schema(
 );
 
 // post index
+commentSchema.index({ post: 1, parent: 1, _id: -1 });
 commentSchema.index({ post: 1, createdAt: -1 });
 commentSchema.index({ author: 1, createdAt: -1 });
 commentSchema.index({ parent: 1 });

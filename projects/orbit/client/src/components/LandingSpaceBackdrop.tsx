@@ -321,12 +321,12 @@ export default function LandingSpaceBackdrop() {
       className="absolute inset-0 select-none pointer-events-none bg-black overflow-hidden z-0"
     >
       {/* 1. Monochromatic Sky Aurora overlay */}
-      <div className="absolute inset-x-0 top-0 h-[65vh] z-0 opacity-40 pointer-events-none overflow-hidden">
+      <div className="absolute inset-x-0 top-0 h-[65vh] z-0 opacity-70 pointer-events-none overflow-hidden">
         {/* Soft white shifting aurora curtain at the top */}
-        <div className="absolute top-[-5%] left-[10%] w-[85vw] h-[45vh] rounded-full bg-linear-to-b from-white/10 via-zinc-100/4 to-transparent blur-[110px] animate-aurora-top" />
+        <div className="absolute top-[-5%] left-[10%] w-[85vw] h-[45vh] rounded-full bg-linear-to-b from-white/20 via-zinc-100/8 to-transparent blur-[110px] animate-aurora-top" />
 
         {/* Secondary silver glow drifting slowly */}
-        <div className="absolute top-[2%] right-[15%] w-[65vw] h-[35vh] rounded-full bg-linear-to-b from-zinc-200/6 via-zinc-400/2 to-transparent blur-[120px] animate-aurora-top-delayed" />
+        <div className="absolute top-[2%] right-[15%] w-[65vw] h-[35vh] rounded-full bg-linear-to-b from-zinc-200/14 via-zinc-400/5 to-transparent blur-[120px] animate-aurora-top-delayed" />
 
         {/* Radial ambient chrome dark spot in inner center */}
         <div className="absolute left-[50%] -translate-x-1/2 top-0 w-[50vw] h-[50vw] bg-radial-gradient from-white/4 to-transparent blur-[130px] opacity-60" />

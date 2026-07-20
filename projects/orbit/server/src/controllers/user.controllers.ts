@@ -25,6 +25,7 @@ import Repost from "../models/repost.model";
 import { Conversation } from "../models/conversation.model";
 import { Message } from "../models/message.model";
 import { env } from "../configs/env";
+import { cookieOptions } from "../configs/cookie";
 import { logger } from "../utilities/logger";
 import {
 	AppError,
@@ -35,6 +36,7 @@ import {
 } from "../utilities/errors";
 import { emitUserView, emitUserShare, emitUserUpdated, emitAccountDeleted, emitPostPin, emitPostUnpin } from "../configs/socket";
 import { addUserStatusToPosts } from "../utilities/postStatus";
+import { createNotification } from "../utilities/notification";
 
 type Params = {
 	userId: string;
@@ -58,7 +60,9 @@ export const getUserById = async (
 		try {
 			const cached = await getCache(cacheKey);
 			if (cached) user = cached;
-		} catch (e) {}
+		} catch (e) {
+			logger.error(`Cache get error in getUserById!`, { error: e });
+		}
 
 		if (!user) {
 			user = await User.findById(userId)
@@ -71,7 +75,9 @@ export const getUserById = async (
 
 			try {
 				await setCache(cacheKey, user, 60 * 30);
-			} catch (e) {}
+			} catch (e) {
+				logger.error(`Cache set error in getUserById!`, { error: e });
+			}
 		}
 
 		let isFollowing = false;
@@ -452,6 +458,10 @@ export const deleteAccount = async (req: Request, res: Response) => {
 			username: user.username,
 		});
 
+		// clear cookies
+		res.clearCookie("jwt", { ...cookieOptions, path: "/" });
+		res.clearCookie("csrf-token", { path: "/", secure: env.NODE_ENV === "production", sameSite: "lax" });
+
 		res.status(200).json({
 			success: true,
 			message: "Account deleted successfully!",
@@ -577,7 +587,9 @@ export const getUserByUsername = async (
 		try {
 			const cached = await getCache(cacheKey);
 			if (cached) user = cached;
-		} catch (e) {}
+		} catch (e) {
+			logger.error(`Cache get error in getUserByUsername!`, { error: e });
+		}
 
 		if (!user) {
 			user = await User.findOne({ username })
@@ -590,7 +602,9 @@ export const getUserByUsername = async (
 
 			try {
 				await setCache(cacheKey, user, 60 * 30);
-			} catch (e) {}
+			} catch (e) {
+				logger.error(`Cache set error in getUserByUsername!`, { error: e });
+			}
 		}
 
 		let isFollowing = false;
@@ -661,6 +675,19 @@ export const getUserPosts = async (
 			const query: any = { author: userId };
 			if (cursor) {
 				query._id = { $lt: cursor };
+			}
+
+			// Enforce closeFriends privacy when viewed by non-owners
+			if (currentUserId !== userId) {
+				const authorUser = await User.findById(userId).select("closeFriends").lean();
+				const closeFriendsList = (authorUser as any)?.closeFriends || [];
+				const isCloseFriend = currentUserId
+					? closeFriendsList.some((id: any) => id.toString() === currentUserId)
+					: false;
+
+				if (!isCloseFriend) {
+					query.visibility = "public";
+				}
 			}
 
 			const posts = await Post.find(query)
@@ -745,14 +772,49 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
 		const followingIds = following.map((f) => f.following);
 		followingIds.push(currentUserId); // exclude self
 
-		// find users with most followers that user doesn't follow
-		const suggestedUsers = await User.find({
-			_id: { $nin: followingIds },
+		// 1. Find users followed by people the current user follows (mutual network)
+		const mutualFollows = await Follow.find({
+			follower: { $in: followingIds },
+			following: { $nin: followingIds },
+		})
+			.select("following")
+			.lean();
+
+		// Count mutual connections per suggested user
+		const mutualCounts = new Map<string, number>();
+		for (const mf of mutualFollows) {
+			const id = mf.following.toString();
+			mutualCounts.set(id, (mutualCounts.get(id) || 0) + 1);
+		}
+
+		// Sort by mutual connection count (higher = more likely to know each other)
+		const mutualSorted = [...mutualCounts.entries()]
+			.sort(([, a], [, b]) => b - a)
+			.slice(0, limit)
+			.map(([id]) => id);
+
+		// 2. Fill remaining slots with popular users (by followers count)
+		const popularUsers = await User.find({
+			_id: { $nin: [...followingIds, ...mutualSorted] },
 		})
 			.select("_id fullName username profilePic bio followersCount")
 			.sort({ followersCount: -1, createdAt: -1 })
-			.limit(limit)
+			.limit(limit - mutualSorted.length)
 			.lean();
+
+		// 3. Combine: mutual connections first, then popular users
+		const mutualUsers = await User.find({
+			_id: { $in: mutualSorted },
+		})
+			.select("_id fullName username profilePic bio followersCount")
+			.lean();
+
+		// Sort mutual users by their mutual connection count
+		const orderedMutualUsers = mutualSorted
+			.map((id) => mutualUsers.find((u) => u._id.toString() === id))
+			.filter(Boolean);
+
+		const suggestedUsers = [...orderedMutualUsers, ...popularUsers];
 
 		// Add followingByMe to each user (they're all not-followed since filtered above, but this keeps consistency)
 		const usersWithStatus = suggestedUsers.map((user) => ({
@@ -964,6 +1026,125 @@ export const getPinnedPosts = async (req: Request<Params>, res: Response) => {
 		});
 		throw new AppError("Internal server error!");
 	}
+};
+
+// ─── Private account: follow request / approve / decline ───────────
+export const sendFollowRequest = async (req: Request<Params>, res: Response) => {
+  const currentUserId = req.user?._id;
+  const { userId } = req.params;
+
+  try {
+    if (!currentUserId) throw new UnauthorizedError("Unauthorized!");
+    if (!mongoose.Types.ObjectId.isValid(userId)) throw new BadRequestError("Invalid user ID!");
+    if (currentUserId.toString() === userId) throw new BadRequestError("Cannot follow yourself!");
+
+    const targetUser = await User.findById(userId).select("isPrivate followRequests").lean();
+    if (!targetUser) throw new NotFoundError("User not found!");
+
+    const followReqIds = (targetUser as any).followRequests || [];
+    const alreadyRequested = followReqIds.some((id: any) => id.toString() === currentUserId.toString());
+
+    if ((targetUser as any).isPrivate) {
+      if (alreadyRequested) {
+        return res.status(200).json({ success: true, message: "Follow request already sent!" });
+      }
+
+      await User.findByIdAndUpdate(userId, {
+        $push: { followRequests: currentUserId },
+      });
+
+      await createNotification({
+        recipient: userId,
+        sender: currentUserId.toString(),
+        type: "follow_request",
+      });
+
+      return res.status(200).json({ success: true, message: "Follow request sent!", isPrivate: true });
+    } else {
+      // Public account — fall through to existing toggleFollowUser logic
+      // This endpoint is only for private accounts; public accounts use the regular follow
+      return res.status(200).json({ success: true, message: "User account is public, use the follow button!", isPrivate: false });
+    }
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error(`Error in sendFollowRequest controller!`, { error: err.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+export const approveFollowRequest = async (req: Request<Params>, res: Response) => {
+  const currentUserId = req.user?._id;
+  const { userId } = req.params;
+
+  try {
+    if (!currentUserId) throw new UnauthorizedError("Unauthorized!");
+    if (!mongoose.Types.ObjectId.isValid(userId)) throw new BadRequestError("Invalid user ID!");
+
+    // Check that the current user has a pending request from userId
+    const currentUser = await User.findById(currentUserId);
+    if (!currentUser) throw new NotFoundError("User not found!");
+
+    const reqIds = currentUser.followRequests || [];
+    const hasRequest = reqIds.some((id: any) => id.toString() === userId);
+    if (!hasRequest) throw new BadRequestError("No pending follow request from this user!");
+
+    // Remove from followRequests
+    await User.findByIdAndUpdate(currentUserId, {
+      $pull: { followRequests: userId },
+    });
+
+    // Create the follow relationship
+    await Follow.create({ follower: userId, following: currentUserId });
+
+    // Update counts
+    const [targetFollowers, followerFollowing] = await Promise.all([
+      Follow.countDocuments({ following: currentUserId }),
+      Follow.countDocuments({ follower: userId }),
+    ]);
+
+    await User.findByIdAndUpdate(currentUserId, { $set: { followersCount: targetFollowers } });
+    await User.findByIdAndUpdate(userId, { $set: { followingCount: followerFollowing } });
+
+    // Notify the requester that they were approved
+    await createNotification({
+      recipient: userId,
+      sender: currentUserId.toString(),
+      type: "follow",
+    });
+
+    return res.status(200).json({ success: true, message: "Follow request approved!" });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error(`Error in approveFollowRequest controller!`, { error: err.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+export const declineFollowRequest = async (req: Request<Params>, res: Response) => {
+  const currentUserId = req.user?._id;
+  const { userId } = req.params;
+
+  try {
+    if (!currentUserId) throw new UnauthorizedError("Unauthorized!");
+    if (!mongoose.Types.ObjectId.isValid(userId)) throw new BadRequestError("Invalid user ID!");
+
+    const currentUser = await User.findById(currentUserId);
+    if (!currentUser) throw new NotFoundError("User not found!");
+
+    const reqIds = currentUser.followRequests || [];
+    const hasRequest = reqIds.some((id: any) => id.toString() === userId);
+    if (!hasRequest) throw new BadRequestError("No pending follow request from this user!");
+
+    await User.findByIdAndUpdate(currentUserId, {
+      $pull: { followRequests: userId },
+    });
+
+    return res.status(200).json({ success: true, message: "Follow request declined!" });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error(`Error in declineFollowRequest controller!`, { error: err.message });
+    throw new AppError("Internal server error!");
+  }
 };
 
 // update profile

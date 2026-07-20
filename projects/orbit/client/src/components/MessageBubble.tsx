@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { Loader2, CornerDownLeft, Play, Pause, AlertCircle, FileText, Volume2, VolumeX } from "lucide-react";
+import { CornerDownLeft, Play, Pause, AlertCircle, FileText, Volume2, VolumeX } from "lucide-react";
 import UserAvatar from "./UserAvatar";
 import type { Message } from "../types";
 
@@ -320,6 +320,17 @@ const MessageBubble = React.memo(function MessageBubble({
               <span className="italic text-zinc-500 text-[12px] md:text-sm">This message was deleted</span>
             ) : (
               <>
+                {msg.forwardedFrom && (
+                  <div className="mb-1.5 flex items-center gap-1">
+                    <svg className="h-3 w-3 text-zinc-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M17 2l4 4-4 4" />
+                      <path d="M3 11v-1a4 4 0 014-4h14" />
+                    </svg>
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                      Forwarded
+                    </span>
+                  </div>
+                )}
                 {msg.replyTo && (
                   <div
                     className="flex items-start gap-2 mb-2 pb-2 border-l-2 border-blue-500/40 pl-2.5 cursor-pointer hover:bg-zinc-800/30 rounded-r-lg -ml-0.5"
@@ -552,10 +563,28 @@ const MessageBubble = React.memo(function MessageBubble({
 
 // ─── Voice Note Player ──────────────────────────────────────────
 
-let _activeVoiceNotePlayer: {
-  audio: HTMLAudioElement;
-  reset: () => void;
-} | null = null;
+// Module-level manager that ensures only one voice note plays at a time.
+// Intentionally module-scoped (not React state or ref) because it needs to
+// synchronize across all VoiceNotePlayer instances without re-renders.
+const voiceNoteManager = {
+  player: null as { audio: HTMLAudioElement; reset: () => void; } | null,
+  stopCurrent() {
+    if (this.player) {
+      this.player.audio.pause();
+      this.player.reset();
+      this.player = null;
+    }
+  },
+  setPlayer(player: { audio: HTMLAudioElement; reset: () => void }) {
+    if (this.player && this.player.audio !== player.audio) {
+      this.stopCurrent();
+    }
+    this.player = player;
+  },
+  clear() {
+    this.player = null;
+  }
+};
 
 function getPlayableUrl(originalUrl: string): string {
   if (!originalUrl.includes("cloudinary.com")) return originalUrl;
@@ -591,14 +620,17 @@ function VoiceNotePlayer({ url, isMe, initialDuration, disabled }: { url: string
     if (playing) {
       audio.pause();
       setPlaying(false);
-      if (_activeVoiceNotePlayer?.audio === audio) {
-        _activeVoiceNotePlayer = null;
+      if (voiceNoteManager.player?.audio === audio) {
+        voiceNoteManager.clear();
       }
     } else {
-      if (_activeVoiceNotePlayer && _activeVoiceNotePlayer.audio !== audio) {
-        _activeVoiceNotePlayer.audio.pause();
-        _activeVoiceNotePlayer.reset();
-      }
+      voiceNoteManager.setPlayer({
+        audio,
+        reset: () => {
+          setPlaying(false);
+          setCurrentTime(0);
+        },
+      });
       if (audio.currentTime >= (audio.duration || safeDuration) || audio.currentTime === 0) {
         audio.currentTime = 0;
         setCurrentTime(0);
@@ -610,13 +642,6 @@ function VoiceNotePlayer({ url, isMe, initialDuration, disabled }: { url: string
       audio.play().catch(() => {
         setHasError(true);
       });
-      _activeVoiceNotePlayer = {
-        audio,
-        reset: () => {
-          setPlaying(false);
-          setCurrentTime(0);
-        },
-      };
       setPlaying(true);
       setHasError(false);
     }
@@ -733,8 +758,8 @@ function VoiceNotePlayer({ url, isMe, initialDuration, disabled }: { url: string
         onEnded={() => {
           setPlaying(false);
           setCurrentTime(safeDuration);
-          if (_activeVoiceNotePlayer?.audio === audioRef.current) {
-            _activeVoiceNotePlayer = null;
+          if (voiceNoteManager.player?.audio === audioRef.current) {
+            voiceNoteManager.clear();
           }
         }}
         onError={() => {

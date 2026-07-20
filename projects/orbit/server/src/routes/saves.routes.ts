@@ -7,7 +7,7 @@ import {
 } from "../controllers/saves.controllers";
 import { protect } from "../middlewares/auth.middleware";
 import { interactionLimiter } from "../middlewares/ratelimit.middleware";
-import { cacheMiddleware } from "../middleware/cache.middleware";
+import { cacheMiddleware } from "../middlewares/cache.middleware";
 
 const router = express.Router();
 

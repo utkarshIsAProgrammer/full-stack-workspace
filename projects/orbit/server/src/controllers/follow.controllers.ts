@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { User } from "../models/user.model";
 import Follow from "../models/follow.model";
+import Block from "../models/block.model";
 import { getCache, setCache, clearByPattern, clearFollowCache, clearUserByUsernameCache, clearUserByIdCache } from "../configs/cache";
 import {
   createNotification,
@@ -9,7 +10,8 @@ import {
 } from "../utilities/notification";
 import { logger } from "../utilities/logger";
 import { emitFollowUser, emitUnfollowUser } from "../configs/socket";
-import { AppError, BadRequestError, NotFoundError, UnauthorizedError } from "../utilities/errors";
+import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenError } from "../utilities/errors";
+import { invalidateFeedCache } from "../services/feedService";
 
 type Params = {
   userId: string;
@@ -41,6 +43,17 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
 
     if (!targetUser) {
       throw new NotFoundError("User not found!");
+    }
+
+    // Check block status
+    const isBlocked = await Block.findOne({
+      $or: [
+        { blocker: follower, blocked: userId },
+        { blocker: userId, blocked: follower },
+      ],
+    });
+    if (isBlocked) {
+      throw new ForbiddenError("Cannot follow a blocked user!");
     }
 
     // fetch follower's username to clear their cache too
@@ -90,6 +103,9 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
       await clearUserByIdCache(follower.toString());
       await clearByPattern(`users:suggested:${follower.toString()}:*`);
       await clearByPattern(`users:suggested:${userId}:*`);
+
+      // Invalidate feed cache so new posts from followed user appear
+      await invalidateFeedCache(follower.toString());
 
       // emit follow event
       if (updatedTargetUser) {

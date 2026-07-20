@@ -93,6 +93,18 @@ export default function LandingPage({
 					<LandingSpaceBackdrop />
 				</Suspense>
 			)}
+			{!isLargeScreen && (
+				<div
+					aria-hidden="true"
+					className="landing-mobile-backdrop absolute inset-0 z-0 pointer-events-none overflow-hidden">
+					<div className="landing-mobile-backdrop__glow" />
+					<div className="landing-mobile-globe">
+						<span />
+						<span />
+						<span />
+					</div>
+				</div>
+			)}
 
 			{/* 1. Monochromatic Accent Glows */}
 			<div className="absolute inset-x-0 -top-40 h-[70vh] bg-linear-to-b from-white/5 via-transparent to-transparent blur-[140px] pointer-events-none -z-10" />

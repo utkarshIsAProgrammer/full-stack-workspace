@@ -8,6 +8,7 @@ import { getIO } from "../configs/socket";
 import { Conversation } from "../models/conversation.model";
 import { Message } from "../models/message.model";
 import { createNotification } from "../utilities/notification";
+import Block from "../models/block.model";
 
 // Get glimpse feed for the current user
 // Returns non-expired glimpses that still have remaining views
@@ -181,11 +182,14 @@ export const viewGlimpse = async (req: Request, res: Response) => {
       });
     }
 
-    // Add viewer to the glimpse (no view limit anymore — just record who viewed)
-    const updatedGlimpse = await Glimpse.findByIdAndUpdate(
-      glimpseId,
+    // Add viewer to the glimpse safely without duplicating entries
+    const updatedGlimpse = (await Glimpse.findOneAndUpdate(
       {
-        $addToSet: {
+        _id: glimpseId,
+        "viewers.user": { $ne: new mongoose.Types.ObjectId(String(currentUserId)) },
+      },
+      {
+        $push: {
           viewers: {
             user: new mongoose.Types.ObjectId(String(currentUserId)),
             viewedAt: new Date(),
@@ -193,7 +197,7 @@ export const viewGlimpse = async (req: Request, res: Response) => {
         },
       },
       { new: true }
-    );
+    )) || (await Glimpse.findById(glimpseId));
 
     if (!updatedGlimpse) {
       throw new NotFoundError("Glimpse not found!");
@@ -390,6 +394,17 @@ export const replyToGlimpse = async (req: Request, res: Response) => {
     // Don't allow replying to your own glimpse
     if (authorId === currentUserId) {
       throw new BadRequestError("Cannot reply to your own glimpse!");
+    }
+
+    // Check block status
+    const isBlocked = await Block.findOne({
+      $or: [
+        { blocker: currentUserId, blocked: authorId },
+        { blocker: authorId, blocked: currentUserId },
+      ],
+    });
+    if (isBlocked) {
+      throw new ForbiddenError("Cannot reply to this glimpse!");
     }
 
     // Find existing conversation between these two users, or create a new one

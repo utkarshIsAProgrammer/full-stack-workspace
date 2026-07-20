@@ -250,6 +250,9 @@ export const deleteNotification = async (req: Request, res: Response) => {
 			throw new NotFoundError("Notification not found!");
 		}
 
+		await clearByPattern(`notifications:${userId.toString()}:*`);
+		await deleteCache(`notifications:unread:${userId.toString()}`);
+
 		return res.status(200).json({
 			success: true,
 			message: "Notification deleted successfully!",

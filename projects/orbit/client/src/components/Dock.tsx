@@ -8,6 +8,7 @@ import {
 	MessageSquare,
 	Plus,
 	Settings,
+	Hash,
 } from "lucide-react";
 import { User as UserType } from "../types";
 
@@ -74,6 +75,7 @@ export default React.memo(function Dock({
 			icon: MessageSquare,
 			badge: chatBadgeCount,
 		},
+		{ id: "communities", label: "Communities", icon: Hash },
 		{ id: "profile", label: "Profile", icon: User, specialPic: true },
 		{ id: "settings", label: "Settings", icon: Settings },
 	];
@@ -160,7 +162,7 @@ export default React.memo(function Dock({
 	return (
 		<>
 			<div
-				className={`fixed left-1/2 z-[120] w-[calc(100%-0.3rem)] max-w-[28rem] -translate-x-1/2 px-0.5 sm:max-w-[32rem] md:hidden transition-all duration-200 ${isKeyboardOpen ? "bottom-1" : "bottom-1.5 sm:bottom-2.5"}`}
+				className={`fixed left-1/2 z-[120] w-[calc(100%-0.3rem)] max-w-[28rem] -translate-x-1/2 px-0.5 sm:max-w-[32rem] lg:max-w-[36rem] lg:hidden transition-all duration-200 ${isKeyboardOpen ? "bottom-1" : "bottom-1.5 sm:bottom-2.5"}`}
 				style={{
 					bottom: `calc(${isKeyboardOpen ? "0.2rem" : "0.3rem"} + env(safe-area-inset-bottom, 0px))`,
 				}}>

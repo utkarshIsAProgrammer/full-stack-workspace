@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import Repost from "../models/repost.model";
 import Post from "../models/post.model";
+import { User } from "../models/user.model";
 import {
   createNotification,
   deleteInteractionNotification,
@@ -9,9 +10,10 @@ import {
 import { emitPostRepost, emitPostUnrepost } from "../configs/socket";
 import { getCache, setCache, clearByPattern, clearFeedCache } from "../configs/cache";
 import { logger } from "../utilities/logger";
-import { AppError, BadRequestError, NotFoundError, UnauthorizedError } from "../utilities/errors";
+import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenError } from "../utilities/errors";
 import { toggleRepostSchema } from "../schemas/interaction.schema";
 import { addUserStatusToPosts } from "../utilities/postStatus";
+import { logInteraction } from "../services/affinityService";
 
 type Params = {
   postId: string;
@@ -125,7 +127,7 @@ export const toggleRepost = async (req: Request<Params>, res: Response) => {
     }
 
     // find post
-    const post = await Post.findById(postId).select("_id author").lean();
+    const post = await Post.findById(postId).select("_id author visibility").lean();
 
     if (!post) {
       throw new NotFoundError("Post not found!");
@@ -134,6 +136,16 @@ export const toggleRepost = async (req: Request<Params>, res: Response) => {
     // prevent self repost
     if (post.author.toString() === userId.toString()) {
       throw new BadRequestError("You cannot repost your own post!");
+    }
+
+    // check closeFriends permission
+    if ((post as any).visibility === "closeFriends") {
+      const authorUser = await User.findById(post.author).select("closeFriends").lean();
+      const closeFriendsList = (authorUser as any)?.closeFriends || [];
+      const isCloseFriend = closeFriendsList.some((id: any) => id.toString() === userId.toString());
+      if (!isCloseFriend) {
+        throw new ForbiddenError("Cannot repost close friends content!");
+      }
     }
 
     // check existing repost
@@ -199,25 +211,34 @@ export const toggleRepost = async (req: Request<Params>, res: Response) => {
       sender: userId.toString(),
       type: "repost",
       post: postId,
-    });
+    });      // Log interaction for feed ranking
+      if (post.author.toString() !== userId.toString()) {
+        logInteraction(
+          userId.toString(),
+          post.author.toString(),
+          postId,
+          "share",
+          (updatedPost as any)?.hashtags || []
+        );
+      }
 
-    // Emit socket event
-    if (updatedPost) {
-      emitPostRepost(postId, userId.toString(), updatedPost.repostsCount);
-    }
+      // Emit socket event
+      if (updatedPost) {
+        emitPostRepost(postId, userId.toString(), updatedPost.repostsCount);
+      }
 
-    // clear repost cache for this user
-    clearByPattern(`reposts:${userId.toString()}:*`);
-    await clearFeedCache();
+      // clear repost cache for this user
+      clearByPattern(`reposts:${userId.toString()}:*`);
+      await clearFeedCache();
 
-    return res.status(201).json({
-      success: true,
-      message: "Repost created!",
-      reposted: true,
-      repostedByMe: true,
-      repostsCount: updatedPost?.repostsCount,
-      post: updatedPost,
-    });
+      return res.status(201).json({
+        success: true,
+        message: "Repost created!",
+        reposted: true,
+        repostedByMe: true,
+        repostsCount: updatedPost?.repostsCount,
+        post: updatedPost,
+      });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
     logger.error(`Error in toggleRepost controller!`, { error: err.message });

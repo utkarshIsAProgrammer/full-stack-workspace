@@ -196,6 +196,90 @@ select:-webkit-autofill:focus {
 	z-index: var(--z-modal);
 }
 
+/* Lightweight ambient animation for small screens, where the WebGL layers are
+   intentionally omitted to preserve battery life and scrolling performance. */
+.orbit-ambient-glare {
+	background: #09090b;
+	overflow: hidden;
+}
+
+.orbit-ambient-glare__orb {
+	position: absolute;
+	width: 95vw;
+	height: 95vw;
+	border-radius: 9999px;
+	filter: blur(58px);
+	opacity: 0.42;
+	will-change: transform;
+	animation: orbit-ambient-drift 11s ease-in-out infinite alternate;
+}
+
+.orbit-ambient-glare__orb--one {
+	top: -30vw;
+	left: -30vw;
+	background: radial-gradient(circle, rgba(255, 255, 255, 0.22), rgba(113, 113, 122, 0.1) 38%, transparent 70%);
+}
+
+.orbit-ambient-glare__orb--two {
+	right: -35vw;
+	bottom: -25vw;
+	background: radial-gradient(circle, rgba(212, 212, 216, 0.16), rgba(63, 63, 70, 0.12) 40%, transparent 70%);
+	animation-delay: -5s;
+	animation-direction: alternate-reverse;
+}
+
+.landing-mobile-backdrop {
+	background: radial-gradient(circle at 50% 40%, #27272a 0%, #09090b 48%, #000 100%);
+}
+
+.landing-mobile-backdrop__glow {
+	position: absolute;
+	inset: -20%;
+	background: radial-gradient(ellipse at 50% 35%, rgba(255, 255, 255, 0.2), transparent 48%);
+	filter: blur(30px);
+	animation: orbit-ambient-drift 9s ease-in-out infinite alternate;
+}
+
+.landing-mobile-globe {
+	position: absolute;
+	top: 38%;
+	left: 50%;
+	width: min(72vw, 21rem);
+	aspect-ratio: 1;
+	border: 1px solid rgba(255, 255, 255, 0.48);
+	border-radius: 50%;
+	transform: translate(-50%, -50%) rotateX(64deg) rotateZ(-18deg);
+	box-shadow: 0 0 50px rgba(255, 255, 255, 0.16), inset 0 0 38px rgba(255, 255, 255, 0.08);
+	transform-style: preserve-3d;
+	animation: landing-globe-spin 16s linear infinite;
+}
+
+.landing-mobile-globe::before,
+.landing-mobile-globe::after,
+.landing-mobile-globe span {
+	content: "";
+	position: absolute;
+	inset: 12%;
+	border: 1px solid rgba(255, 255, 255, 0.3);
+	border-radius: 50%;
+}
+
+.landing-mobile-globe::before { transform: rotateY(62deg); }
+.landing-mobile-globe::after { transform: rotateY(-62deg); }
+.landing-mobile-globe span:nth-child(1) { transform: rotateX(62deg); }
+.landing-mobile-globe span:nth-child(2) { inset: 28%; opacity: 0.7; }
+.landing-mobile-globe span:nth-child(3) { inset: 42%; opacity: 0.45; }
+
+@keyframes orbit-ambient-drift {
+	from { transform: translate3d(-4%, -3%, 0) scale(0.94); }
+	to { transform: translate3d(9%, 8%, 0) scale(1.12); }
+}
+
+@keyframes landing-globe-spin {
+	from { transform: translate(-50%, -50%) rotateX(64deg) rotateZ(-18deg) rotateY(0deg); }
+	to { transform: translate(-50%, -50%) rotateX(64deg) rotateZ(-18deg) rotateY(360deg); }
+}
+
 /* Safe area bottom padding utility — respects device notches and home indicators */
 .pb-safe-bottom {
 	padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -441,6 +525,21 @@ select {
 	.animate-pulse,
 	.waveform-bar {
 		animation-duration: 1.5s !important;
+		animation-iteration-count: infinite !important;
+	}
+
+	.orbit-ambient-glare__orb {
+		animation-duration: 11s !important;
+		animation-iteration-count: infinite !important;
+	}
+
+	.landing-mobile-backdrop__glow {
+		animation-duration: 9s !important;
+		animation-iteration-count: infinite !important;
+	}
+
+	.landing-mobile-globe {
+		animation-duration: 16s !important;
 		animation-iteration-count: infinite !important;
 	}
 

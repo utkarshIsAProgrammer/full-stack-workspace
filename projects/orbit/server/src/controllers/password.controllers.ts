@@ -184,10 +184,7 @@ export const requestOtpForForgotPassword = async (
 		// clear cookie and respond
 		res.clearCookie("jwt", { ...cookieOptions, path: "/" });
 
-		const message =
-			env.NODE_ENV === "development"
-				? `If the email is registered and verified, an OTP has been sent! (Mock OTP: ${otp})`
-				: "If the email is registered and verified, an OTP has been sent!";
+		const message = "If the email is registered and verified, an OTP has been sent!";
 
 		return res.status(200).json({
 			success: true,
@@ -219,7 +216,7 @@ export const verifyOtpAndForgotPassword = async (
 		const { email, otp, newPassword } = result.data;
 
 		const user = await User.findOne({ email });
-		if (!user) throw new NotFoundError("User not found!");
+		if (!user) throw new BadRequestError("Invalid OTP or email!");
 
 		// check otp exists and valid
 		if (user.otpLockedUntil && user.otpLockedUntil.getTime() > Date.now()) {

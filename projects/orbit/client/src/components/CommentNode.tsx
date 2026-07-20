@@ -1174,8 +1174,8 @@ export default function CommentNode({
 							<input
 								ref={emojiInputRef}
 								type="text"
-								// @ts-ignore-next-line - emoji is valid HTML but missing from React types
-								inputMode="emoji"
+								// inputMode={"emoji" as any} is valid HTML but React types don't include it yet
+								inputMode={"emoji" as any}
 								value={customEmojiInput}
 								onChange={(e) => {
 									const val = e.target.value;

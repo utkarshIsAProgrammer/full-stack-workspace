@@ -2,7 +2,7 @@ import express from "express";
 import { protect } from "../middlewares/auth.middleware";
 import { toggleRepost, getRepostedPosts } from "../controllers/repost.controllers";
 import { interactionLimiter } from "../middlewares/ratelimit.middleware";
-import { cacheMiddleware } from "../middleware/cache.middleware";
+import { cacheMiddleware } from "../middlewares/cache.middleware";
 
 const router = express.Router();
 

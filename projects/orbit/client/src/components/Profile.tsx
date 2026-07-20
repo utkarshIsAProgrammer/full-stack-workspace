@@ -14,6 +14,7 @@ import {
 	Repeat2,
 	FileText,
 	Image,
+
 } from "lucide-react";
 import { User as UserType, Post } from "../types";
 import GlassCard from "./GlassCard";
@@ -21,6 +22,10 @@ import ImageCropModal from "./ImageCropModal";
 import UserAvatar from "./UserAvatar";
 import Skeleton from "./Skeleton";
 import ConfirmDialog from "./ConfirmDialog";
+
+import Streaks from "./Streaks";
+import BlockButton from "./BlockButton";
+import ReputationDisplay from "./ReputationDisplay";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 
@@ -1529,6 +1534,10 @@ export default function Profile({
 								<Share2 className="h-4.5 w-4.5" />
 							</button>
 
+							{!isSelf && profile && (
+								<BlockButton targetUserId={profile._id} />
+							)}
+
 							{isSelf ? (
 								<button
 									onClick={() => {
@@ -1592,6 +1601,11 @@ export default function Profile({
 							</span>
 						</div>
 					)}
+
+					{/* XP & Level Display */}
+					<div className="mt-3">
+						<ReputationDisplay userId={profile._id} compact />
+					</div>
 				</div>
 
 				<div className="mt-5 flex flex-wrap items-center gap-4 px-1 text-sm sm:gap-6 sm:px-1.5">
@@ -1626,10 +1640,8 @@ export default function Profile({
 								label: "Posts",
 								icon: FileText,
 								count: posts.length,
-							},
-							...(isSelf
-								? [
-										{
+							},								...(isSelf
+								? [			{
 											id: "saved" as const,
 											label: "Saved",
 											icon: Bookmark,
@@ -1673,6 +1685,12 @@ export default function Profile({
 					{/* Posts Tab */}
 					{profileTab === "posts" && (
 						<>
+							{isSelf && (
+								<div className="px-2 py-4">
+									<Streaks user={user} />
+								</div>
+							)}
+
 							{posts.length === 0 ? (
 								<GlassCard className="flex flex-col items-center justify-center py-12 text-center shadow-sm">
 									<h4 className="text-sm font-bold text-white">

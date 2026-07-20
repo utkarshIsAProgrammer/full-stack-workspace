@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useKeyboardOpen } from "../hooks/useKeyboardOpen";
 import { motion, AnimatePresence } from "motion/react";
@@ -23,10 +23,10 @@ import {
 	Pause,
 	Phone,
 	Video,
-	FileText,
-	Music,
 	ChevronDown,
+	RotateCcw,
 } from "lucide-react";
+import ImageCropModal from "./ImageCropModal";
 import { Socket } from "socket.io-client";
 import {
 	User as UserType,
@@ -36,10 +36,12 @@ import {
 } from "../types";
 import GlassCard from "./GlassCard";
 import UserAvatar from "./UserAvatar";
+import ChatGallery from "./ChatGallery";
 import Skeleton from "./Skeleton";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 import ValidationMessage from "./ValidationMessage";
+import TypingIndicator from "./TypingIndicator";
 import MessageBubble from "./MessageBubble";
 import ConfirmDialog from "./ConfirmDialog";
 import ConversationListItem from "./ConversationListItem";
@@ -95,7 +97,13 @@ export default function Chat({
 	// Media attachments upload
 	const [attachments, setAttachments] = useState<File[]>([]);
 	const [attachmentPreviews, setAttachmentPreviews] = useState<string[]>([]);
-	const [sendingMessage, setSendingMessage] = useState(false);
+	const [, setSendingMessage] = useState(false);
+
+	// Crop modal state
+	const [cropModalOpen, setCropModalOpen] = useState(false);
+	const [cropSrc, setCropSrc] = useState("");
+	const [cropQueueFiles, setCropQueueFiles] = useState<File[]>([]);
+	const cropPendingQueueRef = useRef<{ files: File[]; previews: string[]; cancelledFile?: { file: File; url: string } }>({ files: [], previews: [] });
 
 	// Typing indicator states
 	const [isTyping, setIsTyping] = useState(false);
@@ -108,6 +116,19 @@ export default function Chat({
 	// Message edit state
 	const [editingMessage, setEditingMessage] = useState<Message | null>(null);
 	const [editText, setEditText] = useState("");
+
+	// Undo send state
+	const [undoMessageId, setUndoMessageId] = useState<string | null>(null);
+	const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	// Cleanup undo timeout on unmount
+	useEffect(() => {
+		return () => {
+			if (undoTimeoutRef.current) {
+				clearTimeout(undoTimeoutRef.current);
+			}
+		};
+	}, []);
 
 	// Voice note recording state
 	const [isRecording, setIsRecording] = useState(false);
@@ -159,37 +180,13 @@ export default function Chat({
 		x: number;
 		y: number;
 	} | null>(null);
+
 	const [selectedForwardConvIds, setSelectedForwardConvIds] = useState<string[]>([]);
 
 	// Camera capture state
 	const [showCamera, setShowCamera] = useState(false);
 	const cameraVideoRef = useRef<HTMLVideoElement>(null);
 	const cameraStreamRef = useRef<MediaStream | null>(null);
-
-	const handleOpenCamera = async () => {
-		try {
-			const stream = await navigator.mediaDevices.getUserMedia({
-				video: { facingMode: "environment", width: { ideal: 1080 }, height: { ideal: 1920 } },
-				audio: false,
-			});
-			cameraStreamRef.current = stream;
-			setShowCamera(true);
-			// Wait for video to be ready then play
-			setTimeout(() => {
-				if (cameraVideoRef.current) {
-					cameraVideoRef.current.srcObject = stream;
-					cameraVideoRef.current.play().catch(() => {});
-				}
-			}, 50);
-		} catch (err) {
-			logger.error("Failed to open camera", err);
-			window.dispatchEvent(
-				new CustomEvent("showToast", {
-					detail: { message: "Camera access denied. Please allow camera permissions.", type: "error" },
-				})
-			);
-		}
-	};
 
 	const handleCapturePhoto = () => {
 		const video = cameraVideoRef.current;
@@ -928,8 +925,8 @@ export default function Chat({
 					),
 				);
 			}
-		} catch (e) {
-			logger.error(e);
+		} catch (_e) {
+			logger.error(_e);
 		} finally {
 			setSearching(false);
 		}
@@ -1155,7 +1152,7 @@ export default function Chat({
 		setIsListeningText(false);
 	};
 
-	const handleMicMouseDown = (e: React.MouseEvent | React.TouchEvent) => {
+	const handleMicMouseDown = (_e: React.MouseEvent | React.TouchEvent) => {
 		isLongPressActiveRef.current = false;
 		if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
 
@@ -1179,7 +1176,7 @@ export default function Chat({
 		}
 	};
 
-	const handleMicClick = (e: React.MouseEvent) => {
+	const handleMicClick = (_e: React.MouseEvent) => {
 		if (!isLongPressActiveRef.current) {
 			handleMicToggle();
 		}
@@ -1314,6 +1311,14 @@ export default function Chat({
 				});
 				delete activeUploadsRef.current[pendingId];
 				delete unsentPayloadsRef.current[pendingId];
+
+				// Show undo toast for 5 seconds
+				const sentMsgId = data.sentMessage._id;
+				setUndoMessageId(sentMsgId);
+				if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
+				undoTimeoutRef.current = setTimeout(() => {
+					setUndoMessageId(null);
+				}, 5000);
 				scrollToBottom();
 			} else {
 				// Set failed state on failure
@@ -1384,6 +1389,7 @@ export default function Chat({
 		preview?: string,
 		replyMsg: Message | null = null
 	) => {
+		if (!selectedConv) return;
 		const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 		let optimisticAttachments: any[] = [];
 		if (file && preview) {
@@ -1485,6 +1491,14 @@ export default function Chat({
 				});
 				delete activeUploadsRef.current[pendingId];
 				delete unsentPayloadsRef.current[pendingId];
+
+				// Show undo toast for 5 seconds
+				const sentMsgId = data.sentMessage._id;
+				setUndoMessageId(sentMsgId);
+				if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
+				undoTimeoutRef.current = setTimeout(() => {
+					setUndoMessageId(null);
+				}, 5000);
 				scrollToBottom();
 			} else {
 				setPendingMessageIds((prev) => {
@@ -1745,7 +1759,7 @@ export default function Chat({
 			return;
 		}
 		setFieldErrors({});
-		if (!editingMessage) return;
+		if (!editingMessage || !selectedConv) return;
 
 		const msgId = editingMessage._id;
 		const txt = editText;
@@ -1787,8 +1801,8 @@ export default function Chat({
 			if (!res.ok || !data.success) {
 				logger.error("Message edit failed");
 			}
-		} catch (e) {
-			logger.error(e);
+		} catch (_e) {
+			logger.error(_e);
 		}
 	};	// Delete message for current user only
 	const handleDeleteForMe = async (messageId: string) => {
@@ -1852,8 +1866,8 @@ export default function Chat({
 					}),
 				);
 			}
-		} catch (e) {
-			logger.error(e);
+		} catch (_e) {
+			logger.error(_e);
 			window.dispatchEvent(
 				new CustomEvent("showToast", {
 					detail: {
@@ -1919,8 +1933,8 @@ export default function Chat({
 					}),
 				);
 			}
-		} catch (e) {
-			logger.error(e);
+		} catch (_e) {
+			logger.error(_e);
 			window.dispatchEvent(
 				new CustomEvent("showToast", {
 					detail: {
@@ -2137,7 +2151,12 @@ export default function Chat({
 	const handleExecuteForward = async () => {
 		if (!forwardModal || selectedForwardConvIds.length === 0) return;
 		try {
-			const originalText = forwardModal.message.text || "";
+			const originalMessage = forwardModal.message;
+			const senderName =
+				typeof originalMessage.sender === "string"
+					? "Unknown"
+					: originalMessage.sender?.username || "Unknown";
+			const originalText = originalMessage.text || "";
 			const attachmentsJson =
 				forwardModal.message.attachments &&
 				forwardModal.message.attachments.length > 0
@@ -2148,7 +2167,11 @@ export default function Chat({
 			await Promise.all(
 				selectedForwardConvIds.map(async (targetConvId) => {
 					const formData = new FormData();
-					formData.append("text", originalText);
+					const forwardedText = originalText
+					? `Forwarded from @${senderName}: ${originalText}`
+					: `Forwarded from @${senderName}`;
+					formData.append("text", forwardedText);
+					formData.append("forwardedFrom", originalMessage._id);
 					if (attachmentsJson) {
 						formData.append("attachments", attachmentsJson);
 					}
@@ -2212,11 +2235,53 @@ export default function Chat({
 		if (files.length === 0) return;
 
 		const validFiles = files.slice(0, 5 - attachments.length);
-		setAttachments((prev) => [...prev, ...validFiles]);
 
-		const newPreviews = validFiles.map((file) => URL.createObjectURL(file));
-		setAttachmentPreviews((prev) => [...prev, ...newPreviews]);
+		// Find first image (non-GIF) to crop — rest go directly to attachments
+		const cropIdx = validFiles.findIndex((f) => f.type.startsWith("image/") && f.type !== "image/gif");
+		if (cropIdx >= 0) {
+			const cropFile = validFiles[cropIdx];
+			const remaining = validFiles.filter((_, i) => i !== cropIdx);
+			const remainingPreviews = remaining.map((f) => URL.createObjectURL(f));
+
+			// Store the crop file in the ref so we can re-add it if user cancels
+			const cropUrl = URL.createObjectURL(cropFile);
+			cropPendingQueueRef.current = {
+				files: remaining,
+				previews: remainingPreviews,
+				cancelledFile: { file: cropFile, url: cropUrl },
+			};
+
+			// Open crop modal
+			setCropSrc(cropUrl);
+			setCropQueueFiles(remaining);
+			setCropModalOpen(true);
+
+			// Add non-image/GIF files immediately
+			if (remaining.length > 0) {
+				setAttachments((prev) => [...prev, ...remaining]);
+				setAttachmentPreviews((prev) => [...prev, ...remainingPreviews]);
+			}
+		} else {
+			// No image to crop — add all files directly
+			setAttachments((prev) => [...prev, ...validFiles]);
+			const newPreviews = validFiles.map((file) => URL.createObjectURL(file));
+			setAttachmentPreviews((prev) => [...prev, ...newPreviews]);
+		}
 	};
+
+	const handleCropComplete = useCallback((croppedBlob: Blob) => {
+		const croppedFile = new File([croppedBlob], `cropped_${Date.now()}.jpg`, { type: "image/jpeg" });
+		const previewUrl = URL.createObjectURL(croppedBlob);
+
+		setAttachments((prev) => [croppedFile, ...cropQueueFiles, ...prev]);
+		setAttachmentPreviews((prev) => [previewUrl, ...cropPendingQueueRef.current.previews, ...prev]);
+
+		// Clean up
+		cropPendingQueueRef.current = { files: [], previews: [] };
+		setCropQueueFiles([]);
+		// Revoke the crop URL that was stored in cancelledFile
+		if (cropSrc) URL.revokeObjectURL(cropSrc);
+	}, [cropQueueFiles, cropSrc]);
 
 	const removeAttachment = (idx: number) => {
 		setAttachments((prev) => prev.filter((_, i) => i !== idx));
@@ -2623,7 +2688,7 @@ export default function Chat({
 														isFirstInGroup
 													}
 													isLastInGroup={
-														isLastInGroup
+														isLastInGroup ?? undefined
 													}
 													onCancelUpload={
 														handleCancelUpload
@@ -2694,14 +2759,7 @@ export default function Chat({
 								{partnerTyping &&
 									!partnerRecording &&
 									!isKeyboardOpen && (
-										<motion.div
-											initial={{ opacity: 0, y: 5 }}
-											animate={{ opacity: 1, y: 0 }}
-											exit={{ opacity: 0, y: 5 }}
-											className="px-4 py-1 text-[9.5px] font-black text-zinc-500 font-mono text-left tracking-wide select-none">
-											{getPartner(selectedConv).fullName}{" "}
-											is typing...
-										</motion.div>
+										<TypingIndicator name={getPartner(selectedConv).fullName} />
 									)}
 							</AnimatePresence>
 
@@ -2745,54 +2803,12 @@ export default function Chat({
 									)}
 
 								{attachmentPreviews.length > 0 && (
-									<div className="flex gap-2 mb-3 bg-zinc-900/50 p-2.5 rounded-2xl border border-zinc-800 max-w-sm">
-										{attachmentPreviews.map((url, idx) => {
-											const file = attachments[idx];
-											const isImage = file && file.type.startsWith("image/");
-											const isVideo = file && file.type.startsWith("video/");
-											const isAudio = file && file.type.startsWith("audio/");
-
-											return (
-												<div
-													key={idx}
-													className="relative h-14 w-14 rounded-lg overflow-hidden border border-zinc-800 shrink-0">
-													{isImage ? (
-														<img
-															loading="lazy"
-															src={url}
-															alt="Attachment preview"
-															className="h-full w-full object-cover"
-														/>
-													) : isVideo ? (
-														<video
-															src={url}
-															className="h-full w-full object-cover bg-black"
-															muted
-															preload="metadata"
-														/>
-													) : isAudio ? (
-														<div className="h-full w-full flex items-center justify-center bg-zinc-900 text-zinc-400">
-															<Music className="h-5 w-5" />
-														</div>
-													) : (
-														<div className="h-full w-full flex items-center justify-center bg-zinc-900 text-zinc-400">
-															<FileText className="h-5 w-5" />
-														</div>
-													)}
-													<button
-														type="button"
-														onClick={() =>
-															removeAttachment(idx)
-														}
-														className="absolute top-1 right-1 h-4 w-4 bg-zinc-950/80 hover:bg-zinc-900 text-zinc-300 hover:text-white rounded-full flex items-center justify-center scale-90 z-20 cursor-pointer">
-														<X className="h-2.5 w-2.5" />
-													</button>
-												</div>
-											);
-										})}
-									</div>
+									<ChatGallery
+										attachmentPreviews={attachmentPreviews}
+										attachments={attachments}
+										removeAttachment={removeAttachment}
+									/>
 								)}
-
 								{editingMessage ? (
 									<form
 										onSubmit={handleEditMessageSubmit}
@@ -2883,7 +2899,7 @@ export default function Chat({
 										</button>
 										<button
 											type="button"
-											onClick={handleSendVoiceNote}
+											onClick={() => handleSendVoiceNote()}
 											className="flex shrink-0 items-center justify-center rounded-full bg-white text-black hover:bg-zinc-250 cursor-pointer shadow-md transition-all duration-200 h-9 w-9">
 											<Send className="h-4.5 w-4.5" />
 										</button>
@@ -2929,6 +2945,7 @@ export default function Chat({
 													className="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white transition-colors cursor-pointer pointer-events-none">
 													<ImageIcon className="h-4 w-4" />
 												</button>
+
 											</div>
 
 											</div>
@@ -3027,7 +3044,7 @@ export default function Chat({
 												<Send className="h-4.5 w-4.5" />
 											</button>
 										)}
-									</form>
+														</form>
 								)}
 							</div>
 						</motion.div>
@@ -3437,8 +3454,8 @@ export default function Chat({
 							{/* Hidden input that triggers native emoji keyboard on mobile */}
 							<input
 								type="text"
-								// @ts-ignore-next-line - emoji is valid HTML but missing from React types
-								inputMode="emoji"
+								// inputMode={"emoji" as any} is valid HTML but React types don't include it yet
+								inputMode={"emoji" as any}
 								value={customEmoji}
 								onChange={(e) => {
 									const val = e.target.value;
@@ -3636,6 +3653,53 @@ export default function Chat({
 				document.body
 			)}
 
+			{/* Undo Send Toast */}
+			{undoMessageId && createPortal(
+				<motion.div
+					initial={{ opacity: 0, y: 50 }}
+					animate={{ opacity: 1, y: 0 }}
+					exit={{ opacity: 0, y: 50 }}
+					className="fixed bottom-28 left-1/2 -translate-x-1/2 z-[9999]"
+				>
+					<div className="flex items-center gap-3 rounded-full bg-zinc-900 border border-zinc-700/50 px-4 py-2.5 shadow-2xl backdrop-blur-xl">
+						<span className="text-[12px] text-zinc-300 font-medium">
+							Message sent
+						</span>
+						<button
+							type="button"
+							onClick={async () => {
+								const msgId = undoMessageId;
+								setUndoMessageId(null);
+								if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
+								try {
+									await apiFetch(`/api/chats/messages/${msgId}/undo`, {
+										method: "DELETE",
+									});
+									setMessages((prev) => prev.filter((m) => m._id !== msgId));
+									window.dispatchEvent(
+										new CustomEvent("showToast", {
+											detail: { message: "Message undone!", type: "success" },
+										}),
+									);
+								} catch (err) {
+									logger.error("Failed to undo message", err);
+									window.dispatchEvent(
+										new CustomEvent("showToast", {
+											detail: { message: "Could not undo message", type: "error" },
+										}),
+									);
+								}
+							}}
+							className="rounded-full bg-white/10 hover:bg-white/20 px-3 py-1 text-[11px] font-bold text-white transition-all cursor-pointer flex items-center gap-1"
+						>
+							<RotateCcw className="h-3 w-3" />
+							Undo
+						</button>
+					</div>
+				</motion.div>,
+				document.body
+			)}
+
 			{/* Confirm Clear Chat Modal */}
 			{showClearConfirm && createPortal(
 				<ConfirmDialog
@@ -3665,6 +3729,29 @@ export default function Chat({
 				/>,
 				document.body
 			)}
+
+			{/* Crop Modal for image attachments */}
+			<ImageCropModal
+				isOpen={cropModalOpen}
+			onClose={() => {
+				const pending = cropPendingQueueRef.current;
+				if (pending?.cancelledFile) {
+					// User cancelled — restore original file first (before revoking URL)
+					setAttachments((prev) => [pending.cancelledFile!.file, ...cropQueueFiles, ...prev]);
+					setAttachmentPreviews((prev) => [pending.cancelledFile!.url, ...pending.previews, ...prev]);
+				} else if (cropSrc) {
+					// User cancelled without a pending file — clean up the blob URL
+					URL.revokeObjectURL(cropSrc);
+				}
+				setCropModalOpen(false);
+				// Clean up
+				cropPendingQueueRef.current = { files: [], previews: [] };
+				setCropQueueFiles([]);
+			}}
+				imageSrc={cropSrc}
+				title="Free Crop Image"
+				onCropComplete={handleCropComplete}
+			/>
 		</div>
 	);
 }

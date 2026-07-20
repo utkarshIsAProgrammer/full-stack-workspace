@@ -17,7 +17,7 @@ const notificationSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ["like", "comment", "follow", "repost", "save", "mention", "reaction", "message_reply", "glimpse_reaction", "glimpse_reply"],
+      enum: ["like", "comment", "follow", "repost", "save", "mention", "reaction", "message_reply", "glimpse_reaction", "glimpse_reply", "poll_vote", "collab_invite", "follow_request", "daily_reward", "streak_reminder", "room_invite", "invite_accepted"],
       required: true,
     },
 
@@ -36,6 +36,12 @@ const notificationSchema = new mongoose.Schema(
     glimpse: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Glimpse",
+      default: null,
+    },
+
+    room: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "AudioRoom",
       default: null,
     },
 

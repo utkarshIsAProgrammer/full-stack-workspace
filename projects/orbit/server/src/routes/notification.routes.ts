@@ -8,7 +8,7 @@ import {
 } from "../controllers/notification.controllers";
 import { protect, optionalAuth } from "../middlewares/auth.middleware";
 import { notificationLimiter } from "../middlewares/ratelimit.middleware";
-import { cacheMiddleware } from "../middleware/cache.middleware";
+import { cacheMiddleware } from "../middlewares/cache.middleware";
 
 const router = express.Router();
 

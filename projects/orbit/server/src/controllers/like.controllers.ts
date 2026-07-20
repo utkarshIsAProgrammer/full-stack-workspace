@@ -18,6 +18,9 @@ import { logger } from "../utilities/logger";
 import { AppError, BadRequestError, NotFoundError, UnauthorizedError } from "../utilities/errors";
 import { toggleLikeSchema, toggleCommentLikeSchema } from "../schemas/interaction.schema";
 import { clearFeedCache } from "../configs/cache";
+import { logInteraction } from "../services/affinityService";
+import { awardXP } from "../services/xpService";
+import { progressMission } from "../services/dailyMissionService";
 
 type Params = {
   postId: string;
@@ -71,13 +74,26 @@ export const togglePostLikes = async (req: Request<Params>, res: Response) => {
         { returnDocument: 'after' },
       );
 
-      // create notification
-      await createNotification({
-        recipient: post.author.toString(),
-        sender: author.toString(),
-        type: "like",
-        post: postId,
-      });
+      // create notification (skip self-notification)
+      if (post.author.toString() !== author.toString()) {
+        await createNotification({
+          recipient: post.author.toString(),
+          sender: author.toString(),
+          type: "like",
+          post: postId,
+        });
+      }
+
+      // Log interaction for feed ranking
+      if (post.author.toString() !== author.toString()) {
+        logInteraction(
+          author.toString(),
+          post.author.toString(),
+          postId,
+          "like",
+          (updatedPost as any)?.hashtags || []
+        );
+      }
 
       // Emit socket event
       if (updatedPost) {
@@ -85,6 +101,10 @@ export const togglePostLikes = async (req: Request<Params>, res: Response) => {
       }
 
       await clearFeedCache();
+
+      // Award XP and progress mission (fire-and-forget)
+      awardXP(author.toString(), "LIKE").catch(() => {});
+      progressMission(author.toString(), "like").catch(() => {});
 
       return res.status(201).json({
         success: true,
@@ -182,14 +202,16 @@ export const toggleCommentLikes = async (
         { returnDocument: 'after' },
       );
 
-      // create notification
-      await createNotification({
-        recipient: comment.author.toString(),
-        sender: author.toString(),
-        type: "like",
-        post: comment.post.toString(),
-        comment: commentId,
-      });
+      // create notification (skip self-notification)
+      if (comment.author.toString() !== author.toString()) {
+        await createNotification({
+          recipient: comment.author.toString(),
+          sender: author.toString(),
+          type: "like",
+          post: comment.post.toString(),
+          comment: commentId,
+        });
+      }
 
       // Emit socket event
       if (updatedComment) {

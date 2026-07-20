@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
 
-import { Search, Hash, Users, Compass, Heart, MessageSquare, Bookmark, Repeat2, AlertCircle } from "lucide-react";
+import { Search, Hash, Users, Compass, Heart, MessageSquare, Bookmark, Repeat2, AlertCircle, TrendingUp, Flame } from "lucide-react";
 import { User, Post } from "../types";
 import GlassCard from "./GlassCard";
 import Skeleton from "./Skeleton";
 import UserAvatar from "./UserAvatar";
 import { apiFetch } from "../utils/api";
+import EmptyState from "./EmptyState";
 import { logger } from "../utils/logger";
 
 interface ExploreProps {
@@ -24,9 +25,11 @@ export default function Explore({
   onToggleFollow,
 }: ExploreProps) {
   const [q, setQ] = useState("");
-  const [activeSegment, setActiveSegment] = useState<"users" | "posts">("users");
+  const [activeSegment, setActiveSegment] = useState<"users" | "posts" | "trending">("trending");
   const [candidates, setCandidates] = useState<User[]>([]);
   const [postCandidates, setPostCandidates] = useState<Post[]>([]);
+  const [trendingHashtags, setTrendingHashtags] = useState<string[]>([]);
+  const [trendingPosts, setTrendingPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(false);
   const [followError, setFollowError] = useState<string | null>(null);
 
@@ -259,6 +262,35 @@ export default function Explore({
     }
   };
 
+  // Fetch trending hashtags and popular posts
+  const fetchTrending = async () => {
+    setLoading(true);
+    try {
+      const [hashtagRes, postsRes] = await Promise.all([
+        apiFetch("/api/posts/trending/hashtags"),
+        apiFetch("/api/posts?limit=5&sort=likesCount"),
+      ]);
+      const hashtagData = await hashtagRes.json();
+      const postsData = await postsRes.json();
+      if (hashtagRes.ok && hashtagData.success) {
+        setTrendingHashtags(hashtagData.hashtags || []);
+      }
+      if (postsRes.ok && postsData.success) {
+        setTrendingPosts(postsData.posts || []);
+      }
+    } catch (err) {
+      logger.error("Failed to fetch trending", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSegment === "trending" && !q) {
+      fetchTrending();
+    }
+  }, [activeSegment]);
+
   // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -308,6 +340,19 @@ export default function Explore({
       <div className="mb-6 flex items-center justify-start gap-2 px-1.5">
         <button
           onClick={() => {
+            setActiveSegment("trending");
+            setCandidates([]);
+            setPostCandidates([]);
+          }}
+          className={`flex items-center gap-2 rounded-full px-4 py-2 text-[12px] md:text-sm font-medium transition-all cursor-pointer ${activeSegment === "trending"
+            ? "bg-zinc-900 text-white dark:bg-white dark:text-black"
+            : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            }`}
+        >
+          <Flame className="h-4 w-4" /> Trending
+        </button>
+        <button
+          onClick={() => {
             setActiveSegment("users");
             setCandidates([]);
             setPostCandidates([]);
@@ -352,7 +397,7 @@ export default function Explore({
           ) : activeSegment === "users" ? (
             candidates.length === 0 ? (
               q ? (
-                <div className="text-center py-12 text-sm text-zinc-450">No users found.</div>
+                <EmptyState variant="search" title="No users found" description="Try a different search term." />
               ) : null
             ) : (
               <div className="space-y-3">
@@ -403,8 +448,7 @@ export default function Explore({
               </div>
             )
           ) : postCandidates.length === 0 ? (
-            q ? (
-              <div className="text-center py-12 text-sm text-zinc-450">No posts found.</div>
+            q ? (                <EmptyState variant="search" title="No posts found" description="Try a different search term or hashtag." />
             ) : null
           ) : (
             <div className="space-y-5">
@@ -487,8 +531,133 @@ export default function Explore({
             </div>
           )}
 
-          {/* Prompt card on empty search input */}
-          {!q && (
+          {/* Trending feed when no search query */}
+          {!q && activeSegment === "trending" && (
+            <div className="space-y-6">
+              {/* Trending Hashtags */}
+              {trendingHashtags.length > 0 && (
+                <GlassCard className="p-5 rounded-3xl border border-zinc-800/40">
+                  <div className="flex items-center gap-2 mb-4">
+                    <TrendingUp className="h-5 w-5 text-orange-400" />
+                    <h3 className="text-[11px] font-black tracking-widest text-zinc-400 uppercase">
+                      TRENDING HASHTAGS
+                    </h3>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {trendingHashtags.map((tag) => (
+                      <button
+                        key={tag}
+                        onClick={() => {
+                          window.dispatchEvent(
+                            new CustomEvent("forceFeedRefresh")
+                          );
+                          window.dispatchEvent(
+                            new CustomEvent("searchHashtag", {
+                              detail: { hashtag: tag },
+                            })
+                          );
+                        }}
+                        className="flex items-center gap-1.5 rounded-full bg-zinc-900/60 hover:bg-zinc-800 border border-zinc-700/40 px-3.5 py-1.5 text-xs font-semibold text-zinc-300 transition-all cursor-pointer"
+                      >
+                        <Hash className="h-3 w-3 text-orange-400" />
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                </GlassCard>
+              )}
+
+              {/* Trending Posts */}
+              <div>
+                <h3 className="text-[11px] font-black tracking-widest text-zinc-400 uppercase mb-4 px-1 flex items-center gap-2">
+                  <Flame className="h-4 w-4 text-orange-400" /> POPULAR POSTS
+                </h3>
+                {loading ? (
+                  <div className="space-y-3">
+                    <Skeleton variant="card" />
+                    <Skeleton variant="card" />
+                    <Skeleton variant="card" />
+                  </div>
+                ) : trendingPosts.length > 0 ? (
+                  <div className="space-y-4">
+                    {trendingPosts.map((pst, idx) => (
+                      <GlassCard
+                        key={pst._id}
+                        className="p-4 rounded-3xl border border-zinc-800/30 hover:border-zinc-700/50 transition-all"
+                      >
+                        <div className="flex items-start gap-4">
+                          <span className="text-lg font-black text-zinc-500 shrink-0 mt-1 w-6 text-center">
+                            {idx + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <UserAvatar
+                                src={(pst as any).author?.profilePic?.url}
+                                alt={(pst as any).author?.fullName}
+                                onClick={() =>
+                                  onUserSelected(
+                                    (pst as any).author?.username
+                                  )
+                                }
+                                className="h-6 w-6 rounded-full object-cover border border-zinc-800 cursor-pointer shrink-0"
+                              />
+                              <span
+                                onClick={() =>
+                                  onUserSelected(
+                                    (pst as any).author?.username
+                                  )
+                                }
+                                className="text-xs font-bold text-zinc-400 cursor-pointer hover:text-white truncate"
+                              >
+                                @{(pst as any).author?.username}
+                              </span>
+                            </div>
+                            <h4
+                              onClick={() => onPostSelected(pst.slug)}
+                              className="text-sm font-bold text-white cursor-pointer hover:underline leading-snug"
+                            >
+                              {pst.title}
+                            </h4>
+                            <p className="text-xs text-zinc-500 mt-1 line-clamp-2">
+                              {pst.content}
+                            </p>
+                            <div className="flex items-center gap-3 mt-2 text-xs text-zinc-500">
+                              <span className="flex items-center gap-1">
+                                <Heart className="h-3 w-3" />{" "}
+                                {pst.likesCount || 0}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <MessageSquare className="h-3 w-3" />{" "}
+                                {pst.commentsCount || 0}
+                              </span>
+                            </div>
+                          </div>
+                          {pst.image && (
+                            <div className="w-14 h-14 shrink-0 rounded-xl overflow-hidden border border-zinc-800">
+                              <img
+                                src={pst.image.url}
+                                alt=""
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </GlassCard>
+                    ))}
+                  </div>
+                ) : (
+                  <GlassCard className="py-10 text-center rounded-3xl border border-zinc-800/30">
+                    <p className="text-sm text-zinc-500">
+                      No trending content right now
+                    </p>
+                  </GlassCard>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Prompt card on empty search input (users/posts tabs) */}
+          {!q && activeSegment !== "trending" && (
             <GlassCard className="py-14 px-6 text-center flex flex-col items-center rounded-3xl border border-zinc-800/30 bg-zinc-950/40">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-zinc-900 border border-zinc-700 mb-4 shadow-lg">
                 <Compass className="h-8 w-8 text-white" />

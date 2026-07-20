@@ -22,6 +22,11 @@ const envSchema = z.object({
   SMTP_USER: z.string().min(1, "SMTP_USER is required"),
   SMTP_PASS: z.string().min(1, "SMTP_PASS is required"),
   CLIENT_URL: z.url("CLIENT_URL must be a valid URL"),
+
+  // Web Push VAPID keys for push notifications (optional — push works without them)
+  VAPID_PUBLIC_KEY: z.string().optional().default(""),
+  VAPID_PRIVATE_KEY: z.string().optional().default(""),
+  VAPID_SUBJECT: z.string().optional().default("mailto:orbit@example.com"),
 });
 
 export type Env = z.infer<typeof envSchema>;

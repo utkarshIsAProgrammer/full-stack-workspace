@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { Conversation } from "../models/conversation.model";
 import { Message } from "../models/message.model";
 import { User } from "../models/user.model";
+import Block from "../models/block.model";
 import { sendMessageSchema, editMessageSchema } from "../schemas/chat.schema";
 import {
 	BadRequestError,
@@ -19,6 +20,7 @@ import cloudinary from "../configs/cloudinary";
 import {
 	isRecipientActiveInConversation,
 	getUserPresenceStatus,
+	getUserPresenceStatuses,
 	emitNewMessage,
 	emitMessageEdit,
 	emitMessageDelete,
@@ -77,6 +79,17 @@ export const getOrCreateConversation = async (
 		);
 		if (!recipient) {
 			return next(new NotFoundError("Recipient user not found!"));
+		}
+
+		// Check if blocked
+		const isBlocked = await Block.findOne({
+			$or: [
+				{ blocker: currentUserId, blocked: recipientId },
+				{ blocker: recipientId, blocked: currentUserId },
+			],
+		});
+		if (isBlocked) {
+			return next(new ForbiddenError("Cannot communicate with a blocked user!"));
 		}
 
 		// Sort participant IDs lexicographically and cast to ObjectIds to satisfy unique index
@@ -207,30 +220,43 @@ export const getConversations = async (
 			.sort({ updatedAt: -1 })
 			.lean();
 
-		// Map conversations to add the presence status of the other participant dynamically
-		const conversationsWithPresence = await Promise.all(
-			conversations.map(async (conv: any) => {
-				// Filter out null participants (e.g. deleted users)
-				const activeParticipants = (conv.participants || []).filter(
-					(p: any) => p != null,
-				);
-				const otherParticipant = activeParticipants.find(
-					(p: any) =>
-						p._id && p._id.toString() !== currentUserId.toString(),
-				);
-				let presence = "offline";
-				if (otherParticipant) {
-					presence = await getUserPresenceStatus(
-						otherParticipant._id.toString(),
-					);
-				}
-				return {
-					...conv,
-					participants: activeParticipants,
-					presence,
-				};
-			}),
-		);
+		// Extract all other participants to do a single batch query for presence
+		const otherParticipantIds: string[] = [];
+		const preparedConversations = conversations.map((conv: any) => {
+			const activeParticipants = (conv.participants || []).filter(
+				(p: any) => p != null,
+			);
+			const otherParticipant = activeParticipants.find(
+				(p: any) =>
+					p._id && p._id.toString() !== currentUserId.toString(),
+			);
+			if (otherParticipant) {
+				otherParticipantIds.push(otherParticipant._id.toString());
+			}
+			return {
+				...conv,
+				activeParticipants,
+				otherParticipantId: otherParticipant?._id?.toString() || null,
+			};
+		});
+
+		// Batch query presence statuses in one HTTP roundtrip via MGET
+		const uniqueOtherIds = [...new Set(otherParticipantIds)];
+		const presenceMap = await getUserPresenceStatuses(uniqueOtherIds);
+
+		const conversationsWithPresence = preparedConversations.map((item: any) => {
+			const presence = item.otherParticipantId
+				? (presenceMap[item.otherParticipantId] || "offline")
+				: "offline";
+			
+			// Destructure to remove temp key before sending response
+			const { activeParticipants, otherParticipantId, ...originalConv } = item;
+			return {
+				...originalConv,
+				participants: activeParticipants,
+				presence,
+			};
+		});
 
 		const responseData = {
 			success: true,
@@ -416,6 +442,17 @@ export const sendMessage = async (
 			);
 		}
 
+		// Check if blocked
+		const isBlocked = await Block.findOne({
+			$or: [
+				{ blocker: currentUserId, blocked: recipientId },
+				{ blocker: recipientId, blocked: currentUserId },
+			],
+		});
+		if (isBlocked) {
+			return next(new ForbiddenError("Cannot communicate with a blocked user!"));
+		}
+
 		// Map files uploaded via Multer
 		const uploadedFiles = (req.files as any[]) || [];
 		const fileAttachments = uploadedFiles.map((file) => {
@@ -493,6 +530,7 @@ export const sendMessage = async (
 			text: sanitizedText,
 			attachments,
 			replyTo: validation.data.replyTo || null,
+			forwardedFrom: req.body.forwardedFrom || null,
 			seen: isRecipientActive,
 			seenAt: isRecipientActive ? new Date() : null,
 		});
@@ -525,11 +563,13 @@ export const sendMessage = async (
 						? senderField._id.toString()
 						: senderField.toString();
 
-					await createNotification({
-						recipient: originalSenderId,
-						sender: currentUserId.toString(),
-						type: "message_reply",
-					});
+					if (originalSenderId !== currentUserId.toString()) {
+						await createNotification({
+							recipient: originalSenderId,
+							sender: currentUserId.toString(),
+							type: "message_reply",
+						});
+					}
 				}
 			} catch (notifErr: any) {
 				logger.error("Failed to create message_reply notification", { error: notifErr.message });
@@ -1065,6 +1105,117 @@ export const clearConversationMessages = async (
 		});
 	} catch (err: any) {
 		logger.error("Error in clearConversationMessages controller", {
+			error: err.message,
+		});
+		return next(
+			err instanceof AppError
+				? err
+				: new AppError("Internal server error!"),
+		);
+	}
+};
+
+/**
+ * Undo send a message within 5 seconds of creation.
+ * Hard-deletes the message entirely (only the sender can undo).
+ */
+export const undoMessage = async (
+	req: Request<MessageParams>,
+	res: Response,
+	next: NextFunction,
+) => {
+	const { messageId } = req.params;
+	const currentUserId = req.user?._id;
+
+	try {
+		if (!currentUserId) {
+			return next(new UnauthorizedError("Unauthorized!"));
+		}
+
+		if (!mongoose.Types.ObjectId.isValid(messageId)) {
+			return next(new BadRequestError("Invalid message ID!"));
+		}
+
+		const message = await Message.findById(messageId);
+		if (!message) {
+			return next(new NotFoundError("Message not found!"));
+		}
+
+		// Ownership check
+		if (message.sender.toString() !== currentUserId.toString()) {
+			return next(
+				new ForbiddenError("You can only undo your own messages!"),
+			);
+		}
+
+		// 5 seconds check
+		const diffMs = Date.now() - message.createdAt.getTime();
+		const UNDO_TIME_LIMIT = 5 * 1000; // 5 seconds
+		if (diffMs > UNDO_TIME_LIMIT) {
+			return next(
+				new BadRequestError(
+					"Message can only be undone within 5 seconds of sending!",
+				),
+			);
+		}
+
+		// Cloudinary cleanup of attachments asynchronously
+		const oldAttachments = message.attachments || [];
+		const imageDeletions = oldAttachments
+			.map((att) => att.public_id)
+			.filter(Boolean)
+			.map((pubId) => cloudinary.uploader.destroy(pubId));
+
+		Promise.allSettled(imageDeletions).then((results) => {
+			results.forEach((result) => {
+				if (result.status === "rejected") {
+					logger.error(
+						"Cloudinary deletion failed during chat message undo",
+						{
+							error: result.reason,
+						},
+					);
+				}
+			});
+		});
+
+		// Hard-delete the message
+		const messageIdStr = message._id.toString();
+		const conversationIdStr = message.conversation.toString();
+		await Message.findByIdAndDelete(messageId);
+
+		// Update conversation's lastMessage if it was this message
+		const conversation = await Conversation.findById(conversationIdStr);
+		if (conversation) {
+			if (
+				conversation.lastMessage &&
+				conversation.lastMessage.toString() === messageIdStr
+			) {
+				// Find the most recent remaining message
+				const previousMessage = await Message.findOne({
+					conversation: conversationIdStr,
+				})
+					.sort({ createdAt: -1 })
+					.lean();
+				conversation.lastMessage = previousMessage?._id || undefined;
+				await conversation.save();
+			}
+
+			const participants = conversation.participants.map((p: any) =>
+				p.toString(),
+			);
+			await clearChatCache(conversationIdStr, participants);
+
+			// Emit message deletion (same socket event as regular delete)
+			emitMessageDelete(conversationIdStr, messageIdStr, participants);
+		}
+
+		return res.status(200).json({
+			success: true,
+			message: "Message undone!",
+		});
+	} catch (err: any) {
+		logger.error("Error in undoMessage controller", {
 			error: err.message,
 		});
 		return next(

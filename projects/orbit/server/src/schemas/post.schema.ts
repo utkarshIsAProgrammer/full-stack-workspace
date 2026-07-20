@@ -14,6 +14,11 @@ export const createPostSchema = z.object({
     .default(""),
 
   image: z.string().optional(),
+
+  visibility: z
+    .enum(["public", "closeFriends"])
+    .optional()
+    .default("public"),
 });
 
 export const updatePostSchema = z

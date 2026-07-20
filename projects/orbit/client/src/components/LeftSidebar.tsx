@@ -9,6 +9,8 @@ import {
 	Repeat,
 	MessageSquare,
 	Settings,
+	Hash,
+	Shield,
 } from "lucide-react";
 import UserAvatar from "./UserAvatar";
 import PostModal from "./PostModal";
@@ -48,14 +50,18 @@ export default React.memo(function LeftSidebar({
 			icon: MessageSquare,
 			badge: chatBadgeCount,
 		},
+		{ id: "communities", label: "Communities", icon: Hash },
 		{ id: "saved", label: "Saved", icon: Bookmark },
 		{ id: "reposts", label: "Reposts", icon: Repeat },
 		{ id: "settings", label: "Settings", icon: Settings },
+		...(user?.isAdmin
+			? [{ id: "admin" as const, label: "Admin", icon: Shield }]
+			: []),
 	];
 
 	return (
 		<>
-			<div className="hidden md:flex flex-col h-[calc(100vh-3rem)] sticky top-6">
+			<div className="hidden lg:flex flex-col h-[calc(100vh-3rem)] sticky top-6">
 				<GlassCard
 					animate={true}
 					className="flex-1 flex flex-col justify-between h-full px-4 pt-4 pb-0 xl:px-5 xl:pt-5">

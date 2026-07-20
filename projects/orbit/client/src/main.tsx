@@ -22,8 +22,8 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
 	if ("requestIdleCallback" in window) {
 		window.requestIdleCallback(() => registerServiceWorker());
 	} else {
-		window.addEventListener("load", () =>
-			window.setTimeout(registerServiceWorker, 1500),
+		(window as Window).addEventListener("load", () =>
+			setTimeout(registerServiceWorker, 1500),
 		);
 	}
 }

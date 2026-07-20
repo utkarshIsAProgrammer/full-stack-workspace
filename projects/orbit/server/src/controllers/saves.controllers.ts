@@ -12,6 +12,7 @@ import { logger } from "../utilities/logger";
 import { AppError, BadRequestError, NotFoundError, UnauthorizedError } from "../utilities/errors";
 import { toggleSaveSchema, updateSaveFolderSchema } from "../schemas/interaction.schema";
 import { addUserStatusToPosts } from "../utilities/postStatus";
+import { logInteraction } from "../services/affinityService";
 
 type Params = {
   postId: string;
@@ -99,30 +100,41 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
       { returnDocument: 'after' },
     );
 
-    await createNotification({
-      recipient: post.author.toString(),
-      sender: userId.toString(),
-      type: "save",
-      post: postId,
-    });
+    if (post.author.toString() !== userId.toString()) {
+      await createNotification({
+        recipient: post.author.toString(),
+        sender: userId.toString(),
+        type: "save",
+        post: postId,
+      });
+    }      // Log interaction for feed ranking
+      if (post.author.toString() !== userId.toString()) {
+        logInteraction(
+          userId.toString(),
+          post.author.toString(),
+          postId,
+          "save",
+          (updatedPost as any)?.hashtags || []
+        );
+      }
 
-    // emit socket event
-    if (updatedPost) {
-      emitPostSave(postId, userId.toString(), updatedPost.savesCount);
-    }
+      // emit socket event
+      if (updatedPost) {
+        emitPostSave(postId, userId.toString(), updatedPost.savesCount);
+      }
 
-    await clearSavesCache(userId.toString());
-    await clearFeedCache();
+      await clearSavesCache(userId.toString());
+      await clearFeedCache();
 
-    return res.status(201).json({
-      success: true,
-      message: "Post saved!",
-      saved: true,
-      savedByMe: true,
-      savesCount: updatedPost?.savesCount,
-      folder,
-      post: updatedPost,
-    });
+      return res.status(201).json({
+        success: true,
+        message: "Post saved!",
+        saved: true,
+        savedByMe: true,
+        savesCount: updatedPost?.savesCount,
+        folder,
+        post: updatedPost,
+      });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
     logger.error(`Error in the toggleSavePost controller!`, { error: err.message });

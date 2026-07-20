@@ -12,6 +12,9 @@ import { getCache, setCache, clearCommentsCache } from "../configs/cache";
 import { createNotification, extractMentions } from "../utilities/notification";
 import { sanitizePlainText } from "../configs/sanitize";
 import { emitPostComment, emitCommentReply, emitCommentDeleted, emitCommentUpdated } from "../configs/socket";
+import { logInteraction } from "../services/affinityService";
+import { awardXP } from "../services/xpService";
+import { progressMission } from "../services/dailyMissionService";
 import { logger } from "../utilities/logger";
 import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenError } from "../utilities/errors";
 
@@ -340,6 +343,9 @@ export const addComment = async (req: Request<Params>, res: Response) => {
     const mentionedUserIds = await extractMentions(sanitizedContent);
     mentionedUserIds.forEach(userId => notifyRecipients.add(userId));
 
+    // Don't send notification to self
+    notifyRecipients.delete(author.toString());
+
     for (const recipient of notifyRecipients) {
       let notificationType: "comment" | "mention" = "comment";
       if (mentionedUserIds.includes(recipient)) {
@@ -365,8 +371,23 @@ export const addComment = async (req: Request<Params>, res: Response) => {
       }
     }
 
+    // Log interaction for feed ranking
+    if (updatedPost && author.toString() !== updatedPost.author.toString()) {
+      logInteraction(
+        author.toString(),
+        updatedPost.author.toString(),
+        postId,
+        "comment",
+        (updatedPost as any)?.hashtags || []
+      );
+    }
+
     // clear cache
     await clearCommentsCache(postId);
+
+    // Award XP and progress mission (fire-and-forget)
+    awardXP(author.toString(), "COMMENT").catch(() => {});
+    progressMission(author.toString(), "comment").catch(() => {});
 
     return res.status(201).json({
       success: true,
@@ -480,8 +501,12 @@ export const deleteComment = async (
       throw new NotFoundError("Comment not found!");
     }
 
-    // verify ownership
-    if (comment.author.toString() !== author.toString()) {
+    // verify ownership or post author status
+    const post = await Post.findById(comment.post).select("author").lean();
+    const isCommentAuthor = comment.author.toString() === author.toString();
+    const isPostAuthor = post?.author.toString() === author.toString();
+
+    if (!isCommentAuthor && !isPostAuthor) {
       throw new ForbiddenError("Forbidden!");
     }
 

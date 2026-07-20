@@ -57,17 +57,20 @@ export const deleteCache = async (key: string) => {
 // clear posts list cache
 export const clearFeedCache = async () => {
   await clearByPattern("posts:*");
+  await clearByPattern("api:*:*posts*");
 };
 
 // clear users list cache
 export const clearUsersCache = async () => {
   await clearByPattern("users:*");
+  await clearByPattern("api:*:*users*");
 };
 
 // clear comments list cache for a post
 export const clearCommentsCache = async (postId: string) => {
   await clearByPattern(`comments:${postId}:*`);
   await deleteCache(`comments:all:${postId}`); // Also clear the new all-comments cache!
+  await clearByPattern("api:*:*comments*");
 };
 
 // clear followers and following list cache

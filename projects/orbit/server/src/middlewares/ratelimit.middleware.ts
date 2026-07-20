@@ -13,6 +13,7 @@ const getClientIp = (req: Request): string => {
 };
 
 const createRateLimiter = (
+	prefixKey: string,
 	maxRequests: number,
 	windowMs: number,
 	message: string,
@@ -20,7 +21,7 @@ const createRateLimiter = (
 	const ratelimit = new Ratelimit({
 		redis,
 		limiter: Ratelimit.slidingWindow(maxRequests, `${windowMs}ms`),
-		prefix: "ratelimit",
+		prefix: `ratelimit:${prefixKey}`,
 	});
 
 	return async (req: Request, res: Response, next: NextFunction) => {
@@ -77,6 +78,7 @@ const createRateLimiter = (
 
 // auth limiter
 export const authLimiter: RateLimiter = createRateLimiter(
+	"auth",
 	20,
 	15 * 60 * 1000,
 	"Too many login/signup attempts. Please try after some time.",
@@ -84,6 +86,7 @@ export const authLimiter: RateLimiter = createRateLimiter(
 
 // otp limiter
 export const otpLimiter: RateLimiter = createRateLimiter(
+	"otp",
 	5,
 	10 * 60 * 1000,
 	"Too many OTP requests. Please try after some time.",
@@ -91,6 +94,7 @@ export const otpLimiter: RateLimiter = createRateLimiter(
 
 // comments limiter
 export const commentLimiter: RateLimiter = createRateLimiter(
+	"comment",
 	40,
 	60 * 1000,
 	"Too many comment requests. Please try after some time.",
@@ -98,6 +102,7 @@ export const commentLimiter: RateLimiter = createRateLimiter(
 
 // interaction limiter
 export const interactionLimiter: RateLimiter = createRateLimiter(
+	"interaction",
 	80,
 	60 * 1000,
 	"Too many actions performed. Please try after some time.",
@@ -105,6 +110,7 @@ export const interactionLimiter: RateLimiter = createRateLimiter(
 
 // notification read limiter
 export const notificationLimiter: RateLimiter = createRateLimiter(
+	"notification",
 	80,
 	60 * 1000,
 	"Too many notification requests. Please try after some time.",
@@ -112,6 +118,7 @@ export const notificationLimiter: RateLimiter = createRateLimiter(
 
 // general limiter for all other requests
 export const generalLimiter: RateLimiter = createRateLimiter(
+	"general",
 	300,
 	15 * 60 * 1000,
 	"Too many requests. Please try after some time.",
@@ -119,6 +126,7 @@ export const generalLimiter: RateLimiter = createRateLimiter(
 
 // search limiter
 export const searchLimiter: RateLimiter = createRateLimiter(
+	"search",
 	40,
 	60 * 1000,
 	"Too many search requests. Please try after some time.",
@@ -126,6 +134,7 @@ export const searchLimiter: RateLimiter = createRateLimiter(
 
 // upload limiter
 export const uploadLimiter: RateLimiter = createRateLimiter(
+	"upload",
 	15,
 	60 * 1000,
 	"Too many upload requests. Please try after some time.",

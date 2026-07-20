@@ -25,7 +25,23 @@ import { searchRoutes } from "./routes/search.routes";
 import { notificationRoutes } from "./routes/notification.routes";
 import { chatRoutes } from "./routes/chat.routes";
 import { glimpseRoutes } from "./routes/glimpse.routes";
+import { communityRoutes } from "./routes/community.routes";
+import { collectionRoutes } from "./routes/collection.routes";
+import { streakRoutes } from "./routes/streak.routes";
+import { audioRoomRoutes } from "./routes/audioRoom.routes";
+import { inviteRoutes } from "./routes/invite.routes";
+import { reportRoutes } from "./routes/report.routes";
+import { feedRoutes } from "./routes/feed.routes";
+import { pushRoutes } from "./routes/push.routes";
+import blockRoutes from "./routes/block.routes";
+import missionRoutes from "./routes/dailyMission.routes";
+import xpRoutes from "./routes/xp.routes";
+import linkPreviewRoutes from "./routes/linkPreview.routes";
+import translationRoutes from "./routes/translation.routes";
+import leaderboardRoutes from "./routes/leaderboard.routes";
+import { adminRoutes } from "./routes/admin.routes";
 
+import { startAffinityScheduler } from "./configs/scheduler";
 import { AppError } from "./utilities/errors";
 import { logger } from "./utilities/logger";
 import { cookieOptions } from "./configs/cookie";
@@ -83,9 +99,7 @@ app.use(
 			}
 			const originWithoutSlash = origin.replace(/\/$/, "");
 			if (
-				allowedOrigins.includes(originWithoutSlash) ||
-				originWithoutSlash.endsWith(".vercel.app") ||
-				originWithoutSlash.startsWith("http://localhost:")
+				allowedOrigins.includes(originWithoutSlash)
 			) {
 				callback(null, true);
 				return;
@@ -229,6 +243,35 @@ app.use("/api/search", searchRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/chats", chatRoutes);
 app.use("/api/glimpses", glimpseRoutes);
+app.use("/api/communities", communityRoutes);
+app.use("/api/collections", collectionRoutes);
+app.use("/api/streaks", streakRoutes);
+app.use("/api/rooms", audioRoomRoutes);
+app.use("/api/invites", inviteRoutes);
+app.use("/api/reports", reportRoutes);
+app.use("/api/admin", adminRoutes);
+
+// Feed routes (ranked, Instagram-style feed)
+app.use("/api/feed", feedRoutes);
+
+// Push notification subscription routes
+app.use("/api/push", pushRoutes);
+app.use("/api/blocks", blockRoutes);
+
+// Daily Missions routes
+app.use("/api/missions", missionRoutes);
+
+// XP routes
+app.use("/api/xp", xpRoutes);
+
+// Link Preview routes
+app.use("/api/link-preview", linkPreviewRoutes);
+
+// Translation routes
+app.use("/api/translate", translationRoutes);
+
+// Leaderboard routes
+app.use("/api/leaderboard", leaderboardRoutes);
 
 // 404 Handler
 app.use((req: Request, res: Response) => {
@@ -287,6 +330,10 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 
 connectDB().then(async () => {
 	await initSocket(server);
+
+	// Start background affinity recomputation for feed ranking
+	startAffinityScheduler();
+
 	server.listen(port, () => {
 		logger.info(`Server is running on PORT: ${port}`);
 	});

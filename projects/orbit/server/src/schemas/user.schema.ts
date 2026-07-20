@@ -11,8 +11,9 @@ import { z } from "zod";
 const userSchema = z.object({
   username: z
     .string()
-    .min(3, "Name must be at least 3 characters long!")
-    .max(100, "Name must be less than 100 characters!")
+    .min(3, "Username must be at least 3 characters long!")
+    .max(30, "Username must be less than 30 characters!")
+    .regex(/^[a-zA-Z0-9_.]+$/, "Username can only contain letters, numbers, underscores, and dots!")
     .trim()
     .lowercase(),
 
@@ -127,8 +128,9 @@ export const deleteAccountSchema = z.object({
 export const updateProfileSchema = z.object({
   username: z
     .string()
-    .min(3, "Name must be at least 3 characters long!")
-    .max(100, "Name must be less than 100 characters!")
+    .min(3, "Username must be at least 3 characters long!")
+    .max(30, "Username must be less than 30 characters!")
+    .regex(/^[a-zA-Z0-9_.]+$/, "Username can only contain letters, numbers, underscores, and dots!")
     .trim()
     .lowercase()
     .optional(),

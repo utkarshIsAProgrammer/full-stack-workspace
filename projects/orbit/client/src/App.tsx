@@ -21,7 +21,6 @@ import {
 	ShoppingBag,
 } from "lucide-react";
 import type { User, Notification, Conversation } from "./types";
-import BackgroundGradients from "./components/BackgroundGradients";
 import LeftSidebar from "./components/LeftSidebar";
 import UserAvatar from "./components/UserAvatar";
 import GlassCard from "./components/GlassCard";
@@ -32,9 +31,15 @@ import {
 	getFloatingToastText,
 } from "./utils/notificationText";
 import { logger } from "./utils/logger";
+import { useSwipeBack } from "./hooks/useSwipeBack";
+import OnboardingWizard from "./components/OnboardingWizard";
+import { requestNotificationPermission } from "./utils/notifications";
 
 // Lazy-loaded heavy components — only fetched when first rendered
 const LiquidEther = React.lazy(() => import("./components/LiquidEther"));
+const BackgroundGradients = React.lazy(
+	() => import("./components/BackgroundGradients"),
+);
 const Feed = React.lazy(() => import("./components/Feed"));
 const Explore = React.lazy(() => import("./components/Explore"));
 const Notifications = React.lazy(() => import("./components/Notifications"));
@@ -47,6 +52,8 @@ const ImagePreviewRenderer = React.lazy(
 const Dock = React.lazy(() => import("./components/Dock"));
 const PostModal = React.lazy(() => import("./components/PostModal"));
 const CallUI = React.lazy(() => import("./components/CallUI"));
+const Communities = React.lazy(() => import("./components/Communities"));
+const AdminDashboard = React.lazy(() => import("./components/AdminDashboard"));
 export default function App() {
 	const [user, setUser] = useState<User | null>(null);
 	const [sessionChecked, setSessionChecked] = useState(false);
@@ -54,7 +61,7 @@ export default function App() {
 	const [currentTab, setTabState] = useState(() => {
 		if (typeof window !== "undefined") {
 			const saved = localStorage.getItem("orbit_current_tab");
-			const valid = ["home", "explore", "notifications", "chat", "profile", "settings"];
+			const valid = ["home", "explore", "notifications", "chat", "profile", "settings", "communities", "admin"];
 			if (saved && valid.includes(saved)) {
 				return saved;
 			}
@@ -83,11 +90,12 @@ export default function App() {
 				import("./components/Explore"),
 				import("./components/Notifications"),
 				import("./components/Chat"),
+				import("./components/Communities"),
 			];
 			await Promise.all(imports);
 		};
 
-		const schedulePreload = () => {
+		const schedulePreload = (): (() => void) | void => {
 			if (
 				typeof window !== "undefined" &&
 				"requestIdleCallback" in window
@@ -100,19 +108,23 @@ export default function App() {
 					void preloadComponents();
 				});
 			} else {
-				setTimeout(() => {
+				const preloadTimer = setTimeout(() => {
 					void preloadComponents();
 				}, 1500);
+				return () => clearTimeout(preloadTimer);
 			}
 		};
 
-		schedulePreload();
+		return schedulePreload();
 	}, []);
 
 	// WebRTC peer connection refs (shared between Chat initiation and CallUI display)
 	const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
 	const localStreamRef = useRef<MediaStream | null>(null);
 	const remoteStreamRef = useRef<MediaStream | null>(null);
+	// Candidates can arrive before an incoming call is accepted and its peer
+	// connection has a remote description. Queue them instead of dropping them.
+	const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
 	const pendingCallOfferRef = useRef<{
 		sdp: RTCSessionDescriptionInit;
 		type: "audio" | "video";
@@ -143,6 +155,18 @@ export default function App() {
 		window.addEventListener("resize", checkScreen);
 		return () => window.removeEventListener("resize", checkScreen);
 	}, []);
+
+	// Swipe-back gesture for mobile navigation
+	useSwipeBack({
+		onSwipeBack: () => {
+			if (tabHistory.length > 0) {
+				const prevTab = tabHistory[tabHistory.length - 1];
+				setTabHistory((h) => h.slice(0, -1));
+				setTab(prevTab);
+			}
+		},
+		threshold: 80,
+	});
 
 	useEffect(() => {
 		let timer: NodeJS.Timeout;
@@ -177,6 +201,14 @@ export default function App() {
 			);
 			window.removeEventListener("auth:expired", handleAuthExpired);
 			clearTimeout(timer);
+		};
+	}, []);
+
+	// Clean up any pending floating alert timers on unmount to prevent setState after unmount
+	useEffect(() => {
+		return () => {
+			alertTimersRef.current.forEach((timer) => clearTimeout(timer));
+			alertTimersRef.current.clear();
 		};
 	}, []);
 
@@ -224,6 +256,7 @@ export default function App() {
 			explore: "Explore",
 			notifications: "Notifications",
 			chat: "Messages",
+			communities: "Communities",
 			profile: "Profile",
 			settings: "Settings",
 			saved: "Saved Posts",
@@ -259,6 +292,9 @@ export default function App() {
 
 	// Signup-first mode (from Get Started / Enter Social Hub)
 	const [showSignupForm, setShowSignupForm] = useState(false);
+
+	// Onboarding wizard (first login)
+	const [showOnboarding, setShowOnboarding] = useState(false);
 
 	// Public read-only feed mode (from Explore Public Feed)
 	const [publicFeedMode, setPublicFeedMode] = useState(false);
@@ -300,6 +336,10 @@ export default function App() {
 	} | null>(null);
 	// Timer ref for delayed ICE restart on temporary disconnects
 	const iceRestartTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+	// Timer ref for debounced suggestions fetch after follow/unfollow
+	const followFetchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+	// Set of pending floating alert timers to clean up on unmount
+	const alertTimersRef = useRef<Set<NodeJS.Timeout>>(new Set());
 
 	// Global Toast Notification State
 	const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -315,6 +355,10 @@ export default function App() {
 			}
 			return newTab;
 		});
+		// Only refresh suggestions when navigating to tabs that display them
+		if (newTab === "home" || newTab === "explore") {
+			fetchSuggestions();
+		}
 	}, []);
 
 	// Callback for Profile to sync followingStates from server data
@@ -653,10 +697,6 @@ export default function App() {
 			logger.error("[ORBIT SOCKET] Connection error:", error.message);
 		});
 
-		// ── Realtime message updates when Chat.tsx is not mounted ──
-		// Keeps conversations list sorted with latest message even when user is on another tab.
-		// NOTE: Do NOT update unreadCounts here — only update lastMessage and re-sort.
-
 		// Listen for message deletions from other users (or own action via personal room)
 		// This handler lives in App.tsx (not just Chat.tsx) because Chat.tsx unmounts when
 		// navigating away from the chat tab — without this handler, the conversations list
@@ -836,12 +876,14 @@ export default function App() {
 				getNotificationText(payload.type),
 			);
 
-			// Automatic dismiss after 5 seconds
-			setTimeout(() => {
+			// Automatic dismiss after 5 seconds (tracked in ref for cleanup on unmount)
+			const alertTimer = setTimeout(() => {
+				alertTimersRef.current.delete(alertTimer);
 				setFloatingAlerts((prev) =>
 					prev.filter((a) => a.id !== newAlert.id),
 				);
 			}, 5000);
+			alertTimersRef.current.add(alertTimer);
 
 			// 4. Refresh unread count from server to ensure accuracy
 			fetchBadgeCounts();
@@ -1284,6 +1326,9 @@ export default function App() {
 						await pc.setRemoteDescription(
 							new RTCSessionDescription(data.sdp),
 						);
+						for (const candidate of pendingIceCandidatesRef.current.splice(0)) {
+							await pc.addIceCandidate(new RTCIceCandidate(candidate));
+						}
 					} catch (err) {
 						logger.error(
 							"Failed to set remote description from answer",
@@ -1302,7 +1347,12 @@ export default function App() {
 			async (data: { senderId: string; candidate: any }) => {
 				logger.info("Received call:ice-candidate", data);
 				const pc = peerConnectionRef.current;
-				if (pc && data.candidate) {
+				if (!data.candidate) return;
+				if (!pc || !pc.remoteDescription) {
+					pendingIceCandidatesRef.current.push(data.candidate);
+					return;
+				}
+				if (pc) {
 					try {
 						await pc.addIceCandidate(
 							new RTCIceCandidate(data.candidate),
@@ -1354,6 +1404,8 @@ export default function App() {
 				localStreamRef.current = null;
 			}
 			pendingCallOfferRef.current = null;
+			pendingIceCandidatesRef.current = [];
+			remoteStreamRef.current = null;
 			callPartnerIdRef.current = null;
 			if (iceRestartTimeoutRef.current) {
 				clearTimeout(iceRestartTimeoutRef.current);
@@ -1436,10 +1488,14 @@ export default function App() {
 		fetchFollowing(authUser._id);
 		setTab("home");
 
-		// Request permission for native OS notifications
-		if ("Notification" in window && Notification.permission === "default") {
-			Notification.requestPermission();
+		// Show onboarding wizard on first login
+		const hasSeenOnboarding = localStorage.getItem("orbit_onboarding_seen");
+		if (!hasSeenOnboarding) {
+			setShowOnboarding(true);
 		}
+
+		// Request permission for native OS notifications using our utility
+		requestNotificationPermission();
 	}, []);
 
 	// ─── OPUS Bitrate SDP Helper (Cross-Browser) ──────────────────────────
@@ -1619,6 +1675,8 @@ export default function App() {
 			if (localStreamRef.current) {
 				localStreamRef.current.getTracks().forEach((t) => t.stop());
 			}
+			remoteStreamRef.current = null;
+			pendingIceCandidatesRef.current = [];
 
 			setCallState({ type, status: "outgoing", partnerId, partnerName });
 			try {
@@ -1925,17 +1983,18 @@ export default function App() {
 				});
 				const data = await res.json();
 				if (res.ok && data.success) {
-					// If following is true, remove user from suggestions
-					// and then refresh with fresh recommendations from the server
-					if (data.following) {
-						setSuggestions((prev) =>
-							prev.filter((u) => u._id !== userId),
-						);
-						// After a brief delay to let the removal settle,
-						// fetch fresh suggestions — the server now excludes the
-						// just-followed user and the suggestions cache was cleared.
-						setTimeout(() => fetchSuggestions(), 400);
+					// Following state is now tracked via followingStates —
+					// keep user visible with "Following" indicator instead of removing.
+					setFollowingStates((prev) => ({
+						...prev,
+						[userId]: data.following,
+					}));
+					// Fetch fresh suggestions after a brief delay so the server
+					// can exclude the just-followed user from the next batch.
+					if (followFetchTimeoutRef.current) {
+						clearTimeout(followFetchTimeoutRef.current);
 					}
+					followFetchTimeoutRef.current = setTimeout(() => fetchSuggestions(), 400);
 				} else {
 					throw new Error(
 						data.message || "Failed to follow suggestion",
@@ -1948,20 +2007,9 @@ export default function App() {
 					...prev,
 					[userId]: currentState,
 				}));
-				// Show Toast
-				window.dispatchEvent(
-					new CustomEvent("showToast", {
-						detail: {
-							message:
-								e.message ||
-								"Follow suggestion failed. Please try again.",
-							type: "error",
-						},
-					}),
-				);
 			}
 		},
-		[followingStates],
+		[followingStates, navigateToTab, fetchSuggestions],
 	);
 
 	const canGoBack =
@@ -2006,8 +2054,21 @@ export default function App() {
 	return (
 		<ErrorBoundary>
 			<div className="relative isolate z-0 min-h-dvh h-dvh mobile-shell text-slate-800 dark:text-zinc-100 selection:bg-zinc-800/10 dark:selection:bg-white/10 antialiased font-ui flex flex-col justify-start bg-transparent transition-colors duration-500 overflow-x-hidden">
+				{/* Lightweight animated glare for phones and tablets. Three.js stays
+				    desktop-only, but the app never loses its ambient motion. */}
+				<div
+					aria-hidden="true"
+					className="orbit-ambient-glare fixed inset-0 -z-20 pointer-events-none md:hidden">
+					<span className="orbit-ambient-glare__orb orbit-ambient-glare__orb--one" />
+					<span className="orbit-ambient-glare__orb orbit-ambient-glare__orb--two" />
+				</div>
+
 				{/* Background Liquid Glob Dynamic Mesh Grid */}
-				{isLargeScreen && <BackgroundGradients />}
+				{isLargeScreen && (
+					<Suspense fallback={null}>
+						<BackgroundGradients />
+					</Suspense>
+				)}
 
 				{/* Global Fullscreen Image Viewer Modal (lazy) */}
 				<Suspense fallback={null}>
@@ -2280,7 +2341,7 @@ export default function App() {
 									<div className={`w-full h-full max-w-none lg:max-w-7xl ${currentTab === "chat" && hasActiveConversation ? "px-1" : "px-1.5"} lg:px-8 mx-auto overflow-hidden`}>
 										<div className="grid grid-cols-1 md:grid-cols-12 gap-0 md:gap-6 lg:gap-7 items-stretch w-full h-full">
 											{user && (
-												<div className={`hidden md:block md:col-span-4 lg:col-span-3 h-full overflow-hidden shrink-0 pb-safe-bottom pt-3.5 lg:pt-0 ${currentTab === "chat" && hasActiveConversation ? "lg:pr-1.5" : ""}`}>
+												<div className={`hidden lg:block lg:col-span-3 h-full overflow-hidden shrink-0 pb-safe-bottom pt-3.5 lg:pt-0 ${currentTab === "chat" && hasActiveConversation ? "lg:pr-1.5" : ""}`}>
 													<LeftSidebar
 														user={user}
 														currentTab={currentTab}
@@ -2315,12 +2376,12 @@ export default function App() {
 											)}
 											<div
 												className={`${
-													currentTab === "chat"
-														? "md:col-span-8 lg:col-span-9 overflow-hidden"
-														: !user
-															? "col-span-12 overflow-y-auto"
-															: "md:col-span-8 lg:col-span-6 xl:col-span-6 overflow-y-auto"
-												} w-full h-full ${currentTab === "chat" ? "pb-0" : "pb-24 md:pb-0"} ${currentTab === "chat" && hasActiveConversation ? "pt-1.5 pr-0 md:pt-3.5 lg:pt-0" : "md:pr-3.5 md:pt-3.5 lg:pt-0"}`}>
+												currentTab === "chat"
+													? "md:col-span-12 lg:col-span-9 overflow-hidden"
+													: !user
+														? "col-span-12 overflow-y-auto"
+														: "md:col-span-12 lg:col-span-6 xl:col-span-6 overflow-y-auto"
+												} w-full h-full ${currentTab === "chat" ? "pb-0" : "pb-24 lg:pb-0"} ${currentTab === "chat" && hasActiveConversation ? "pt-1.5 pr-0 md:pt-3.5 lg:pt-0" : "md:pr-3.5 md:pt-3.5 lg:pt-0"}`}>
 
 												{commentsOpen && (
 													<motion.button
@@ -2593,26 +2654,34 @@ export default function App() {
 																			}
 																		/>
 																	</motion.div>
-																)}
-															{user &&
-																currentTab ===
-																"settings" && (
-																	<motion.div
-																		key="settings"
-																		initial={{
-																			opacity: 0,
-																		}}
-																		animate={{
-																			opacity: 1,
-																		}}
-																		exit={{ opacity: 0 }}
-																		transition={{ duration: 0 }}>
-																		<Settings
-																			user={
-																				user
-																			}
-																			onUserUpdate={(
-																				u,
+																)}		{user && currentTab === "admin" && (
+								<motion.div
+									key="admin"
+									initial={{
+										opacity: 0,
+									}}
+									animate={{
+										opacity: 1,
+									}}
+									exit={{ opacity: 0 }}
+									transition={{ duration: 0 }}>
+									<AdminDashboard />
+								</motion.div>
+							)}
+							{user && currentTab === "settings" && (
+								<motion.div
+									key="settings"
+									initial={{
+										opacity: 0,
+									}}
+									animate={{
+										opacity: 1,
+									}}
+									exit={{ opacity: 0 }}
+									transition={{ duration: 0 }}>
+									<Settings
+										user={user}
+										onUserUpdate={(u,
 																			) =>
 																				setUser(
 																					u,
@@ -2664,16 +2733,45 @@ export default function App() {
 																			}
 																			onChatConversationChange={
 																				setHasActiveConversation
-																			}
-																			onStartCall={
-																				handleStartCall
-																			}
-																		/>
-																	</motion.div>
-																)}{" "}
-														</AnimatePresence>{" "}
+																			}	onStartCall={
+		handleStartCall
+	}
+/>
+							</motion.div>
+						)}
+
+						{user && currentTab === "communities" && (
+							<motion.div
+								key="communities"
+								initial={{ opacity: 0, y: 10 }}
+								animate={{ opacity: 1, y: 0 }}
+								exit={{ opacity: 0, y: -10 }}
+								transition={{ duration: 0.2 }}
+								className="h-full w-full"
+							>
+								<Communities
+									user={user}
+									socket={socket}
+								/>
+							</motion.div>
+						)}{" "}
+						</AnimatePresence>{" "}
 													</Suspense>{" "}
-												</ErrorBoundary>
+																{/* Onboarding wizard modal */}
+				{showOnboarding && (
+					<OnboardingWizard
+						isOpen={showOnboarding}
+						onClose={() => {
+							setShowOnboarding(false);
+							localStorage.setItem("orbit_onboarding_seen", "true");
+						}}
+						onComplete={() => {
+							setShowOnboarding(false);
+							localStorage.setItem("orbit_onboarding_seen", "true");
+						}}
+					/>
+				)}
+			</ErrorBoundary>
 											</div>{" "}
 											{/* Right Sidebar: Dual Liquid Glass Containers for Suggestions & Features */}
 											{user && currentTab !== "chat" && (
@@ -2738,7 +2836,7 @@ export default function App() {
 																	transition={{ duration: 0.2 }}
 																	className="space-y-4">
 																	<AnimatePresence mode="popLayout">
-																		{suggestions.map(
+																		{suggestions.slice(0, 6).map(
 																			(sugUser) => (
 																				<motion.div
 																					key={sugUser._id}
@@ -3053,6 +3151,9 @@ export default function App() {
 												offer.sdp,
 											),
 										);
+										for (const candidate of pendingIceCandidatesRef.current.splice(0)) {
+											await pc.addIceCandidate(new RTCIceCandidate(candidate));
+										}
 									} else {
 										throw new Error("No pending offer found to accept");
 									}
@@ -3236,6 +3337,20 @@ export default function App() {
 					</Suspense>
 				)}
 			</div>
-		</ErrorBoundary>
+						{/* Onboarding wizard modal */}
+				{showOnboarding && (
+					<OnboardingWizard
+						isOpen={showOnboarding}
+						onClose={() => {
+							setShowOnboarding(false);
+							localStorage.setItem("orbit_onboarding_seen", "true");
+						}}
+						onComplete={() => {
+							setShowOnboarding(false);
+							localStorage.setItem("orbit_onboarding_seen", "true");
+						}}
+					/>
+				)}
+			</ErrorBoundary>
 	);
 }

@@ -6,6 +6,7 @@ import jwt from "jsonwebtoken";
 import { cookieOptions } from "../configs/cookie";
 import { setCsrfCookie } from "../middlewares/csrf.middleware";
 
+import { deleteCache } from "../configs/cache";
 import cloudinary from "../configs/cloudinary";
 import { env } from "../configs/env";
 import { logger } from "../utilities/logger";
@@ -121,9 +122,9 @@ export const signup = async (req: Request, res: Response) => {
   }
 };
 
-const MAX_LOGIN_ATTEMPTS = 5;
-const LOCK_TIME_MS = 15 * 60 * 1000; // 15 minutes
-const ACCOUNT_LOCKOUT_DURATION = 15 * 60 * 1000; // 15 minutes
+const MAX_LOGIN_ATTEMPTS = 7;
+const LOCK_TIME_MS = 5 * 60 * 1000; // 5 minutes
+const ACCOUNT_LOCKOUT_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // login
 export const login = async (req: Request, res: Response) => {
@@ -139,16 +140,20 @@ export const login = async (req: Request, res: Response) => {
     const existingToken = req.cookies?.jwt;
 
     if (existingToken) {
+      let isAlreadyLoggedIn = false;
       try {
         jwt.verify(existingToken, env.JWT_SECRET, {
           issuer: "orbit",
           audience: "orbit-users",
         });
-
-        throw new BadRequestError("You are already logged in!");
+        isAlreadyLoggedIn = true;
       } catch (err: any) {
         logger.info(`Invalid/expired token!`, { error: err.message });
         res.clearCookie("jwt", { ...cookieOptions, path: "/" });
+      }
+
+      if (isAlreadyLoggedIn) {
+        throw new BadRequestError("You are already logged in!");
       }
     }
 
@@ -164,12 +169,35 @@ export const login = async (req: Request, res: Response) => {
       throw new NotFoundError("User doesn't exist!");
     }
 
+    // check if account is currently locked out
+    if (user.lockUntil && user.lockUntil.getTime() > Date.now()) {
+      const remainingMinutes = Math.ceil((user.lockUntil.getTime() - Date.now()) / (60 * 1000));
+      throw new BadRequestError(
+        `Account locked due to too many failed attempts. Please try again in ${remainingMinutes} minute(s).`
+      );
+    }
+
     // verify password
     const isMatch = await user.comparePassword(result.data.password);
 
     if (!isMatch) {
       logger.warn(`Failed login attempt`, { userId: user._id });
+
+      const attempts = (user.loginAttempts || 0) + 1;
+      user.loginAttempts = attempts;
+      if (attempts >= MAX_LOGIN_ATTEMPTS) {
+        user.lockUntil = new Date(Date.now() + LOCK_TIME_MS);
+      }
+      await user.save();
+
       throw new UnauthorizedError("Invalid credentials!");
+    }
+
+    // Reset failed login attempts on successful login
+    if (user.loginAttempts !== 0 || user.lockUntil !== null) {
+      user.loginAttempts = 0;
+      user.lockUntil = null;
+      await user.save();
     }
 
     // generate jwt
@@ -254,6 +282,11 @@ export const getCurrentUser = async (req: Request, res: Response) => {
 // logout
 export const logout = async (req: Request, res: Response) => {
   try {
+    const currentUserId = req.user?._id;
+    if (currentUserId) {
+      await deleteCache(`auth:user:${currentUserId.toString()}`);
+    }
+
     // clear cookies
     res.clearCookie("jwt", { ...cookieOptions, path: "/" });
     res.clearCookie("csrf-token", { path: "/", secure: env.NODE_ENV === "production", sameSite: "lax" });

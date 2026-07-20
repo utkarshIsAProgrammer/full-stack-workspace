@@ -175,6 +175,96 @@ const userSchema = new mongoose.Schema(
 			],
 			default: [],
 		},
+
+		// Private account (follow requests required)
+		isPrivate: {
+			type: Boolean,
+			default: false,
+		},
+
+		// Push notifications enabled
+		notificationsEnabled: {
+			type: Boolean,
+			default: true,
+		},
+
+		// Onboarding completed
+		isOnboarded: {
+			type: Boolean,
+			default: false,
+		},
+
+		// Follow request IDs (for private accounts)
+		followRequests: [
+			{
+				type: mongoose.Schema.Types.ObjectId,
+				ref: "User",
+			},
+		],
+
+		// Admin flag
+		isAdmin: {
+			type: Boolean,
+			default: false,
+		},
+
+		// Muted users (user -> mute metadata)
+		mutedUsers: {
+			type: [{
+				user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+				mutedAt: { type: Date, default: Date.now },
+				expiresAt: { type: Date },
+			}],
+			default: [],
+		},
+
+		// Close friends list
+		closeFriends: [{
+			type: mongoose.Schema.Types.ObjectId,
+			ref: "User",
+		}],
+
+		// Mute/ban status
+		isMuted: {
+			type: Boolean,
+			default: false,
+		},
+		isBanned: {
+			type: Boolean,
+			default: false,
+		},
+
+		// ─── Feed ranking fields (used by the affinity engine) ─────────────
+
+		// Cached per-author affinity scores (authorId -> score).
+		// Re-computed by a scheduled job, not on every feed request.
+		affinityScores: {
+			type: Map,
+			of: Number,
+			default: new Map(),
+		},
+
+		// Cached per-tag / content-type affinity (tag -> score).
+		// Helps the feed rank higher posts on topics the user engages with.
+		contentAffinity: {
+			type: Map,
+			of: Number,
+			default: new Map(),
+		},
+
+		// Timestamp of the last affinity recomputation for this user.
+		affinityUpdatedAt: {
+			type: Date,
+			default: null,
+		},
+
+		// Set of post IDs the user has recently viewed.
+		// Used to exclude already-seen posts from the feed pool.
+		// Managed as a capped array — oldest entries are evicted when length > 500.
+		seenPosts: {
+			type: [String],
+			default: [],
+		},
 	},
 
 	{ timestamps: true },

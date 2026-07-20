@@ -83,8 +83,8 @@ export const toggleCommentReaction = async (
       type,
     });
 
-    // Create notification when a reaction is added
-    if (type === "add") {
+    // Create notification when a reaction is added (skip self-reactions)
+    if (type === "add" && comment.author.toString() !== currentUserId.toString()) {
       const commentAuthor = comment.author.toString();
       const postId = comment.post ? comment.post.toString() : null;
       await createNotification({

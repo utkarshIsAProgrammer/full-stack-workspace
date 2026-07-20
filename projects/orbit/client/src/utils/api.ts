@@ -44,7 +44,7 @@ export async function apiFetch(
 			headers,
 			credentials: "include",
 		});
-		if (res.status === 401 || res.status === 403) {
+		if (res.status === 401) {
 			window.dispatchEvent(new CustomEvent("auth:expired"));
 		}
 		return res.clone();
@@ -63,7 +63,7 @@ export async function apiFetch(
 			headers,
 			credentials: "include",
 		});
-		if (res.status === 401 || res.status === 403) {
+		if (res.status === 401) {
 			window.dispatchEvent(new CustomEvent("auth:expired"));
 		}
 

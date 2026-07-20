@@ -221,27 +221,18 @@ export default function BackgroundGradients({}: BackgroundGradientsProps) {
       if (animationFrameId !== null) {
         cancelAnimationFrame(animationFrameId);
       }
-      if (renderer) {
-        try {
-          renderer.dispose();
-          renderer.forceContextLoss();
-        } catch {}
-      }
-      if (geometry) {
-        try {
-          geometry.dispose();
-        } catch {}
-      }
-      if (material) {
-        try {
-          material.dispose();
-        } catch {}
-      }
-      if (timer) {
-        try {
-          timer.dispose();
-        } catch {}
-      }
+      const safeDispose = (obj: any, method: string) => {
+        if (obj) {
+          try {
+            obj[method]();
+          } catch { /* best-effort cleanup */ }
+        }
+      };
+      safeDispose(renderer, 'dispose');
+      if (renderer) { try { renderer.forceContextLoss(); } catch {} }
+      safeDispose(geometry, 'dispose');
+      safeDispose(material, 'dispose');
+      safeDispose(timer, 'dispose');
     };
   }, [isLargeScreen, disableCanvas]);
 

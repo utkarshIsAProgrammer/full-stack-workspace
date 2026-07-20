@@ -38,6 +38,17 @@ export const toggleReaction = async (
       return next(new BadRequestError("Cannot react to a deleted message!"));
     }
 
+    const conversation = await Conversation.findById(message.conversation).select("participants").lean();
+    if (!conversation) {
+      return next(new NotFoundError("Conversation not found!"));
+    }
+    const isParticipant = (conversation.participants || []).some(
+      (p: any) => p.toString() === currentUserId.toString()
+    );
+    if (!isParticipant) {
+      return next(new ForbiddenError("You are not a participant in this conversation!"));
+    }
+
     const userIdStr = currentUserId.toString();
     const existingIndex = (message.reactions || []).findIndex(
       (r) => (r.sender?._id || r.sender)?.toString() === userIdStr && r.emoji === emoji.trim(),

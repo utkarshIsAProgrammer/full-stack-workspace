@@ -1,6 +1,7 @@
 import { Server as SocketIOServer, Socket } from "socket.io";
 import http from "http";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 import * as cookie from "cookie";
 import { Redis } from "ioredis";
 import { createAdapter } from "@socket.io/redis-adapter";
@@ -10,6 +11,7 @@ import { getCache, setCache, deleteCache } from "./cache";
 import { redis } from "./redis";
 import { Conversation } from "../models/conversation.model";
 import { Message } from "../models/message.model";
+import Block from "../models/block.model";
 
 // Extended socket type with auth properties
 type UserSocket = Socket & {
@@ -54,12 +56,10 @@ const checkConnectionRateLimit = async (ip: string): Promise<boolean> => {
 };
 
 export const initSocket = async (server: http.Server) => {
-  const allowedOrigins = [
-    env.CLIENT_URL, 
-    env.CLIENT_URL.replace(/\/$/, ""),
-    "http://localhost:5173",
-    "http://localhost:5174"
-  ];
+  const allowedOrigins = [env.CLIENT_URL.replace(/\/$/, "")];
+  if (env.NODE_ENV === "development") {
+    allowedOrigins.push("http://localhost:5173", "http://localhost:5174");
+  }
   io = new SocketIOServer(server, {
     cors: {
       origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
@@ -69,9 +69,7 @@ export const initSocket = async (server: http.Server) => {
         }
         const originWithoutSlash = origin.replace(/\/$/, "");
         if (
-          allowedOrigins.includes(originWithoutSlash) ||
-          originWithoutSlash.endsWith(".vercel.app") ||
-          originWithoutSlash.startsWith("http://localhost:")
+          allowedOrigins.includes(originWithoutSlash)
         ) {
           callback(null, true);
           return;
@@ -84,6 +82,7 @@ export const initSocket = async (server: http.Server) => {
       threshold: 1024, // only compress messages > 1 KB
     },
     connectTimeout: 10000,
+    maxHttpBufferSize: 100_000,
   });
 
   // ── Redis adapter for multi-instance support ─────────────
@@ -167,6 +166,52 @@ export const initSocket = async (server: http.Server) => {
 
   io.on("connection", (socket: Socket) => {
     const s = socket as UserSocket;
+
+    // Calls can only be signalled between users who share a direct-message
+    // conversation. This prevents an authenticated account from using the
+    // signalling server to ring arbitrary users or relay malformed payloads.
+    const canRelayCall = async (targetUserId: unknown): Promise<boolean> => {
+      if (
+        !s.userId ||
+        typeof targetUserId !== "string" ||
+        targetUserId === s.userId ||
+        !mongoose.isObjectIdOrHexString(targetUserId)
+      ) {
+        return false;
+      }
+
+      if (!s.data) {
+        s.data = {};
+      }
+      if (!s.data.authorizedCalls) {
+        s.data.authorizedCalls = new Set<string>();
+      }
+
+      if (s.data.authorizedCalls.has(targetUserId)) {
+        return true;
+      }
+
+      // Check if blocked
+      const isBlocked = await Block.exists({
+        $or: [
+          { blocker: s.userId, blocked: targetUserId },
+          { blocker: targetUserId, blocked: s.userId },
+        ],
+      });
+      if (isBlocked) {
+        return false;
+      }
+
+      const sharedConversation = await Conversation.exists({
+        participants: { $all: [s.userId, targetUserId] },
+      });
+      
+      const allowed = Boolean(sharedConversation);
+      if (allowed) {
+        s.data.authorizedCalls.add(targetUserId);
+      }
+      return allowed;
+    };
     logger.info("User connected", { 
       userId: s.userId, 
       isAuthenticated: s.isAuthenticated,
@@ -235,12 +280,24 @@ export const initSocket = async (server: http.Server) => {
 
     // Join conversation room
     socket.on("chat:join", async ({ conversationId }) => {
-      if (!s.userId || !conversationId) return;
-      s.data.activeConversationId = conversationId;
-      socket.join(`conversation:${conversationId}`);
-      logger.info("Socket joined conversation", { userId: s.userId, conversationId });
+      if (!s.userId || !conversationId || !mongoose.Types.ObjectId.isValid(conversationId)) return;
 
       try {
+        const conversation = await Conversation.findById(conversationId).select("participants").lean();
+        if (!conversation) return;
+
+        const isParticipant = (conversation.participants || []).some(
+          (p: any) => p.toString() === s.userId
+        );
+        if (!isParticipant) {
+          logger.warn("Unauthorized socket attempt to join chat room", { userId: s.userId, conversationId });
+          return;
+        }
+
+        s.data.activeConversationId = conversationId;
+        socket.join(`conversation:${conversationId}`);
+        logger.info("Socket joined conversation", { userId: s.userId, conversationId });
+
         // Mark all messages from the other user in this conversation as seen
         const result = await Message.updateMany(
           { conversation: conversationId, recipient: s.userId, seen: false },
@@ -329,8 +386,8 @@ export const initSocket = async (server: http.Server) => {
 
     // ── WebRTC Call Signaling ──────────────────────────────────────
     // Relay call offer (SDP + ICE candidates bundled) to the callee
-    socket.on("call:offer", (data: { targetUserId: string; sdp: any; type: "audio" | "video" }) => {
-      if (!s.userId) return;
+    socket.on("call:offer", async (data: { targetUserId: string; sdp: unknown; type: "audio" | "video" }) => {
+      if (!data || !["audio", "video"].includes(data.type) || !data.sdp || !(await canRelayCall(data.targetUserId))) return;
       logger.info("Relaying call:offer", { from: s.userId, to: data.targetUserId, type: data.type });
       io.to(`user:${data.targetUserId}`).emit("call:offer", {
         callerId: s.userId,
@@ -340,8 +397,8 @@ export const initSocket = async (server: http.Server) => {
     });
 
     // Relay call answer back to the caller
-    socket.on("call:answer", (data: { targetUserId: string; sdp: any }) => {
-      if (!s.userId) return;
+    socket.on("call:answer", async (data: { targetUserId: string; sdp: unknown }) => {
+      if (!data || !data.sdp || !(await canRelayCall(data.targetUserId))) return;
       logger.info("Relaying call:answer", { from: s.userId, to: data.targetUserId });
       io.to(`user:${data.targetUserId}`).emit("call:answer", {
         calleeId: s.userId,
@@ -350,8 +407,8 @@ export const initSocket = async (server: http.Server) => {
     });
 
     // Relay ICE candidates between peers
-    socket.on("call:ice-candidate", (data: { targetUserId: string; candidate: any }) => {
-      if (!s.userId) return;
+    socket.on("call:ice-candidate", async (data: { targetUserId: string; candidate: unknown }) => {
+      if (!data || !data.candidate || !(await canRelayCall(data.targetUserId))) return;
       io.to(`user:${data.targetUserId}`).emit("call:ice-candidate", {
         senderId: s.userId,
         candidate: data.candidate,
@@ -359,8 +416,8 @@ export const initSocket = async (server: http.Server) => {
     });
 
     // ICE restart (network handoff — WiFi → cellular, etc.)
-    socket.on("call:ice-restart", (data: { targetUserId: string; sdp: any }) => {
-      if (!s.userId) return;
+    socket.on("call:ice-restart", async (data: { targetUserId: string; sdp: unknown }) => {
+      if (!data || !data.sdp || !(await canRelayCall(data.targetUserId))) return;
       logger.info("Relaying call:ice-restart", { from: s.userId, to: data.targetUserId });
       io.to(`user:${data.targetUserId}`).emit("call:ice-restart", {
         senderId: s.userId,
@@ -369,8 +426,8 @@ export const initSocket = async (server: http.Server) => {
     });
 
     // End call notification
-    socket.on("call:end", (data: { targetUserId: string }) => {
-      if (!s.userId) return;
+    socket.on("call:end", async (data: { targetUserId: string }) => {
+      if (!data || !(await canRelayCall(data.targetUserId))) return;
       logger.info("Relaying call:end", { from: s.userId, to: data.targetUserId });
       io.to(`user:${data.targetUserId}`).emit("call:end", {
         endedBy: s.userId,
@@ -378,11 +435,33 @@ export const initSocket = async (server: http.Server) => {
     });
 
     // Missed call notification (callee didn't answer within timeout)
-    socket.on("call:missed", (data: { targetUserId: string }) => {
-      if (!s.userId) return;
+    socket.on("call:missed", async (data: { targetUserId: string }) => {
+      if (!data || !(await canRelayCall(data.targetUserId))) return;
       logger.info("Relaying call:missed", { from: s.userId, to: data.targetUserId });
       io.to(`user:${data.targetUserId}`).emit("call:missed", {
         callerId: s.userId,
+      });
+    });
+
+    // ── Community Socket Events ──────────────────────────────────────
+    socket.on("community:join", ({ communityId }) => {
+      if (!s.userId || !communityId) return;
+      socket.join(`community:${communityId}`);
+      logger.info("Socket joined community", { userId: s.userId, communityId });
+    });
+
+    socket.on("community:leave", ({ communityId }) => {
+      if (!s.userId || !communityId) return;
+      socket.leave(`community:${communityId}`);
+      logger.info("Socket left community", { userId: s.userId, communityId });
+    });
+
+    socket.on("community:typing", ({ communityId, isTyping }) => {
+      if (!s.userId || !communityId) return;
+      socket.to(`community:${communityId}`).emit("community:typing", {
+        communityId,
+        userId: s.userId,
+        isTyping,
       });
     });
 
@@ -749,6 +828,32 @@ export const getUserPresenceStatus = async (userId: string): Promise<string> => 
 };
 
 /**
+ * Fetches multiple user online statuses in a single batch MGET command.
+ */
+export const getUserPresenceStatuses = async (userIds: string[]): Promise<Record<string, string>> => {
+  if (userIds.length === 0) return {};
+  try {
+    const keys = userIds.map((id) => `presence:user:${id}`);
+    const results = await redis.mget<string[]>(...keys);
+    const presenceMap: Record<string, string> = {};
+    userIds.forEach((id, idx) => {
+      presenceMap[id] = results[idx] || "offline";
+    });
+    return presenceMap;
+  } catch (error: any) {
+    logger.error("Error fetching batch user presence statuses", {
+      error: error.message,
+      userIds,
+    });
+    const fallbackMap: Record<string, string> = {};
+    userIds.forEach((id) => {
+      fallbackMap[id] = "offline";
+    });
+    return fallbackMap;
+  }
+};
+
+/**
  * Emits a user profile update event to notify all connected clients.
  * Also emits to all of the user's conversation rooms so participant data
  * (name, profile pic, etc.) is updated in real-time for chat partners.
@@ -853,6 +958,19 @@ export const emitChatNotification = (recipientId: string, payload: any) => {
   }
 };
 
+/**
+ * Forcefully disconnects all active socket instances for a specific user ID (e.g. when banned).
+ */
+export const disconnectUserSockets = (userId: string) => {
+  try {
+    if (io) {
+      io.in(`user:${userId}`).disconnectSockets(true);
+    }
+  } catch (error: any) {
+    logger.error("Failed to disconnect user sockets", { error: error.message, userId });
+  }
+};
+
 // ─── Graceful shutdown ───────────────────────────────────────────────
 export const shutdownSocket = async (): Promise<void> => {
   logger.info("Shutting down Socket.io...");
@@ -884,4 +1002,3 @@ export const shutdownSocket = async (): Promise<void> => {
     });
   }
 };
-

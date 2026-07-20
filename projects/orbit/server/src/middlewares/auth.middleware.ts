@@ -55,6 +55,13 @@ export const protect = async (
       await setCache(cacheKey, user, 300);
     }
 
+    if (user.isBanned) {
+      return res.status(403).json({
+        success: false,
+        message: "Your account has been banned!",
+      });
+    }
+
     // attach user to request object
     req.user = user;
 
@@ -107,7 +114,7 @@ export const optionalAuth = async (
       }
     }
 
-    if (user) {
+    if (user && !user.isBanned) {
       req.user = user;
     }
 

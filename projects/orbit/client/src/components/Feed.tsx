@@ -21,9 +21,12 @@ import {
 	Play,
 	Volume2,
 	VolumeX,
+	Lock,
+	Globe,
 } from "lucide-react";
 import { Post, Comment, User } from "../types";
 import GlassCard from "./GlassCard";
+import PinchZoom from "./PinchZoom";
 import ImageCarousel from "./ImageCarousel";
 import UserAvatar from "./UserAvatar";
 import ImageCropModal from "./ImageCropModal";
@@ -32,6 +35,10 @@ import Skeleton from "./Skeleton";
 import ValidationMessage from "./ValidationMessage";
 import CharCounter from "./CharCounter";
 import GlancesFeed from "./GlancesFeed";
+import MissionsPanel from "./MissionsPanel";
+import ReportButton from "./ReportButton";
+import QuoteRepostModal from "./QuoteRepostModal";
+import { sharePostToExternal } from "../utils/shareToExternal";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 import { validatePost, validateComment } from "../utils/validation";
@@ -103,6 +110,9 @@ export default function Feed({
 	);
 	const [submittingPost, setSubmittingPost] = useState(false);
 
+	// Post visibility toggle: "public" | "closeFriends"
+	const [postVisibility, setPostVisibility] = useState<"public" | "closeFriends">("public");
+
 	// Crop queue for sequential multi-image cropping
 	const [cropQueue, setCropQueue] = useState<string[]>([]);
 	const [cropQueueNames, setCropQueueNames] = useState<string[]>([]);
@@ -112,7 +122,6 @@ export default function Feed({
 	// Re-crop/replace state for individual images in the preview
 	const [reCropIndex, setReCropIndex] = useState<number>(-1);
 	const replaceFileInputRef = useRef<HTMLInputElement>(null);
-	const videoInputRef = useRef<HTMLInputElement>(null);
 
 	// Process next image in crop queue
 	const processNextCrop = useCallback(() => {
@@ -221,6 +230,9 @@ export default function Feed({
 
 	// Active expanded Post for comments Modal/Drawer
 	const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+
+	// Quote Repost modal state
+	const [quoteRepostPost, setQuoteRepostPost] = useState<Post | null>(null);
 
 	// Notify parent when comments open/close
 	useEffect(() => {
@@ -1068,6 +1080,7 @@ export default function Feed({
 		const formData = new FormData();
 		formData.append("title", title);
 		formData.append("content", content);
+		formData.append("visibility", postVisibility);
 		postImageFiles.forEach((file) => {
 			formData.append("images", file);
 		});
@@ -1093,6 +1106,7 @@ export default function Feed({
 				setPostImagePreviews([]);
 				setPostVideoFile(null);
 				setPostVideoPreview(null);
+				setPostVisibility("public");
 
 				window.dispatchEvent(
 					new CustomEvent("showToast", {
@@ -1471,9 +1485,79 @@ export default function Feed({
 		}
 	};
 
-	// Increment Share click
-	const handleSharePost = async (postId: string) => {
+	// Quote Repost — open modal then create quote-repost
+	const handleQuoteRepost = async (postId: string) => {
+		const post = posts.find((p) => p._id === postId);
+		if (post) {
+			setQuoteRepostPost(post);
+		}
+	};
+
+	// Submit quote repost from modal
+	const handleSubmitQuoteRepost = async (quoteContent: string) => {
+		const postId = quoteRepostPost?._id;
+		if (!postId) return;
+
+		const trimmed = quoteContent.trim().slice(0, 1000);
+
 		try {
+			const res = await apiFetch(`/api/posts/${postId}/quote-repost`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ quoteContent: trimmed }),
+			});
+			const data = await res.json();
+			if (res.ok && data.success) {
+				// Increment repost count optimistically
+				setPosts((prev) =>
+					prev.map((p) =>
+						p._id === postId
+							? {
+									...p,
+									repostedByMe: true,
+									repostsCount: (p.repostsCount || 0) + 1,
+								}
+							: p,
+					),
+				);
+				window.dispatchEvent(
+					new CustomEvent("showToast", {
+						detail: {
+							message: "Quote reposted!",
+							type: "success",
+						},
+					}),
+				);
+			} else {
+				window.dispatchEvent(
+					new CustomEvent("showToast", {
+						detail: {
+							message: data.message || "Failed to quote repost",
+							type: "error",
+						},
+					}),
+				);
+			}
+		} catch (e) {
+			logger.error(e);
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: {
+						message: "Network connection error",
+						type: "error",
+					},
+				}),
+			);
+		}
+	};
+
+	// Increment Share click and open Web Share API
+	const handleSharePost = async (postId: string) => {
+		// Find the post to get its slug, title, and author info
+		const post = posts.find((p) => p._id === postId);
+
+		try {
+			// Increment share count on the server
 			const res = await apiFetch(`/api/posts/${postId}/share`, {
 				method: "POST",
 			});
@@ -1486,10 +1570,23 @@ export default function Feed({
 							: p,
 					),
 				);
+			}
+		} catch (e) {
+			logger.error(e);
+		}
 
-				// Copy landing URL
+		// Use Web Share API first, fall back to clipboard copy
+		if (post) {
+			await sharePostToExternal(
+				post.slug,
+				post.title,
+				post.author?.username,
+			);
+		} else {
+			// Fallback: copy the link directly
+			try {
 				const link = `${window.location.origin}/post/${postId}`;
-				navigator.clipboard.writeText(link);
+				await navigator.clipboard.writeText(link);
 				window.dispatchEvent(
 					new CustomEvent("showToast", {
 						detail: {
@@ -1498,9 +1595,9 @@ export default function Feed({
 						},
 					}),
 				);
+			} catch (clipErr) {
+				logger.error("Clipboard fallback failed", clipErr);
 			}
-		} catch (e) {
-			logger.error(e);
 		}
 	};
 
@@ -1842,6 +1939,10 @@ export default function Feed({
 				{!singlePostSlug && !searchQuery ? (
 					<div className="space-y-6 max-w-2xl mx-auto w-full px-0">
 						<div className="space-y-6">
+							{/* Daily Missions Panel — only on main feed for logged-in users */}
+							{user && (
+								<MissionsPanel />
+							)}
 							{/* Post Composer Card — hidden on mobile per user request */}
 							{user && !isMobile && (
 								<GlassCard className="shadow-sm rounded-4xl border-white/5 bg-zinc-950/20 backdrop-blur-xl">
@@ -2178,19 +2279,48 @@ export default function Feed({
 												)}
 											</div>
 
-											<button
-												type="submit"
-												disabled={submittingPost}
-												className={`flex items-center gap-1.5 rounded-full bg-white text-[12px] md:text-sm font-bold text-black hover:bg-zinc-100 transition-all disabled:opacity-40 cursor-pointer shadow-sm animate-none ${
-													isKeyboardOpen
-														? "px-4 py-2"
-														: "px-5 py-2.5"
-												}`}>
-												{submittingPost
-													? "Posting..."
-													: "Post"}{" "}
-												<Send className="h-3.5 w-3.5" />
-											</button>
+					{/* Visibility toggle: public / close friends */}
+						<button
+							type="button"
+							onClick={() =>
+								setPostVisibility(
+									postVisibility === "public"
+										? "closeFriends"
+										: "public",
+								)
+							}
+							title={
+								postVisibility === "public"
+									? "Public post"
+									: "Close friends only"
+							}
+							className={`flex items-center gap-1.5 rounded-full text-[12px] md:text-sm font-bold transition-all cursor-pointer border px-3 py-1.5 ${
+								postVisibility === "closeFriends"
+									? "bg-emerald-500/20 border-emerald-500/30 text-emerald-300"
+									: "bg-zinc-800/50 border-zinc-700/50 text-zinc-400 hover:text-zinc-300"
+							}`}>
+							{postVisibility === "closeFriends" ? (
+								<Lock className="h-3.5 w-3.5" />
+							) : (
+								<Globe className="h-3.5 w-3.5" />
+							)}
+							{postVisibility === "closeFriends"
+								? "Close Friends"
+								: "Public"}
+						</button>
+						<button
+							type="submit"
+							disabled={submittingPost}
+							className={`flex items-center gap-1.5 rounded-full bg-white text-[12px] md:text-sm font-bold text-black hover:bg-zinc-100 transition-all disabled:opacity-40 cursor-pointer shadow-sm animate-none ${
+							isKeyboardOpen
+								? "px-4 py-2"
+								: "px-5 py-2.5"
+						}`}>
+						{submittingPost
+							? "Posting..."
+							: "Post"}{" "}
+						<Send className="h-3.5 w-3.5" />
+					</button>
 										</div>
 									</form>
 								</GlassCard>
@@ -2491,7 +2621,7 @@ export default function Feed({
 														post.images.length >
 															0 ? (
 															<div className="mt-4 group/image">
-																<ImageCarousel
+																<PinchZoom><ImageCarousel
 																	images={
 																		post.images
 																	}
@@ -2507,7 +2637,7 @@ export default function Feed({
 																			),
 																		);
 																	}}
-																/>
+																/></PinchZoom>
 															</div>
 														) : post.image?.url ? (
 															<div
@@ -2993,7 +3123,7 @@ export default function Feed({
 													{post.images &&
 													post.images.length > 0 ? (
 														<div className="mt-4 group/image">
-															<ImageCarousel
+															<PinchZoom><ImageCarousel
 																images={
 																	post.images
 																}
@@ -3014,7 +3144,7 @@ export default function Feed({
 																		),
 																	);
 																}}
-															/>
+															/></PinchZoom>
 														</div>
 													) : post.image?.url ? (
 														<div
@@ -3031,7 +3161,7 @@ export default function Feed({
 																	),
 																);
 															}}>
-															<img
+															<PinchZoom><img
 																loading="lazy"
 																src={
 																	post.image
@@ -3044,7 +3174,7 @@ export default function Feed({
 																	)
 																}
 																className="w-full object-cover aspect-4/5 max-h-200 transition-transform duration-500 group-hover/image:scale-[1.02]"
-															/>
+															/></PinchZoom>
 														</div>
 													) : null}
 
@@ -3148,6 +3278,18 @@ export default function Feed({
 															</span>
 														</button>
 
+														{/* Quote repost trigger */}
+														<button
+															onClick={() =>
+																handleQuoteRepost(
+																	post._id,
+																)
+															}
+															title="Quote Repost (repost with comment)"
+															className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-300 select-none group focus:outline-none cursor-pointer transition-colors">
+															Quote
+														</button>
+
 														{/* Save trigger */}
 														<button
 															onClick={() =>
@@ -3193,15 +3335,15 @@ export default function Feed({
 														</span>
 
 														{/* Share trigger icon */}
-														<button
-															onClick={() =>
-																handleSharePost(
-																	post._id,
-																)
-															}
-															className="flex h-7.5 w-7.5 items-center justify-center rounded-full hover:bg-zinc-800 transition-colors cursor-pointer text-zinc-500 hover:text-white">
-															<Share2 className="h-3.5 w-3.5" />
-														</button>
+														<button onClick={() =>
+    handleSharePost(
+        post._id,
+    )
+}
+className="flex h-7.5 w-7.5 items-center justify-center rounded-full hover:bg-zinc-800 transition-colors cursor-pointer text-zinc-500 hover:text-white">
+    <Share2 className="h-3.5 w-3.5" />
+</button>
+<ReportButton contentType="post" contentId={post._id} iconOnly />
 													</div>
 												</GlassCard>
 											</div>
@@ -3420,6 +3562,16 @@ export default function Feed({
 				title="Crop Photo"
 				onCropComplete={handleCropComplete}
 			/>
+
+			{/* Quote Repost Modal */}
+			{quoteRepostPost && (
+				<QuoteRepostModal
+					post={quoteRepostPost}
+					isOpen={true}
+					onClose={() => setQuoteRepostPost(null)}
+					onSubmit={handleSubmitQuoteRepost}
+				/>
+			)}
 		</>
 	);
 }

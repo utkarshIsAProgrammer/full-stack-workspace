@@ -390,6 +390,32 @@ async function main() {
     assert("Deleted post ID matches", deletedId === postId);
   }
 
+  // ── 11. WebRTC signaling relay ───────────────────────────
+  // This validates the server portion of a call: offer, answer, and ICE
+  // candidates must be delivered to the intended authenticated participant.
+  // Browser media capture/TURN connectivity is intentionally tested separately.
+  console.log("\n── 11. WebRTC Signaling Relay ──");
+  const offerPromise = waitForEvent(socketB, "call:offer");
+  const offer = { type: "offer", sdp: "v=0\\r\\no=- 0 0 IN IP4 127.0.0.1" };
+  socketA.emit("call:offer", { targetUserId: bob._id, sdp: offer, type: "audio" });
+  const receivedOffer = await offerPromise.catch(() => null);
+  assert("Call offer relayed to callee", receivedOffer?.callerId === alice._id);
+  assert("Call offer SDP preserved", receivedOffer?.sdp?.sdp === offer.sdp);
+
+  const answerPromise = waitForEvent(socketA, "call:answer");
+  const answer = { type: "answer", sdp: "v=0\\r\\no=- 1 1 IN IP4 127.0.0.1" };
+  socketB.emit("call:answer", { targetUserId: alice._id, sdp: answer });
+  const receivedAnswer = await answerPromise.catch(() => null);
+  assert("Call answer relayed to caller", receivedAnswer?.calleeId === bob._id);
+  assert("Call answer SDP preserved", receivedAnswer?.sdp?.sdp === answer.sdp);
+
+  const candidatePromise = waitForEvent(socketB, "call:ice-candidate");
+  const candidate = { candidate: "candidate:1 1 udp 1 127.0.0.1 9 typ host", sdpMid: "0", sdpMLineIndex: 0 };
+  socketA.emit("call:ice-candidate", { targetUserId: bob._id, candidate });
+  const receivedCandidate = await candidatePromise.catch(() => null);
+  assert("ICE candidate relayed to callee", receivedCandidate?.senderId === alice._id);
+  assert("ICE candidate preserved", receivedCandidate?.candidate?.candidate === candidate.candidate);
+
   // ── Cleanup ─────────────────────────────────────────────
   socketA.disconnect();
   socketB.disconnect();

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Image, Loader2 } from "lucide-react";
+import { X, Image, Loader2, ListTodo, Calendar, Clock, UserPlus } from "lucide-react";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 import { validatePost } from "../utils/validation";
@@ -14,6 +14,10 @@ interface PostModalProps {
 	onPostCreated: () => void;
 }
 
+interface PollOption {
+	text: string;
+}
+
 export default function PostModal({
 	isOpen,
 	onClose,
@@ -24,6 +28,23 @@ export default function PostModal({
 	const [postImageFiles, setPostImageFiles] = useState<File[]>([]);
 	const [postImagePreviews, setPostImagePreviews] = useState<string[]>([]);
 	const [submittingPost, setSubmittingPost] = useState(false);
+
+	// Poll state
+	const [showPollCreator, setShowPollCreator] = useState(false);
+	const [pollOptions, setPollOptions] = useState<PollOption[]>([
+		{ text: "" },
+		{ text: "" },
+	]);
+	const [pollExpiry, setPollExpiry] = useState("1h");
+
+	// Scheduling state
+	const [showScheduler, setShowScheduler] = useState(false);
+	const [scheduledAt, setScheduledAt] = useState("");
+	const [isDraft, setIsDraft] = useState(false);
+
+	// Collab invite state
+	const [showCollabInvite, setShowCollabInvite] = useState(false);
+	const [collabUsername, setCollabUsername] = useState("");
 
 	// Crop queue for sequential multi-image cropping
 	const [cropQueue, setCropQueue] = useState<string[]>([]);
@@ -113,7 +134,6 @@ export default function PostModal({
 			}
 		};
 		window.addEventListener("keydown", handleKeyDown);
-		// Focus first focusable element on open
 		requestAnimationFrame(() => {
 			const firstFocusable = modalRef.current?.querySelector<HTMLElement>(
 				'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
@@ -137,13 +157,46 @@ export default function PostModal({
 		setFieldErrors({});
 		setSubmittingPost(true);
 
+		// Validate poll
+		if (showPollCreator) {
+			const validOptions = pollOptions.filter((o) => o.text.trim());
+			if (validOptions.length < 2) {
+				setFieldErrors({ poll: "Add at least 2 poll options" });
+				setSubmittingPost(false);
+				return;
+			}
+		}
+
 		try {
 			const formData = new FormData();
 			formData.append("title", title);
 			formData.append("content", content);
+
+			// Add poll data
+			if (showPollCreator) {
+				const validOptions = pollOptions.filter((o) => o.text.trim());
+				formData.append("poll", JSON.stringify({
+					options: validOptions.map((o) => ({ text: o.text.trim() })),
+					expiresAt: pollExpiry === "never" ? null : getExpiryDate(pollExpiry),
+				}));
+			}
+
+			// Add scheduling
+			if (showScheduler && scheduledAt) {
+				formData.append("scheduledAt", new Date(scheduledAt).toISOString());
+				formData.append("status", "scheduled");
+			} else if (isDraft) {
+				formData.append("status", "draft");
+			}
+
 			postImageFiles.forEach((file) => {
 				formData.append("images", file);
 			});
+
+			// Add collaborator
+			if (collabUsername.trim()) {
+				formData.append("collaborator", collabUsername.trim());
+			}
 
 			const res = await apiFetch("/api/posts", {
 				method: "POST",
@@ -161,6 +214,27 @@ export default function PostModal({
 			setContent("");
 			setPostImageFiles([]);
 			setPostImagePreviews([]);
+			setShowPollCreator(false);
+			setPollOptions([{ text: "" }, { text: "" }]);
+			setPollExpiry("1h");
+			setShowScheduler(false);
+			setScheduledAt("");
+			setIsDraft(false);
+			setCollabUsername("");
+			setShowCollabInvite(false);
+
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: {
+						message: isDraft
+							? "Draft saved!"
+							: showScheduler
+								? "Post scheduled!"
+								: "Post created!",
+						type: "success",
+					},
+				}),
+			);
 			onPostCreated();
 		} catch (err: any) {
 			logger.error(err);
@@ -177,6 +251,35 @@ export default function PostModal({
 		} finally {
 			setSubmittingPost(false);
 		}
+	};
+
+	const getExpiryDate = (expiry: string): string | null => {
+		if (expiry === "never") return null;
+		const now = new Date();
+		const match = expiry.match(/^(\d+)([hdw])$/);
+		if (!match) return null;
+		const value = parseInt(match[1]);
+		const unit = match[2];
+		if (unit === "h") now.setHours(now.getHours() + value);
+		else if (unit === "d") now.setDate(now.getDate() + value);
+		else if (unit === "w") now.setDate(now.getDate() + value * 7);
+		return now.toISOString();
+	};
+
+	const addPollOption = () => {
+		if (pollOptions.length >= 10) return;
+		setPollOptions((prev) => [...prev, { text: "" }]);
+	};
+
+	const updatePollOption = (index: number, text: string) => {
+		setPollOptions((prev) =>
+			prev.map((opt, i) => (i === index ? { ...opt, text } : opt)),
+		);
+	};
+
+	const removePollOption = (index: number) => {
+		if (pollOptions.length <= 2) return;
+		setPollOptions((prev) => prev.filter((_, i) => i !== index));
 	};
 
 	if (!isOpen) return null;
@@ -232,7 +335,7 @@ export default function PostModal({
 							<ValidationMessage message={fieldErrors.title} />
 							<textarea
 								rows={4}
-								placeholder="What's on your mind today? Share any interesting thought or story..."
+								placeholder="What's on your mind today?"
 								value={content}
 								onChange={(e) => {
 									setContent(e.target.value);
@@ -249,7 +352,97 @@ export default function PostModal({
 							</div>
 							<ValidationMessage message={fieldErrors.content} />
 
-							{/* Multiple image previews */}
+							{/* Poll Creator */}
+							{showPollCreator && (
+								<div className="space-y-3 p-3 rounded-xl border border-zinc-800/40 bg-zinc-900/20">
+									<div className="flex items-center justify-between">
+										<h3 className="text-[11px] font-black tracking-widest text-zinc-400 uppercase flex items-center gap-1.5">
+											<ListTodo className="h-3.5 w-3.5" /> POLL
+										</h3>
+										<button
+											type="button"
+											onClick={() => setShowPollCreator(false)}
+											className="text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer">
+											<X className="h-3.5 w-3.5" />
+										</button>
+									</div>
+									{pollOptions.map((opt, idx) => (
+										<div key={idx} className="flex items-center gap-2">
+											<input
+												type="text"
+												placeholder={`Option ${idx + 1}`}
+												value={opt.text}
+												onChange={(e) => updatePollOption(idx, e.target.value)}
+												maxLength={100}
+												className="flex-1 bg-transparent border border-zinc-700/50 rounded-lg px-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-zinc-500"
+											/>
+											{pollOptions.length > 2 && (
+												<button
+													type="button"
+													onClick={() => removePollOption(idx)}
+													className="text-zinc-500 hover:text-red-400 transition-colors cursor-pointer"
+												>
+													<X className="h-3 w-3" />
+												</button>
+											)}
+										</div>
+									))}
+									{pollOptions.length < 10 && (
+										<button
+											type="button"
+											onClick={addPollOption}
+											className="text-xs font-semibold text-zinc-400 hover:text-white transition-colors cursor-pointer">
+											+ Add option
+										</button>
+									)}
+									<div className="flex items-center gap-2">
+										<label className="text-[10px] font-bold text-zinc-500 uppercase">
+											Poll duration:
+										</label>
+										<select
+											value={pollExpiry}
+											onChange={(e) => setPollExpiry(e.target.value)}
+											className="bg-zinc-900 border border-zinc-700/50 rounded-lg px-2 py-1 text-xs text-zinc-300 outline-none focus:border-zinc-500"
+										>
+											<option value="1h">1 hour</option>
+											<option value="6h">6 hours</option>
+											<option value="12h">12 hours</option>
+											<option value="24h">24 hours</option>
+											<option value="3d">3 days</option>
+											<option value="7d">7 days</option>
+											<option value="never">No limit</option>
+										</select>
+									</div>
+								</div>
+							)}
+
+							{/* Poll validation error */}
+							<ValidationMessage message={fieldErrors.poll} />
+
+							{/* Scheduling */}
+							{showScheduler && (
+								<div className="space-y-2 p-3 rounded-xl border border-zinc-800/40 bg-zinc-900/20">
+									<div className="flex items-center justify-between">
+										<h3 className="text-[11px] font-black tracking-widest text-zinc-400 uppercase flex items-center gap-1.5">
+											<Clock className="h-3.5 w-3.5" /> SCHEDULE
+										</h3>
+										<button
+											type="button"
+											onClick={() => setShowScheduler(false)}
+											className="text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer">
+											<X className="h-3.5 w-3.5" />
+										</button>
+									</div>
+									<input
+										type="datetime-local"
+										value={scheduledAt}
+										onChange={(e) => setScheduledAt(e.target.value)}
+										className="w-full bg-zinc-900 border border-zinc-700/50 rounded-lg px-3 py-1.5 text-xs text-zinc-300 outline-none focus:border-zinc-500"
+									/>
+								</div>
+							)}
+
+							{/* Image previews */}
 							{postImagePreviews.length > 0 && (
 								<div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
 									{postImagePreviews.map((preview, idx) => (
@@ -286,95 +479,192 @@ export default function PostModal({
 								</div>
 							)}
 
-							<div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-zinc-900">
-								<div className="relative">
+							{/* Collaborator invite */}
+							{showCollabInvite && (
+								<div className="space-y-2 p-3 rounded-xl border border-zinc-800/40 bg-zinc-900/20">
+									<div className="flex items-center justify-between">
+										<h3 className="text-[11px] font-black tracking-widest text-zinc-400 uppercase flex items-center gap-1.5">
+											<UserPlus className="h-3.5 w-3.5" /> COLLABORATOR
+										</h3>
+										<button
+											type="button"
+											onClick={() => setShowCollabInvite(false)}
+											className="text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer">
+											<X className="h-3.5 w-3.5" />
+										</button>
+									</div>
 									<input
-										type="file"
-										accept="image/*"
-										multiple
-										disabled={postImageFiles.length >= 5}
-										onChange={(e) => {
-											const files = Array.from(
-												e.target.files || [],
-											);
-											const remaining =
-												5 - postImageFiles.length;
-											const toAdd = files.slice(
-												0,
-												remaining,
-											);
-											// GIFs bypass cropping — add directly with previews
-											const gifFiles = toAdd.filter(
-												(f) => f.type === "image/gif",
-											);
-											const cropFiles = toAdd.filter(
-												(f) => f.type !== "image/gif",
-											);
-											if (gifFiles.length > 0) {
-												setPostImageFiles((prev) => [
-													...prev,
-													...gifFiles,
-												]);
-												const gifPreviews =
-													gifFiles.map((f) =>
-														URL.createObjectURL(f),
-													);
-												setPostImagePreviews((prev) => [
-													...prev,
-													...gifPreviews,
-												]);
-											}
-											const newUrls = cropFiles.map((f) =>
-												URL.createObjectURL(f),
-											);
-											const newNames = cropFiles.map(
-												(f) => f.name,
-											);
-											setCropQueue((prev) => [
-												...prev,
-												...newUrls,
-											]);
-											setCropQueueNames((prev) => [
-												...prev,
-												...newNames,
-											]);
-											if (
-												cropQueue.length === 0 &&
-												!cropModalOpen &&
-												newUrls.length > 0
-											) {
-												setCurrentCropSrc(newUrls[0]);
-												setCropModalOpen(true);
-												setCropQueue((prev) => {
-													const [, ...rest] = prev;
-													return rest;
-												});
-											}
-											e.target.value = "";
-										}}
-										className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
+										type="text"
+										placeholder="Enter collaborator's @username"
+										value={collabUsername}
+										onChange={(e) => setCollabUsername(e.target.value)}
+										className="w-full bg-transparent border border-zinc-700/50 rounded-lg px-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-zinc-500"
 									/>
+									<p className="text-[10px] text-zinc-500">
+										They will receive a notification to collaborate on this post
+									</p>
+								</div>
+							)}
+
+							<div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-zinc-900">
+								<div className="flex items-center gap-2">
+									{/* Image upload */}
+									<div className="relative">
+										<input
+											type="file"
+											accept="image/*"
+											multiple
+											disabled={postImageFiles.length >= 5}
+											onChange={(e) => {
+												const files = Array.from(
+													e.target.files || [],
+												);
+												const remaining =
+													5 - postImageFiles.length;
+												const toAdd = files.slice(
+													0,
+													remaining,
+												);
+												const gifFiles = toAdd.filter(
+													(f) => f.type === "image/gif",
+												);
+												const cropFiles = toAdd.filter(
+													(f) => f.type !== "image/gif",
+												);
+												if (gifFiles.length > 0) {
+													setPostImageFiles((prev) => [
+														...prev,
+														...gifFiles,
+													]);
+													const gifPreviews =
+														gifFiles.map((f) =>
+															URL.createObjectURL(f),
+														);
+													setPostImagePreviews((prev) => [
+														...prev,
+														...gifPreviews,
+													]);
+												}
+												const newUrls = cropFiles.map((f) =>
+													URL.createObjectURL(f),
+												);
+												const newNames = cropFiles.map(
+													(f) => f.name,
+												);
+												setCropQueue((prev) => [
+													...prev,
+													...newUrls,
+												]);
+												setCropQueueNames((prev) => [
+													...prev,
+													...newNames,
+												]);
+												if (
+													cropQueue.length === 0 &&
+													!cropModalOpen &&
+													newUrls.length > 0
+												) {
+													setCurrentCropSrc(newUrls[0]);
+													setCropModalOpen(true);
+													setCropQueue((prev) => {
+														const [, ...rest] = prev;
+														return rest;
+													});
+												}
+												e.target.value = "";
+											}}
+											className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
+										/>
+										<button
+											type="button"
+											className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-650 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 cursor-pointer pointer-events-none">
+											<Image className="h-5 w-5" />
+										</button>
+									</div>
+
+									{/* Poll toggle */}
 									<button
 										type="button"
-										className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-650 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 cursor-pointer pointer-events-none">
-										<Image className="h-5 w-5" />
+										onClick={() => setShowPollCreator(!showPollCreator)}
+										className={`flex h-10 w-10 items-center justify-center rounded-full transition-all cursor-pointer ${
+											showPollCreator
+												? "bg-violet-500/20 text-violet-400"
+												: "text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+										}`}
+										title="Add poll"
+									>
+										<ListTodo className="h-4.5 w-4.5" />
 									</button>
+
+									{/* Schedule toggle */}
+									<button
+										type="button"
+										onClick={() => setShowScheduler(!showScheduler)}
+										className={`flex h-10 w-10 items-center justify-center rounded-full transition-all cursor-pointer ${
+											showScheduler
+												? "bg-sky-500/20 text-sky-400"
+												: "text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+										}`}
+										title="Schedule post"
+									>
+										<Calendar className="h-4.5 w-4.5" />
+									</button>
+
+									{/* Collab toggle */}
+									<button
+										type="button"
+										onClick={() => setShowCollabInvite(!showCollabInvite)}
+										className={`flex h-10 w-10 items-center justify-center rounded-full transition-all cursor-pointer ${
+											showCollabInvite
+												? "bg-green-500/20 text-green-400"
+												: "text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+										}`}
+										title="Invite collaborator"
+									>
+										<UserPlus className="h-4.5 w-4.5" />
+									</button>
+
 									{postImageFiles.length > 0 && (
 										<span className="text-[9px] text-zinc-500 ml-1">
 											{postImageFiles.length}/5
 										</span>
 									)}
 								</div>
-								<button
-									type="submit"
-									disabled={submittingPost}
-									className="rounded-full bg-white text-black hover:bg-zinc-200 border border-white/20 px-6 py-2 text-[12px] md:text-sm font-bold disabled:opacity-50 transition-all font-sans cursor-pointer">
-									{submittingPost ? (
-										<Loader2 className="h-4 w-4 animate-spin" />
-									) : (
-										"Post"
-									)}
-								</button>
+
+								<div className="flex items-center gap-2">
+									{/* Save as draft */}
+									<button
+										type="button"
+										onClick={() => {
+											setIsDraft(!isDraft);
+											if (!isDraft) {
+												setShowScheduler(false);
+											}
+										}}
+										className={`text-[11px] font-bold px-3 py-1.5 rounded-full transition-all cursor-pointer ${
+											isDraft
+												? "bg-amber-500/20 text-amber-400"
+												: "text-zinc-500 hover:text-zinc-300"
+										}`}
+									>
+										Draft
+									</button>
+
+									<button
+										type="submit"
+										disabled={submittingPost}
+										className="rounded-full bg-white text-black hover:bg-zinc-200 border border-white/20 px-6 py-2 text-[12px] md:text-sm font-bold disabled:opacity-50 transition-all font-sans cursor-pointer">
+										{submittingPost ? (
+											<Loader2 className="h-4 w-4 animate-spin" />
+										) : isDraft ? (
+											"Save Draft"
+										) : showScheduler ? (
+											"Schedule"
+										) : (
+											"Post"
+										)}
+									</button>
+								</div>
 							</div>
 						</form>
 					</div>

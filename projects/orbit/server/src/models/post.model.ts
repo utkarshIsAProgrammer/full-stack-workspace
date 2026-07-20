@@ -100,6 +100,85 @@ const postSchema = new mongoose.Schema(
       default: 0,
     },
 
+    // mentions (@username references)
+    mentions: {
+      type: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      }],
+      default: [],
+    },
+
+    // Poll
+    poll: {
+      type: {
+        options: [{
+          text: { type: String, required: true, maxlength: 100 },
+          votes: [{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+          }],
+        }],
+        expiresAt: { type: Date, default: null },
+        totalVotes: { type: Number, default: 0 },
+      },
+      default: null,
+    },
+
+    // Quote repost
+    isQuoteRepost: {
+      type: Boolean,
+      default: false,
+    },
+    quoteContent: {
+      type: String,
+      default: "",
+      maxlength: [1000, "Quote content must be less than 1000 characters!"],
+    },
+
+    // Edit tracking
+    isEdited: {
+      type: Boolean,
+      default: false,
+    },
+    editHistory: {
+      type: [{
+        title: { type: String, default: "" },
+        content: { type: String, default: "" },
+        editedAt: { type: Date, default: Date.now },
+      }],
+      default: [],
+    },
+
+    // Collab post
+    collaborator: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    collabAccepted: {
+      type: Boolean,
+      default: false,
+    },
+
+    // Post status (draft / scheduled / published)
+    status: {
+      type: String,
+      enum: ["draft", "scheduled", "published", "archived"],
+      default: "published",
+    },
+    scheduledAt: {
+      type: Date,
+      default: null,
+    },
+
+    // Post visibility: public | closeFriends
+    visibility: {
+      type: String,
+      enum: ["public", "closeFriends"],
+      default: "public",
+    },
+
     // post author
     author: {
       type: mongoose.Schema.Types.ObjectId,
@@ -114,6 +193,7 @@ const postSchema = new mongoose.Schema(
 
 // combined indexes for optimal query performance
 postSchema.index({ title: "text", content: "text" });
+postSchema.index({ visibility: 1 });
 postSchema.index({ author: 1, createdAt: -1 });
 postSchema.index({ hashtags: 1, createdAt: -1 });
 postSchema.index({ createdAt: -1 });
@@ -124,6 +204,8 @@ postSchema.index({ likesCount: -1 });
 postSchema.index({ savesCount: -1 });
 postSchema.index({ repostsCount: -1 });
 postSchema.index({ viewsCount: -1 });
+postSchema.index({ status: 1, scheduledAt: 1 });
+postSchema.index({ collaborator: 1, collabAccepted: 1 });
 postSchema.index({ author: 1, createdAt: -1, _id: -1 });
 
 // slug generation

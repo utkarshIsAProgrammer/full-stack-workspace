@@ -86,6 +86,11 @@ const messageSchema = new mongoose.Schema(
       ref: "Message",
       default: null,
     },
+    forwardedFrom: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Message",
+      default: null,
+    },
     isDeleted: {
       type: Boolean,
       default: false,
@@ -102,6 +107,8 @@ const messageSchema = new mongoose.Schema(
 messageSchema.index({ replyTo: 1 });
 
 // Indexes for optimal query performance
+messageSchema.index({ conversation: 1, _id: -1 });
+messageSchema.index({ conversation: 1, recipient: 1, seen: 1 });
 messageSchema.index({ conversation: 1, createdAt: -1 });
 messageSchema.index({ sender: 1, createdAt: -1 });
 messageSchema.index({ recipient: 1, createdAt: -1 });

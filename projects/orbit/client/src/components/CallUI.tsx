@@ -268,7 +268,8 @@ export default function CallUI({
 			wireStream(remoteStreamRef.current);
 		}
 
-		// Also check pc.getReceivers() for already-negotiated tracks
+		// Check pc.getReceivers() for already-negotiated tracks
+		// (ontrack is managed by App.tsx which stores the stream in remoteStreamRef)
 		const pc = peerConnectionRef.current;
 		if (pc) {
 			pc.getReceivers().forEach((receiver) => {
@@ -285,34 +286,17 @@ export default function CallUI({
 					remoteVideoRef.current.srcObject = videoStream;
 				}
 			});
-
-			// Set up ontrack for future tracks (named function for proper cleanup)
-			const handleOntrack = (e: RTCTrackEvent) => {
-				logger.info("CallUI: ontrack fired", { kind: e.track.kind });
-				const stream = e.streams[0];
-				if (stream) {
-					wireStream(stream);
-				} else if (e.track.kind === "audio" && remoteAudioRef.current) {
-					const audioStream = new MediaStream([e.track]);
-					remoteAudioRef.current.srcObject = audioStream;
-					remoteAudioRef.current?.play()?.catch(() => {});
-				} else if (e.track.kind === "video" && remoteVideoRef.current) {
-					const videoStream = new MediaStream([e.track]);
-					remoteVideoRef.current.srcObject = videoStream;
-				}
-			};
-			pc.ontrack = handleOntrack;
 		}
 
 		// Poll remoteStreamRef for tracks that arrive late (fallback)
-		let retries = 0;
-		const maxRetries = 20;
+		// Unbounded: keeps polling while the call is active, stops only
+		// when tracks arrive or the call ends.
 		const pollInterval = setInterval(() => {
-			if (retries >= maxRetries) {
+			// Stop polling when call is no longer active
+			if (callState.status !== "active") {
 				clearInterval(pollInterval);
 				return;
 			}
-			retries++;
 			const stream = remoteStreamRef.current;
 			if (stream) {
 				wireStream(stream);
@@ -328,10 +312,6 @@ export default function CallUI({
 
 		return () => {
 			clearInterval(pollInterval);
-			// Clean up ontrack only if it's still our handler
-			if (pc && pc.ontrack === pc.ontrack) {
-				pc.ontrack = null;
-			}
 		};
 	}, [callState.status, callState.type]);
 

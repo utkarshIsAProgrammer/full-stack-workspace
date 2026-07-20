@@ -26,10 +26,38 @@ import { sanitizePlainText } from "../configs/sanitize";
 import { emitPostCreated, emitPostDeleted, emitPostUpdated, emitPostView, emitPostPin, emitPostUnpin, emitPostShare } from "../configs/socket";
 import { logger } from "../utilities/logger";
 import { addUserStatusToPosts } from "../utilities/postStatus";
+import { logInteraction } from "../services/affinityService";
+import { invalidateFeedCache } from "../services/feedService";
+import { awardXP } from "../services/xpService";
+import { progressMission } from "../services/dailyMissionService";
 
 type Params = {
   postId: string;
 };
+
+/**
+ * Check whether the current user is allowed to view a closeFriends post.
+ * The author can always see it. Other users must be on the author's closeFriends list.
+ * Unauthenticated requests are always denied.
+ */
+async function canViewCloseFriendsPost(
+  post: any,
+  currentUserId: string | undefined,
+): Promise<boolean> {
+  if (post.visibility !== "closeFriends") return true;
+  if (!currentUserId) return false;
+
+  // If the viewer is the author, they can always view
+  const authorId = post.author?._id?.toString() || post.author?.toString();
+  if (authorId === currentUserId) return true;
+
+  const author = await User.findById(authorId).select("closeFriends").lean();
+  if (!author) return false;
+
+  return author.closeFriends?.some(
+    (id: any) => id.toString() === currentUserId,
+  );
+}
 
 // get single post by id
 export const getPost = async (req: Request<Params>, res: Response) => {
@@ -69,6 +97,11 @@ export const getPost = async (req: Request<Params>, res: Response) => {
       throw new NotFoundError("Post not found!");
     }
 
+    // Visibility check: hide closeFriends posts from non-close-friends
+    if (!(await canViewCloseFriendsPost(post, currentUserId))) {
+      throw new NotFoundError("Post not found!");
+    }
+
     // Add user status
     const postWithStatus = await addUserStatusToPosts([post], currentUserId);
     post = postWithStatus[0];
@@ -92,7 +125,7 @@ export const getPost = async (req: Request<Params>, res: Response) => {
   }
 };
 
-// get all posts
+// get all posts (supports optional sort parameter: likesCount, createdAt, viewsCount)
 export const getAllPosts = async (req: Request, res: Response) => {
   const currentUserId = req.user?._id?.toString();
   try {
@@ -100,7 +133,8 @@ export const getAllPosts = async (req: Request, res: Response) => {
     const limit = Number(req.query.limit) || undefined;
     const cursor = req.query.cursor as string;
     const authorId = req.query.author as string;
-    const cacheKey = `posts:${authorId || "all"}:${cursor || "first"}:${limit || "all"}:${currentUserId || "anon"}`;
+    const sortField = req.query.sort as string;
+    const cacheKey = `posts:${authorId || "all"}:${cursor || "first"}:${limit || "all"}:${currentUserId || "anon"}:sort${sortField || "_id"}`;
 
     // try cache first
     try {
@@ -134,6 +168,25 @@ export const getAllPosts = async (req: Request, res: Response) => {
       query.author = authorId;
     }
 
+    // If viewing user's own profile, show all their posts
+    // Otherwise, only show public posts (hide closeFriends-only from non-close-friends)
+    if (currentUserId && authorId && currentUserId !== authorId) {
+      // Check if viewer is a close friend of the author
+      const author = await User.findById(authorId).select("closeFriends").lean();
+      const isCloseFriend = author?.closeFriends?.some(
+        (id: any) => id.toString() === currentUserId
+      );
+      if (!isCloseFriend) {
+        query.visibility = "public";
+      }
+    } else if (!authorId) {
+      // Global feed: only show public posts — closeFriends posts are hidden
+      // unless the viewer is in the author's close friends list (handled below)
+      // For the global feed, we only show public posts to keep queries simple
+      query.visibility = "public";
+    }
+    // Own profile: show everything (no filter needed)
+
     // cursor pagination
     if (cursor) {
       query._id = {
@@ -144,9 +197,19 @@ export const getAllPosts = async (req: Request, res: Response) => {
     // Always cap at 20 max per page
     const actualLimit = Math.min(limit ?? 10, 20);
 
+    // Build sort object (default to _id:-1, support likesCount, viewsCount, createdAt)
+    const sortOption: Record<string, -1 | 1> = { _id: -1 };
+    if (sortField === "likesCount") {
+      sortOption.likesCount = -1;
+    } else if (sortField === "viewsCount") {
+      sortOption.viewsCount = -1;
+    } else if (sortField === "createdAt") {
+      sortOption.createdAt = -1;
+    }
+
     // fetch posts
     let posts = await Post.find(query)
-      .sort({ _id: -1 })
+      .sort(sortOption)
       .populate("author", "username email fullName profilePic")
       .limit(actualLimit + 1)
       .lean();
@@ -266,6 +329,7 @@ export const createPost = async (req: Request, res: Response) => {
       content: sanitizedContent,
       hashtags,
       author,
+      visibility: result.data.visibility || "public",
 
       image: images.length > 0 ? { url: images[0]!.url, public_id: images[0]!.public_id } : null,
       images: images.length > 0 ? images as any : undefined,
@@ -290,6 +354,8 @@ export const createPost = async (req: Request, res: Response) => {
     // invalidate feed cache
     await clearFeedCache();
     await clearUserPostsCache(author.toString());
+    // Invalidate personal feed cache so the new post appears immediately
+    await invalidateFeedCache(author.toString());
 
     // populate post with author and user status
     let populatedPost = await Post.findById(post._id)
@@ -301,6 +367,10 @@ export const createPost = async (req: Request, res: Response) => {
       populatedPost = postsWithStatus[0];
       emitPostCreated(populatedPost);
     }
+
+    // Award XP and progress mission (fire-and-forget)
+    awardXP(author.toString(), "CREATE_POST").catch(() => {});
+    progressMission(author.toString(), "post").catch(() => {});
 
     return res.status(201).json({
       success: true,
@@ -370,6 +440,14 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
     if (!hasText && !hasImage && !hasVideo) {
       throw new BadRequestError("At least one field is required!");
     }
+
+    // Save edit history before updating
+    post.editHistory.push({
+      title: post.title || "",
+      content: post.content || "",
+      editedAt: new Date(),
+    });
+    post.isEdited = true;
 
     // update title
     if (parsed.data.title) {
@@ -605,6 +683,18 @@ export const sharePost = async (req: Request<Params>, res: Response) => {
       throw new NotFoundError("Post not found!");
     }
 
+    // Log interaction for feed ranking
+    const fullPost = await Post.findById(postId).select("author hashtags").lean();
+    if (fullPost && req.user?._id?.toString() !== fullPost.author.toString()) {
+      logInteraction(
+        req.user?._id?.toString() || "",
+        fullPost.author.toString(),
+        postId,
+        "share",
+        fullPost.hashtags || []
+      );
+    }
+
     // invalidate cache
     await deleteCache(`post:${postId}`);
 
@@ -655,6 +745,12 @@ export const getPostBySlug = async (req: Request<{ slug: string }>, res: Respons
       throw new NotFoundError("Post not found!");
     }
 
+    // Visibility check: hide closeFriends posts from non-close-friends
+    const currentUserId = req.user?._id?.toString();
+    if (!(await canViewCloseFriendsPost(post, currentUserId))) {
+      throw new NotFoundError("Post not found!");
+    }
+
     // response data
     const responseData = {
       success: true,
@@ -690,6 +786,10 @@ export const getPostsByHashtag = async (
     const cursor = req.query.cursor as string;
 
     const query: any = { hashtags: lowerHashtag };
+
+    // Only show public posts in hashtag search (closeFriends posts aren't discoverable by tag)
+    query.visibility = "public";
+
     if (cursor) {
       query._id = { $lt: cursor };
     }
@@ -724,6 +824,57 @@ export const getPostsByHashtag = async (
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
     logger.error(`Error in getPostsByHashtag controller!`, { error: err.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+// ─── Trending hashtags ────────────────────────────────────────────
+// Aggregates most-used hashtags from recent posts
+export const getTrendingHashtags = async (req: Request, res: Response) => {
+  try {
+    const cacheKey = "trending:hashtags";
+    try {
+      const cached = await getCache<{ hashtags: string[] }>(cacheKey);
+      if (cached) {
+        return res.status(200).json({
+          success: true,
+          hashtags: cached.hashtags,
+        });
+      }
+    } catch {
+      // cache miss
+    }
+
+    // Aggregate hashtags from the last 7 days, sorted by frequency
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const posts = await Post.find(
+      { hashtags: { $exists: true, $not: { $size: 0 } }, createdAt: { $gte: sevenDaysAgo } },
+      { hashtags: 1 }
+    )
+      .lean();
+
+    // Count hashtag frequencies
+    const freq: Record<string, number> = {};
+    for (const post of posts) {
+      for (const tag of post.hashtags || []) {
+        freq[tag] = (freq[tag] || 0) + 1;
+      }
+    }
+
+    // Sort by frequency and return top 10
+    const sorted = Object.entries(freq)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 10)
+      .map(([tag]) => tag);
+
+    await setCache(cacheKey, { hashtags: sorted }, 300); // 5 min cache
+
+    return res.status(200).json({
+      success: true,
+      hashtags: sorted,
+    });
+  } catch (err: any) {
+    logger.error(`Error in getTrendingHashtags!`, { error: err.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -850,6 +1001,289 @@ export const pinPost = async (req: Request<Params>, res: Response) => {
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
     logger.error(`Error in pinPost controller!`, { error: err.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+// ─── Poll voting ───────────────────────────────────────────────────
+export const votePoll = async (req: Request<Params>, res: Response) => {
+  const { postId } = req.params;
+  const currentUserId = req.user?._id;
+  const { optionIndex } = req.body;
+
+  try {
+    if (!currentUserId) throw new UnauthorizedError("Unauthorized!");
+    if (!mongoose.Types.ObjectId.isValid(postId)) throw new BadRequestError("Invalid post ID!");
+    if (typeof optionIndex !== "number" || optionIndex < 0) throw new BadRequestError("Valid optionIndex is required!");
+
+    const post = await Post.findById(postId);
+    if (!post) throw new NotFoundError("Post not found!");
+    if (!post.poll) throw new BadRequestError("This post does not have a poll!");
+
+    // Check if poll has expired
+    if (post.poll.expiresAt && new Date(post.poll.expiresAt) < new Date()) {
+      throw new BadRequestError("Poll has already expired!");
+    }
+
+    if (optionIndex >= post.poll.options.length) {
+      throw new BadRequestError("Invalid option index!");
+    }
+
+    const userIdStr = currentUserId.toString();
+
+    // Check if user already voted on this poll
+    let hadPreviousVote = false;
+    for (const opt of post.poll.options) {
+      const voteIdx = opt.votes.findIndex((v) => v.toString() === userIdStr);
+      if (voteIdx > -1) {
+        hadPreviousVote = true;
+        break;
+      }
+    }
+
+    // Atomic update: remove previous vote if present, push new vote, and adjust totalVotes
+    await Post.updateOne(
+      { _id: postId },
+      { $pull: { "poll.options.$[].votes": currentUserId } }
+    );
+
+    const updatedPost = await Post.findByIdAndUpdate(
+      postId,
+      {
+        $push: { [`poll.options.${optionIndex}.votes`]: currentUserId },
+        $inc: { "poll.totalVotes": hadPreviousVote ? 0 : 1 },
+      },
+      { new: true }
+    );
+
+    const finalPost = updatedPost || post;
+
+    // Notify post author if someone voted (skip own poll votes)
+    if (finalPost.author.toString() !== userIdStr && !hadPreviousVote) {
+      await createNotification({
+        recipient: finalPost.author.toString(),
+        sender: userIdStr,
+        type: "poll_vote",
+        post: postId,
+      });
+    }
+
+    await deleteCache(`post:${postId}`);
+
+    // Return the updated poll state
+    return res.status(200).json({
+      success: true,
+      message: "Vote recorded!",
+      poll: finalPost.poll,
+    });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error(`Error in votePoll controller!`, { error: err.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+// ─── Collab invitations ────────────────────────────────────────────
+export const inviteCollab = async (req: Request<Params>, res: Response) => {
+  const { postId } = req.params;
+  const currentUserId = req.user?._id;
+  const { collaboratorId } = req.body;
+
+  try {
+    if (!currentUserId) throw new UnauthorizedError("Unauthorized!");
+    if (!mongoose.Types.ObjectId.isValid(postId)) throw new BadRequestError("Invalid post ID!");
+    if (!collaboratorId || !mongoose.Types.ObjectId.isValid(collaboratorId)) {
+      throw new BadRequestError("Valid collaborator ID is required!");
+    }
+    if (collaboratorId.toString() === currentUserId.toString()) {
+      throw new BadRequestError("You cannot invite yourself as a collaborator!");
+    }
+
+    const post = await Post.findById(postId);
+    if (!post) throw new NotFoundError("Post not found!");
+    if (post.author.toString() !== currentUserId.toString()) {
+      throw new ForbiddenError("Only the post author can invite collaborators!");
+    }
+
+    post.collaborator = collaboratorId;
+    post.collabAccepted = false;
+    await post.save();
+
+    // Notify the collaborator
+    await createNotification({
+      recipient: collaboratorId,
+      sender: currentUserId.toString(),
+      type: "collab_invite",
+      post: postId,
+    });
+
+    await deleteCache(`post:${postId}`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Collaborator invited!",
+      post: await Post.findById(postId).populate("author", "username fullName profilePic").populate("collaborator", "username fullName profilePic").lean(),
+    });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error(`Error in inviteCollab controller!`, { error: err.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+export const acceptCollab = async (req: Request<Params>, res: Response) => {
+  const { postId } = req.params;
+  const currentUserId = req.user?._id;
+
+  try {
+    if (!currentUserId) throw new UnauthorizedError("Unauthorized!");
+    if (!mongoose.Types.ObjectId.isValid(postId)) throw new BadRequestError("Invalid post ID!");
+
+    const post = await Post.findById(postId);
+    if (!post) throw new NotFoundError("Post not found!");
+    if (!post.collaborator || post.collaborator.toString() !== currentUserId.toString()) {
+      throw new ForbiddenError("You haven't been invited to collaborate on this post!");
+    }
+    if (post.collabAccepted) {
+      return res.status(200).json({ success: true, message: "Already accepted!", post });
+    }
+
+    post.collabAccepted = true;
+    await post.save();
+
+    await deleteCache(`post:${postId}`);
+    await clearFeedCache();
+
+    const populated = await Post.findById(post._id).populate("author", "username fullName profilePic").populate("collaborator", "username fullName profilePic").lean();
+
+    return res.status(200).json({
+      success: true,
+      message: "Collaboration accepted!",
+      post: populated,
+    });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error(`Error in acceptCollab controller!`, { error: err.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+// ─── Post scheduling / draft publishing ────────────────────────────
+export const publishDraft = async (req: Request<Params>, res: Response) => {
+  const { postId } = req.params;
+  const currentUserId = req.user?._id;
+
+  try {
+    if (!currentUserId) throw new UnauthorizedError("Unauthorized!");
+    if (!mongoose.Types.ObjectId.isValid(postId)) throw new BadRequestError("Invalid post ID!");
+
+    const post = await Post.findById(postId);
+    if (!post) throw new NotFoundError("Post not found!");
+    if (post.author.toString() !== currentUserId.toString()) {
+      throw new ForbiddenError("Only the author can publish this post!");
+    }
+    if (post.status === "published") {
+      return res.status(200).json({ success: true, message: "Post is already published!" });
+    }
+
+    post.status = "published";
+    post.scheduledAt = null;
+    await post.save();
+
+    await deleteCache(`post:${postId}`);
+    await clearFeedCache();
+
+    const populated = await Post.findById(post._id).populate("author", "username fullName profilePic").lean();
+
+    if (populated) {
+      const postsWithStatus = await addUserStatusToPosts([populated], currentUserId.toString());
+      emitPostCreated(postsWithStatus[0]);
+    }
+
+    return res.status(200).json({ success: true, message: "Post published!", post: populated });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error(`Error in publishDraft controller!`, { error: err.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+// ─── Quote Repost (create a repost with commentary) ────────────────────
+// Creates a new Post with `isQuoteRepost: true` and `quoteContent`,
+// then creates a Repost document linking back to the original post.
+export const quoteRepost = async (req: Request<Params>, res: Response) => {
+  const { postId } = req.params;
+  const currentUserId = req.user?._id;
+  const { quoteContent } = req.body;
+
+  try {
+    if (!currentUserId) throw new UnauthorizedError("Unauthorized!");
+    if (!mongoose.Types.ObjectId.isValid(postId)) throw new BadRequestError("Invalid post ID!");
+    if (!quoteContent || typeof quoteContent !== "string" || !quoteContent.trim()) {
+      throw new BadRequestError("Quote content is required!");
+    }
+
+    // Verify original post exists
+    const originalPost = await Post.findById(postId).select("_id author").lean();
+    if (!originalPost) throw new NotFoundError("Original post not found!");
+
+    // Create a new post as the quote repost
+    const sanitizedContent = sanitizePlainText(quoteContent.trim()).slice(0, 1000);
+
+    const newPost = new Post({
+      content: sanitizedContent,
+      author: currentUserId,
+      isQuoteRepost: true,
+      quoteContent: sanitizedContent,
+      status: "published",
+      hashtags: [],
+    });
+    await newPost.save();
+
+    // Also create a Repost document to track the repost
+    await Repost.create({ user: currentUserId, post: postId });
+
+    // Increment repost count on the original post
+    await Post.findByIdAndUpdate(postId, { $inc: { repostsCount: 1 } });
+
+    // Notify the original post author (if not reposting own post)
+    if (originalPost.author.toString() !== currentUserId.toString()) {
+      await createNotification({
+        recipient: originalPost.author.toString(),
+        sender: currentUserId.toString(),
+        type: "repost",
+        post: postId,
+      });
+    }
+
+    // Log interaction for feed ranking
+    const fullOriginal = await Post.findById(postId).select("author hashtags").lean();
+    if (fullOriginal && currentUserId.toString() !== fullOriginal.author.toString()) {
+      logInteraction(
+        currentUserId.toString(),
+        fullOriginal.author.toString(),
+        postId,
+        "share",
+        fullOriginal.hashtags || []
+      );
+    }
+
+    await clearFeedCache();
+    await clearUserPostsCache(currentUserId.toString());
+
+    // Return the newly created quote-repost post
+    const populated = await Post.findById(newPost._id)
+      .populate("author", "username email fullName profilePic")
+      .lean();
+
+    return res.status(201).json({
+      success: true,
+      message: "Quote repost created!",
+      post: populated,
+    });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error(`Error in quoteRepost controller!`, { error: err.message });
     throw new AppError("Internal server error!");
   }
 };

@@ -171,9 +171,25 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
     }
   };
 
+  // Separate highlighted glances from regular ones
+  const highlightedGlances = glances.filter((g) => g.highlighted);
+  const regularGlances = glances.filter((g) => !g.highlighted);
+
   // Group glances by author
   const authorsMap = new Map<string, { user: typeof glances[0]["author"]; glimpses: Glance[] }>();
   glances.forEach((g) => {
+    const authorId = typeof g.author === "object" && g.author
+      ? (g.author._id || (g.author as any).id)
+      : g.author;
+    if (!authorId) return;
+    const authorStr = authorId.toString();
+    if (!authorsMap.has(authorStr)) {
+      authorsMap.set(authorStr, { user: g.author, glimpses: [] });
+    }
+    authorsMap.get(authorStr)!.glimpses.push(g);
+  });
+  // For author grouping, use only non-highlighted glances (highlights shown separately)
+  regularGlances.forEach((g) => {
     const authorId = typeof g.author === "object" && g.author
       ? (g.author._id || (g.author as any).id)
       : g.author;
@@ -188,6 +204,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
 
   // Only show if there are glances or user can create one
   const hasGlances = glances.length > 0;
+  const hasHighlights = highlightedGlances.length > 0;
 
   if (!hasGlances && loading) {
     return (
@@ -242,6 +259,35 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
             <>
               {/* Divider line */}
               {user && (
+                <div className="h-12 w-px bg-zinc-800 shrink-0" />
+              )}
+
+                  {/* Story Highlights Header */}
+              {hasHighlights && (
+                <div className="flex flex-col items-center gap-1 shrink-0 group cursor-pointer">
+                  <div
+                    onClick={() => {
+                      const firstHighlight = highlightedGlances[0];
+                      if (!firstHighlight) return;
+                      const idx = glances.findIndex(
+                        (g) => g._id === firstHighlight._id
+                      );
+                      if (idx >= 0) handleOpenViewer(idx);
+                    }}
+                    className="relative h-16 w-16 rounded-full p-[2.5px] transition-all bg-gradient-to-br from-amber-400 via-yellow-300 to-orange-400 hover:scale-105 active:scale-95"
+                  >
+                    <div className="relative h-full w-full rounded-full border-2 border-zinc-950 bg-zinc-900 flex items-center justify-center">
+                      <span className="text-lg">⭐</span>
+                    </div>
+                  </div>
+                  <span className="text-[9px] font-bold text-amber-400 truncate max-w-16 text-center">
+                    Highlights
+                  </span>
+                </div>
+              )}
+
+              {/* Divider line */}
+              {(hasHighlights || (user && hasGlances)) && (
                 <div className="h-12 w-px bg-zinc-800 shrink-0" />
               )}
 

@@ -12,15 +12,30 @@ import {
   pinPost,
   unpinPost,
   getPinnedPosts,
+  sendFollowRequest,
+  approveFollowRequest,
+  declineFollowRequest,
 } from "../controllers/user.controllers";
+import {
+  addCloseFriend,
+  removeCloseFriend,
+  getCloseFriends,
+  checkCloseFriend,
+} from "../controllers/closeFriends.controllers";
 import upload from "../middlewares/upload.middleware";
 import { protect, optionalAuth } from "../middlewares/auth.middleware";
 import { protectViews } from "../middlewares/view.middleware";
 import { interactionLimiter, authLimiter } from "../middlewares/ratelimit.middleware";
 import { updatePassword } from "../controllers/password.controllers";
-import { cacheMiddleware } from "../middleware/cache.middleware";
+import { cacheMiddleware } from "../middlewares/cache.middleware";
 
 const router = express.Router();
+
+// Close friends endpoints (must be before /:userId routes to avoid matching "close-friends" as userId)
+router.get("/close-friends", protect, getCloseFriends);
+router.get("/close-friends/:userId/check", protect, checkCloseFriend);
+router.post("/close-friends/:userId", protect, interactionLimiter, addCloseFriend);
+router.delete("/close-friends/:userId", protect, interactionLimiter, removeCloseFriend);
 
 // Cache GET endpoints for better performance
 router.get("/", optionalAuth, cacheMiddleware({ ttl: 60 }), getAll);
@@ -33,6 +48,11 @@ router.delete("/delete-account", protect, deleteAccount);
 router.post("/:userId/share", protect, interactionLimiter, shareProfile);
 router.post("/:userId/pin", protect, pinPost);
 router.post("/:userId/unpin", protect, unpinPost);
+
+// Private account follow requests
+router.post("/:userId/follow-request", protect, interactionLimiter, sendFollowRequest);
+router.post("/:userId/approve-request", protect, interactionLimiter, approveFollowRequest);
+router.post("/:userId/decline-request", protect, interactionLimiter, declineFollowRequest);
 
 router.post("/:userId/view", protectViews, interactionLimiter, viewsCount);
 router.put("/update-password", protect, authLimiter, updatePassword); // Client alias
@@ -47,3 +67,4 @@ router.put(
 );
 
 export { router as userRoutes };
+

@@ -3,41 +3,42 @@ import { motion } from "motion/react";
 
 interface SkeletonProps {
   className?: string;
-  variant?: "card" | "avatar" | "text" | "circle" | "banner" | "profile-row" | "message-sent" | "message-received";
+  variant?: "card" | "avatar" | "text" | "circle" | "banner" | "profile-row" | "message-sent" | "message-received" | "post" | "community" | "chat-list" | "notification" | "grid";
   width?: string;
   height?: string;
   count?: number;
 }
 
 // Inject shimmer keyframes once globally (same style as App.tsx suggestions skeleton)
+// Checks for App.tsx's shimmer-skeleton-style first to avoid duplicate keyframes
 function useShimmerStyle() {
   useEffect(() => {
-    const styleId = "skeleton-shimmer-style";
-    if (!document.getElementById(styleId)) {
-      const style = document.createElement("style");
-      style.id = styleId;
-      style.textContent = `
-        @keyframes shimmer {
-          0% { background-position: 200% 0; opacity: 0.6; }
-          50% { opacity: 1; }
-          100% { background-position: -200% 0; opacity: 0.6; }
-        }
-        .shimmer-bg {
-          background: linear-gradient(
-            90deg,
-            rgba(39, 39, 42, 0.6) 0%,
-            rgba(63, 63, 70, 0.6) 40%,
-            rgba(82, 82, 91, 0.3) 50%,
-            rgba(63, 63, 70, 0.6) 60%,
-            rgba(39, 39, 42, 0.6) 100%
-          );
-          background-size: 200% 100%;
-          animation: shimmer 1.5s ease-in-out infinite;
-          animation-delay: var(--shimmer-delay, 0s);
-        }
-      `;
-      document.head.appendChild(style);
+    if (document.getElementById("shimmer-skeleton-style") || document.getElementById("skeleton-shimmer-style")) {
+      return;
     }
+    const style = document.createElement("style");
+    style.id = "skeleton-shimmer-style";
+    style.textContent = `
+      @keyframes shimmer {
+        0% { background-position: 200% 0; opacity: 0.6; }
+        50% { opacity: 1; }
+        100% { background-position: -200% 0; opacity: 0.6; }
+      }
+      .shimmer-bg {
+        background: linear-gradient(
+          90deg,
+          rgba(39, 39, 42, 0.6) 0%,
+          rgba(63, 63, 70, 0.6) 40%,
+          rgba(82, 82, 91, 0.3) 50%,
+          rgba(63, 63, 70, 0.6) 60%,
+          rgba(39, 39, 42, 0.6) 100%
+        );
+        background-size: 200% 100%;
+        animation: shimmer 1.5s ease-in-out infinite;
+        animation-delay: var(--shimmer-delay, 0s);
+      }
+    `;
+    document.head.appendChild(style);
   }, []);
 }
 
@@ -55,6 +56,11 @@ function SkeletonInner({ className = "", variant = "text", width, height }: Skel
     "profile-row": "flex items-center gap-3 p-3",
     "message-sent": "ml-auto max-w-[75%]",
     "message-received": "mr-auto max-w-[75%]",
+    "post": "p-4 space-y-3",
+    "community": "p-4 space-y-2",
+    "chat-list": "flex items-center gap-3 p-3",
+    "notification": "p-3 space-y-1",
+    "grid": "p-4",
   };
 
   const sizeStyles: React.CSSProperties = {};
@@ -121,6 +127,62 @@ function SkeletonInner({ className = "", variant = "text", width, height }: Skel
               <div className="h-2 w-full rounded shimmer-bg" />
               <div className="h-2 w-1/2 rounded shimmer-bg mt-1.5" />
             </div>
+          </div>
+        )}
+        {variant === "post" && (
+          <div className="space-y-2.5">
+            <div className="flex items-center gap-2" style={{ '--shimmer-delay': '0s' } as React.CSSProperties}>
+              <div className="h-8 w-8 rounded-full shimmer-bg shrink-0" />
+              <div className="space-y-1">
+                <div className="h-2.5 w-20 rounded shimmer-bg" />
+                <div className="h-2 w-14 rounded shimmer-bg" />
+              </div>
+            </div>
+            <div className="h-3 w-3/4 rounded shimmer-bg" style={{ '--shimmer-delay': '0.08s' } as React.CSSProperties} />
+            <div className="space-y-1.5" style={{ '--shimmer-delay': '0.15s' } as React.CSSProperties}>
+              <div className="h-2.5 w-full rounded shimmer-bg" />
+              <div className="h-2.5 w-2/3 rounded shimmer-bg" />
+              <div className="h-2.5 w-4/5 rounded shimmer-bg" />
+            </div>
+          </div>
+        )}
+        {variant === "community" && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-3" style={{ '--shimmer-delay': '0s' } as React.CSSProperties}>
+              <div className="h-10 w-10 rounded-xl shimmer-bg shrink-0" />
+              <div className="space-y-1 flex-1">
+                <div className="h-3 w-1/2 rounded shimmer-bg" />
+                <div className="h-2 w-1/3 rounded shimmer-bg" />
+              </div>
+            </div>
+          </div>
+        )}
+        {variant === "chat-list" && (
+          <div className="flex items-center gap-3" style={{ '--shimmer-delay': '0s' } as React.CSSProperties}>
+            <div className="h-10 w-10 rounded-full shimmer-bg shrink-0" />
+            <div className="space-y-1 flex-1">
+              <div className="h-2.5 w-1/4 rounded shimmer-bg" />
+              <div className="h-2 w-2/3 rounded shimmer-bg" />
+            </div>
+          </div>
+        )}
+        {variant === "notification" && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2.5" style={{ '--shimmer-delay': '0s' } as React.CSSProperties}>
+              <div className="h-8 w-8 rounded-full shimmer-bg shrink-0" />
+              <div className="space-y-1 flex-1">
+                <div className="h-2 w-3/4 rounded shimmer-bg" />
+                <div className="h-2 w-1/3 rounded shimmer-bg" />
+              </div>
+            </div>
+          </div>
+        )}
+        {variant === "grid" && (
+          <div className="grid grid-cols-2 gap-2" style={{ '--shimmer-delay': '0s' } as React.CSSProperties}>
+            <div className="aspect-square rounded-xl shimmer-bg" />
+            <div className="aspect-square rounded-xl shimmer-bg" />
+            <div className="aspect-square rounded-xl shimmer-bg" />
+            <div className="aspect-square rounded-xl shimmer-bg" />
           </div>
         )}
       </div>

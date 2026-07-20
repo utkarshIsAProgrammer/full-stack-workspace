@@ -1,5 +1,6 @@
 import UserAvatar from "./UserAvatar";
-import React, { useState, useEffect } from "react";
+import ImageCropModal from "./ImageCropModal";
+import React, { useState, useEffect, useCallback } from "react";
 import { useKeyboardOpen } from "../hooks/useKeyboardOpen";
 import {
 	User as UserIcon,
@@ -10,22 +11,25 @@ import {
 	CheckCircle,
 	AlertCircle,
 	Shield,
+	ShieldBan,
 	Eye,
 	EyeOff,
 	X,
-	Volume2,
+	Gift,
+
 } from "lucide-react";
 import { User as UserType } from "../types";
 import GlassCard from "./GlassCard";
 import ValidationMessage from "./ValidationMessage";
 import CharCounter from "./CharCounter";
+import BlockedUsersList from "./BlockedUsersList";
+import InvitesTab from "./InvitesTab";
 import { apiFetch } from "../utils/api";
 import {
 	validateProfile,
 	validatePasswordChange,
 	validateDeleteAccount,
 } from "../utils/validation";
-import EchoTest from "./EchoTest";
 
 interface SettingsProps {
 	user: UserType;
@@ -42,11 +46,11 @@ export default function Settings({
 }: SettingsProps) {
 	// Navigation Tabs for settings sections
 	const [activeSubTab, setActiveSubTab] = useState<
-		"profile" | "password" | "account" | "logout"
+		"profile" | "password" | "account" | "blocked" | "invites" | "logout"
 	>("profile");
 
 	const switchSubTab = (
-		tab: "profile" | "password" | "account" | "logout",
+		tab: "profile" | "password" | "account" | "blocked" | "invites" | "logout",
 	) => {
 		setActiveSubTab(tab);
 		setFieldErrors({});
@@ -73,6 +77,11 @@ export default function Settings({
 	const [bannerPicPreview, setBannerPicPreview] = useState(
 		user.bannerImage?.url || "",
 	);
+	// Crop modal state
+	const [cropModalOpen, setCropModalOpen] = useState(false);
+	const [cropSrc, setCropSrc] = useState("");
+	const [cropType, setCropType] = useState<"profile" | "banner">("profile");
+	const [cropFileName, setCropFileName] = useState("");
 	const [savingProfile, setSavingProfile] = useState(false);
 	const [profileError, setProfileError] = useState<string | null>(null);
 	const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
@@ -119,7 +128,21 @@ export default function Settings({
 		return () => clearTimeout(timer);
 	}, [passwordError]);
 
-	// Profile Submit handler
+	// Crop complete handler
+	const handleCropComplete = useCallback((croppedBlob: Blob) => {
+		const originalName = cropFileName || `${cropType}_cropped.jpg`;
+		const croppedFile = new File([croppedBlob], originalName, { type: "image/jpeg" });
+		const previewUrl = URL.createObjectURL(croppedBlob);
+
+		if (cropType === "profile") {
+			setProfilePicFile(croppedFile);
+			setProfilePicPreview(previewUrl);
+		} else {
+			setBannerPicFile(croppedFile);
+			setBannerPicPreview(previewUrl);
+		}
+}, [cropType, cropFileName]);
+
 	const handleProfileSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
 		setProfileError(null);
@@ -263,6 +286,7 @@ export default function Settings({
 	const isKeyboardOpen = useKeyboardOpen();
 
 	return (
+		<>
 		<div className="w-full px-1.5 pb-24 mt-2 leading-normal font-sans sm:px-4 sm:pb-28 sm:mt-4">
 			{" "}
 			{!isKeyboardOpen && (
@@ -328,12 +352,10 @@ export default function Settings({
 													const file =
 														e.target.files?.[0];
 													if (file) {
-														setProfilePicFile(file);
-														setProfilePicPreview(
-															URL.createObjectURL(
-																file,
-															),
-														);
+														setCropType("profile");
+														setCropFileName(file.name);
+														setCropSrc(URL.createObjectURL(file));
+														setCropModalOpen(true);
 													}
 												}}
 												className="absolute inset-0 opacity-0 cursor-pointer rounded-full animate-none"
@@ -384,19 +406,17 @@ export default function Settings({
 											<input
 												type="file"
 												accept="image/*"
-												onChange={(e) => {
-													const file =
-														e.target.files?.[0];
-													if (file) {
-														setBannerPicFile(file);
-														setBannerPicPreview(
-															URL.createObjectURL(
-																file,
-															),
-														);
-													}
-												}}
-												className="absolute inset-0 opacity-0 cursor-pointer rounded-full animate-none"
+										onChange={(e) => {
+											const file =
+												e.target.files?.[0];
+											if (file) {
+												setCropType("banner");
+												setCropFileName(file.name);
+												setCropSrc(URL.createObjectURL(file));
+												setCropModalOpen(true);
+											}
+										}}
+										className="absolute inset-0 opacity-0 cursor-pointer rounded-full animate-none"
 											/>
 											{bannerPicPreview ? (
 												<>
@@ -786,6 +806,14 @@ export default function Settings({
 						</GlassCard>
 					)}
 
+					{activeSubTab === "invites" && (
+						<InvitesTab />
+					)}
+
+					{activeSubTab === "blocked" && (
+						<BlockedUsersList />
+					)}
+
 					{activeSubTab === "logout" && (
 						<GlassCard
 							animate={true}
@@ -863,6 +891,30 @@ export default function Settings({
 
 						<button
 							type="button"
+							onClick={() => switchSubTab("invites")}
+							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
+								activeSubTab === "invites"
+									? "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm scale-102"
+									: "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
+							}`}>
+							<Gift className="h-3.5 w-3.5" />
+							<span className="hidden sm:inline">Invites</span>
+						</button>
+
+						<button
+							type="button"
+							onClick={() => switchSubTab("blocked")}
+							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
+								activeSubTab === "blocked"
+									? "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm scale-102"
+									: "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
+							}`}>
+							<ShieldBan className="h-3.5 w-3.5" />
+							<span className="hidden sm:inline">Blocked</span>
+						</button>
+
+						<button
+							type="button"
 							onClick={() => switchSubTab("logout")}
 							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
 								activeSubTab === "logout"
@@ -876,5 +928,18 @@ export default function Settings({
 				</div>
 			</div>
 		</div>
+
+		{/* Crop Modal */}
+		<ImageCropModal
+			isOpen={cropModalOpen}
+			onClose={() => {
+				setCropModalOpen(false);
+				if (cropSrc) URL.revokeObjectURL(cropSrc);
+			}}
+			imageSrc={cropSrc}
+			title={`Adjust ${cropType === 'profile' ? 'Avatar' : 'Banner'} Crop`}
+			onCropComplete={handleCropComplete}
+		/>
+	</>
 	);
 }

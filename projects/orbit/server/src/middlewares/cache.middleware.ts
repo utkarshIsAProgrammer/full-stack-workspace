@@ -18,7 +18,7 @@ interface CacheOptions {
  * Generate cache key from request
  */
 const generateCacheKey = (req: Request, prefix: string = ''): string => {
-  const userId = req.user?.id || 'anonymous';
+  const userId = req.user?._id?.toString() || (req.user as any)?.id || 'anonymous';
   const path = req.path;
   const query = JSON.stringify(req.query);
   return `${prefix}:${userId}:${path}:${query}`;

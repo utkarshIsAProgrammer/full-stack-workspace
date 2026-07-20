@@ -168,14 +168,16 @@ export const searchPosts = async (req: Request, res: Response) => {
       }
 
       if (posts.length === 0) {
-        // Handle hashtag search - remove # from query if present
+        // Handle hashtag search - remove # from query if present and escape regex
         const tagQuery = q.startsWith('#') ? q.slice(1) : q;
+        const escapedTagQuery = tagQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const regexQuery: any = { 
+          visibility: "public",
           $or: [
             { title: { $regex: escapedQuery, $options: "i" } },
             { content: { $regex: escapedQuery, $options: "i" } },
-            { tags: { $in: [new RegExp(tagQuery, "i")] } },
-            { tags: { $in: [new RegExp(escapedQuery, "i")] } }
+            { tags: { $in: [new RegExp(escapedTagQuery, "i")] } },
+            { hashtags: { $in: [new RegExp(escapedTagQuery, "i")] } }
           ]
         };
         if (cursor) {
@@ -191,8 +193,8 @@ export const searchPosts = async (req: Request, res: Response) => {
           .lean();
       }
     } else {
-      // If no query, show all posts
-      const allPostsQuery: any = {};
+      // If no query, show public posts
+      const allPostsQuery: any = { visibility: "public" };
       if (cursor) {
         allPostsQuery._id = { $lt: cursor };
       }

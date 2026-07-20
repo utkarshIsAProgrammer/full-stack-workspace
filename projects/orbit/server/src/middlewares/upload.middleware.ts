@@ -1,12 +1,73 @@
 import multer from "multer";
-import { CloudinaryStorage } from "multer-storage-cloudinary";
 import cloudinary from "../configs/cloudinary";
 
-// cloudinary storage config
-// cloudinary storage config
+type UploadParams = Record<string, unknown>;
+
+/**
+ * Minimal Multer storage engine backed by the supported Cloudinary v2 SDK.
+ * The old multer-storage-cloudinary package only declares compatibility with
+ * Cloudinary v1, which prevents security updates to the SDK.
+ */
+class CloudinaryStorage implements multer.StorageEngine {
+	constructor(
+		private readonly options: {
+			getParams: (
+				req: Express.Request,
+				file: Express.Multer.File,
+			) => UploadParams | Promise<UploadParams>;
+		},
+	) {}
+
+	_handleFile(
+		req: Express.Request,
+		file: Express.Multer.File,
+		callback: (error?: Error | null, info?: Partial<Express.Multer.File>) => void,
+	): void {
+		void Promise.resolve(this.options.getParams(req, file))
+			.then((params) => {
+				const stream = cloudinary.uploader.upload_stream(
+					params as any,
+					(error, result) => {
+						if (error || !result) {
+							callback(error || new Error("Cloudinary upload failed"));
+							return;
+						}
+						callback(null, {
+							path: result.secure_url,
+							filename: result.public_id,
+							size: result.bytes,
+							...(result.duration ? { duration: result.duration } : {}),
+						});
+					},
+				);
+				file.stream.pipe(stream);
+			})
+			.catch((error: unknown) =>
+				callback(error instanceof Error ? error : new Error("Cloudinary upload failed")),
+			);
+	}
+
+	_removeFile(
+		_req: Express.Request,
+		file: Express.Multer.File,
+		callback: (error: Error | null) => void,
+	): void {
+		if (!file.filename) {
+			callback(null);
+			return;
+		}
+		cloudinary.uploader.destroy(file.filename, { invalidate: true })
+			.then(() => callback(null))
+			.catch((error: unknown) =>
+				callback(error instanceof Error ? error : new Error("Cloudinary cleanup failed")),
+			);
+	}
+}
+
+// Cloudinary storage config
 const storage = new CloudinaryStorage({
-  cloudinary,
-  params: async (req, file) => ({
+	async getParams(req, file) {
+		return {
     folder: "orbit",
     resource_type: "auto",
     allowed_formats: ["jpg", "jpeg", "png", "webp", "gif"],
@@ -20,13 +81,14 @@ const storage = new CloudinaryStorage({
         fetch_format: "auto",
       },
     ],
-  }),
+		};
+	},
 });
 
 // cloudinary storage config for post images (smaller)
 const postImageStorage = new CloudinaryStorage({
-  cloudinary,
-  params: async (req, file) => ({
+	async getParams(req, file) {
+		return {
     folder: "orbit/posts",
     resource_type: "auto",
     allowed_formats: ["jpg", "jpeg", "png", "webp", "gif"],
@@ -41,7 +103,8 @@ const postImageStorage = new CloudinaryStorage({
         fetch_format: "auto",
       },
     ],
-  }),
+		};
+	},
 });
 
 // filter allowed types
@@ -85,8 +148,7 @@ const uploadPostImages = multer({
 
 // chat media storage (supports auto resource type for images and audio files)
 const chatMediaStorage = new CloudinaryStorage({
-  cloudinary,
-  params: async (req, file) => {
+	async getParams(req, file) {
     const isAudio = file.mimetype.startsWith("audio/");
     return {
       folder: isAudio ? "orbit/chats/voice_notes" : "orbit/chats/media",
@@ -98,6 +160,13 @@ const chatMediaStorage = new CloudinaryStorage({
 });
 
 const chatFileFilter = (req: any, file: any, cb: any) => {
+  const allowedPrefixes = ["image/", "audio/", "video/", "application/pdf", "text/plain"];
+  const isAllowed = allowedPrefixes.some((prefix) => file.mimetype.startsWith(prefix));
+
+  if (!isAllowed) {
+    return cb(new Error("File type not allowed in chat! Only images, audio, video, PDF, and text documents are permitted."), false);
+  }
+
   cb(null, true);
 };
 
@@ -112,8 +181,7 @@ const uploadChatMedia = multer({
 
 // ─── Post Media Storage (images + videos, 30MB) ─────────────────────
 const postMediaStorage = new CloudinaryStorage({
-  cloudinary,
-  params: async (req, file) => {
+	async getParams(req, file) {
     const isVideo = file.mimetype.startsWith("video/");
     return {
       folder: "orbit/posts",
@@ -159,8 +227,7 @@ const uploadPostMedia = multer({
 
 // ─── Glimpse Media Storage (images + videos) ────────────────────
 const glimpseMediaStorage = new CloudinaryStorage({
-  cloudinary,
-  params: async (req, file) => {
+	async getParams(req, file) {
     const isVideo = file.mimetype.startsWith("video/");
     return {
       folder: "orbit/glances",
@@ -213,4 +280,3 @@ const uploadGlimpseMedia = multer({
 
 export { uploadPostImages, uploadChatMedia, uploadPostMedia, uploadGlimpseMedia };
 export default upload;
-

@@ -8,10 +8,14 @@ type MailUser = {
 };
 
 const transporter = nodemailer.createTransport({
-  host: env.SMTP_HOST,
-  port: 587,
-  secure: false, // true for port 465, false for other ports
-  auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+	host: env.SMTP_HOST,
+	port: 587,
+	secure: false, // true for port 465, false for other ports
+	auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+	// Mail content is application-generated; never allow a template or input to
+	// make Nodemailer read a local file or fetch a URL while composing a message.
+	disableFileAccess: true,
+	disableUrlAccess: true,
 });
 
 // signup email
