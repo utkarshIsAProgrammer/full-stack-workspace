@@ -9,13 +9,31 @@
     "start": "node dist/server.js",
     "seed:test-user": "tsx scripts/seed-test-user.ts",
     "test:socket": "node scripts/test-socket-e2e.mjs",
-    "postinstall": "npm run build"
+    "test": "jest --forceExit --detectOpenHandles",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:ci": "jest --ci --coverage --forceExit",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "backup:db": "bash scripts/backup-db.sh",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:reload": "pm2 reload ecosystem.config.js",
+    "pm2:stop": "pm2 delete orbit-server",
+    "pm2:logs": "pm2 logs orbit-server --lines 100",
+    "pm2:monit": "pm2 monit",
+    "postinstall": "echo '✅ Install complete. Run npm run build to compile TypeScript.'"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@imagekit/nodejs": "^7.10.0",
+    "@sentry/node": "^10.67.0",
+    "@sentry/profiling-node": "^10.67.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.37.0",
@@ -30,6 +48,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.1.0",
+    "imagekit": "^6.0.0",
     "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.5.0",
@@ -39,9 +58,13 @@
     "sanitize-html": "^2.17.4",
     "slugify": "^1.6.9",
     "socket.io": "^4.8.3",
+    "swagger-jsdoc": "^6.3.0",
+    "swagger-ui-express": "^5.0.1",
     "tsx": "^4.21.0",
     "typescript": "^5.3.3",
     "web-push": "^3.6.7",
+    "winston": "^3.19.0",
+    "winston-daily-rotate-file": "^5.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -57,8 +80,11 @@
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^8.0.0",
     "@types/sanitize-html": "^2.16.1",
+    "@types/supertest": "^7.2.1",
     "jest": "^30.4.2",
+    "mongodb-memory-server": "^11.2.0",
     "socket.io-client": "^4.8.3",
+    "supertest": "^7.2.2",
     "ts-jest": "^29.4.11"
   }
 }

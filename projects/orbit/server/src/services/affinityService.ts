@@ -207,7 +207,7 @@ export async function recomputeAffinityScores(
   } catch (err: any) {
     logger.error("Failed to recompute affinity scores", {
       userId,
-      error: err.message,
+      error: (err as Error).message,
     });
   }
 }
@@ -257,7 +257,7 @@ export async function incrementAffinity(
     logger.error("Failed to increment affinity", {
       userId,
       targetAuthorId,
-      error: err.message,
+      error: (err as Error).message,
     });
   }
 }
@@ -285,9 +285,9 @@ export async function logInteraction(
       postId,
       type,
       timestamp,
-    }).catch((err: any) => {
+    }).catch((_err: unknown) => {
       logger.error("Failed to persist interaction", {
-        error: err.message,
+        error: (_err as Error).message,
         userId,
         type,
       });
@@ -330,7 +330,36 @@ export async function markPostAsSeen(
     logger.error("Failed to mark post as seen", {
       userId,
       postId,
-      error: err.message,
+      error: (err as Error).message,
+    });
+  }
+}
+
+/**
+ * Add multiple post IDs to the user's seenPosts set in a single bulk operation (capped at 500).
+ */
+export async function markPostsAsSeen(
+  userId: string,
+  postIds: string[]
+): Promise<void> {
+  if (postIds.length === 0) return;
+  try {
+    await User.updateOne(
+      { _id: userId },
+      {
+        $push: {
+          seenPosts: {
+            $each: postIds,
+            $slice: -500, // Keep only the most recent 500
+          },
+        },
+      }
+    );
+  } catch (err: any) {
+    logger.error("Failed to mark posts as seen in batch", {
+      userId,
+      postIds,
+      error: (err as Error).message,
     });
   }
 }

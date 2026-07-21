@@ -113,7 +113,9 @@ messageSchema.index({ conversation: 1, createdAt: -1 });
 messageSchema.index({ sender: 1, createdAt: -1 });
 messageSchema.index({ recipient: 1, createdAt: -1 });
 messageSchema.index({ conversation: 1, isDeleted: 1, createdAt: -1 });
+messageSchema.index({ conversation: 1, createdAt: -1 });
 messageSchema.index({ createdAt: -1 });
+messageSchema.index({ sender: 1, recipient: 1, createdAt: -1 });
 
 type MessageType = InferSchemaType<typeof messageSchema>;
 

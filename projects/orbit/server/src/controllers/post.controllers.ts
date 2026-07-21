@@ -30,10 +30,51 @@ import { logInteraction } from "../services/affinityService";
 import { invalidateFeedCache } from "../services/feedService";
 import { awardXP } from "../services/xpService";
 import { progressMission } from "../services/dailyMissionService";
+import { getMulterFiles, getErrorMessage } from "../types/global";
 
 type Params = {
   postId: string;
 };
+
+/** Shape of an uploaded file from multer */
+interface UploadedFile {
+  path: string;
+  filename: string;
+  fieldname: string;
+  originalname: string;
+  mimetype: string;
+  size: number;
+}
+
+/** Shape of the image metadata stored in the DB */
+interface ImageMeta {
+  url: string;
+  public_id: string;
+  alt?: string;
+}
+
+/** Extract uploaded files from request, returning typed arrays per field */
+function extractFiles(req: Request): {
+  images: UploadedFile[];
+  image: UploadedFile[];
+  video?: UploadedFile;
+} {
+  const files = getMulterFiles(req.files);
+  return {
+    images: (files.images || []) as UploadedFile[],
+    image: (files.image || []) as UploadedFile[],
+    video: (files.video?.[0]) as UploadedFile | undefined,
+  };
+}
+
+/** Build ImageMeta array from UploadedFiles with a fallback alt text */
+function buildImages(files: UploadedFile[], alt: string): ImageMeta[] {
+  return files.map((f) => ({
+    url: f.path,
+    public_id: f.filename,
+    alt: alt.substring(0, 100),
+  }));
+}
 
 /**
  * Check whether the current user is allowed to view a closeFriends post.
@@ -84,7 +125,7 @@ export const getPost = async (req: Request<Params>, res: Response) => {
         });
       }
     } catch (err: any) {
-      logger.error(`Cache error in getPost!`, { error: err.message });
+      logger.error(`Cache error in getPost!`, { error: err?.message });
     }
 
     // fetch post
@@ -110,7 +151,7 @@ export const getPost = async (req: Request<Params>, res: Response) => {
     try {
       await setCache(cacheKey, { post }, 60 * 30); // 30 min — single posts rarely change
     } catch (err: any) {
-      logger.error(`Cache set error in getPost!`, { error: err.message });
+      logger.error(`Cache set error in getPost!`, { error: err?.message });
     }
 
     return res.status(200).json({
@@ -120,7 +161,7 @@ export const getPost = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in getPost controller!`, { error: err.message });
+    logger.error(`Error in getPost controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -157,7 +198,7 @@ export const getAllPosts = async (req: Request, res: Response) => {
         });
       }
     } catch (err: any) {
-      logger.error(`Cache error in getAllPosts!`, { error: err.message });
+      logger.error(`Cache error in getAllPosts!`, { error: err?.message });
     }
 
     // query
@@ -247,13 +288,13 @@ export const getAllPosts = async (req: Request, res: Response) => {
         hasMore,
       }, 15);
     } catch (err: any) {
-      logger.error(`Cache set error in getAllPosts!`, { error: err.message });
+      logger.error(`Cache set error in getAllPosts!`, { error: err?.message });
     }
 
     return res.status(200).json(responseData);
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in getAllPosts controller!`, { error: err.message });
+    logger.error(`Error in getAllPosts controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -293,34 +334,25 @@ export const createPost = async (req: Request, res: Response) => {
       throw new BadRequestError("Maximum 10 hashtags allowed!");
     }
 
-    // handle multiple images/videos, single image, and video
-    const imagesFiles = (req.files as any)?.images || [];
-    const imageFile = (req.files as any)?.image || [];
-    const videoFile = (req.files as any)?.video?.[0];
-    const files = [...imagesFiles, ...imageFile];
-    const images = files.map((file) => ({
-      url: file.path,
-      public_id: (file as any).filename,
-      alt: (result.data.title || "").substring(0, 100),
-    }));
+    // handle multiple images/videos, single image, and video using typed helpers
+    const uploaded = extractFiles(req);
+    const allImages = [...uploaded.images, ...uploaded.image];
+    const images = buildImages(allImages, result.data.title || "");
 
     // fall back to single file (in case future changes use req.file)
-    if (images.length === 0 && req.file) {
+    const singleFile = req.file as UploadedFile | undefined;
+    if (images.length === 0 && singleFile) {
       images.push({
-        url: req.file.path,
-        public_id: (req.file as any).filename,
+        url: singleFile.path,
+        public_id: singleFile.filename,
         alt: (result.data.title || "").substring(0, 100),
       });
     }
 
     // Handle video upload
-    let video = undefined;
-    if (videoFile) {
-      video = {
-        url: videoFile.path,
-        public_id: (videoFile as any).filename,
-      };
-    }
+    const video = uploaded.video
+      ? { url: uploaded.video.path, public_id: uploaded.video.filename }
+      : undefined;
 
     // create post
     const post = new Post({
@@ -332,8 +364,8 @@ export const createPost = async (req: Request, res: Response) => {
       visibility: result.data.visibility || "public",
 
       image: images.length > 0 ? { url: images[0]!.url, public_id: images[0]!.public_id } : null,
-      images: images.length > 0 ? images as any : undefined,
-      video: video || undefined,
+      images: images.length > 0 ? images : undefined,
+      video,
     });
 
     // save post
@@ -385,7 +417,7 @@ export const createPost = async (req: Request, res: Response) => {
       throw new ConflictError("Duplicate slug, try different title!");
     }
 
-    logger.error(`Error in createPost controller!`, { error: err.message });
+    logger.error(`Error in createPost controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -425,16 +457,14 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
       throw new BadRequestError(parsed.error.issues[0]?.message || "Invalid input");
     }
 
-    const file = req.file;
-    const filesObj = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-    const imagesFiles = filesObj?.images || [];
-    const imageFile = filesObj?.image || [];
-    const videoFile = filesObj?.video?.[0];
-    const allFiles = [...imageFile, ...imagesFiles];
+    const file = req.file as UploadedFile | undefined;
+    const uploaded = extractFiles(req);
+    const allUpdateFiles = [...uploaded.images, ...uploaded.image];
+    const videoFile = uploaded.video;
 
     // ensure update exists
     const hasText = !!parsed.data.title || !!parsed.data.content;
-    const hasImage = !!file || allFiles.length > 0;
+    const hasImage = !!file || allUpdateFiles.length > 0;
     const hasVideo = !!videoFile;
 
     if (!hasText && !hasImage && !hasVideo) {
@@ -460,7 +490,7 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
     }
 
     // --- Image update logic ---
-    const hasNewFiles = !!file || allFiles.length > 0;
+    const hasNewFiles = !!file || allUpdateFiles.length > 0;
 
     // Parse public_ids of existing images the user wants to keep
     const keepImageIds: string[] = req.body.existingImages
@@ -471,19 +501,13 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
       const keepIdsSet = new Set(keepImageIds);
 
       // Build new images from uploaded files
-      const uploadedImages = allFiles.length > 0
-        ? allFiles.map((f) => ({
-          url: f.path,
-          public_id: (f as any).filename,
-          alt: (parsed.data.title || "").substring(0, 100),
-        }))
-        : [];
+      const uploadedImages = buildImages(allUpdateFiles, parsed.data.title || "");
 
       // fall back to single file
       if (uploadedImages.length === 0 && file) {
         uploadedImages.push({
           url: file.path,
-          public_id: (file as any).filename,
+          public_id: file.filename,
           alt: (parsed.data.title || "").substring(0, 100),
         });
       }
@@ -514,6 +538,7 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
 
       const finalImages = [...keptExisting, ...uploadedImages];
 
+      // Mongoose DocumentArray requires explicit cast
       post.images = finalImages as any;
       post.image = finalImages.length > 0
         ? { url: finalImages[0]!.url, public_id: finalImages[0]!.public_id }
@@ -524,8 +549,8 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
     if (videoFile) {
       // Delete old video from Cloudinary if it exists
       if (post.video?.public_id) {
-        cloudinary.uploader.destroy(post.video.public_id, { resource_type: "video" }).catch((err: any) => {
-          logger.error("Cloudinary deletion failed for old video during post update", { error: err?.message });
+        cloudinary.uploader.destroy(post.video.public_id, { resource_type: "video" }).catch((_err: unknown) => {
+          logger.error("Cloudinary deletion failed for old video during post update", { error: (_err as any)?.message });
         });
       }
       // Set new video
@@ -560,7 +585,7 @@ export const updatePost = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in updatePost controller!`, { error: err.message });
+    logger.error(`Error in updatePost controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -650,7 +675,7 @@ export const deletePost = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in deletePost controller!`, { error: err.message });
+    logger.error(`Error in deletePost controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -712,7 +737,7 @@ export const sharePost = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in sharePost controller!`, { error: err.message });
+    logger.error(`Error in sharePost controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -768,7 +793,7 @@ export const getPostBySlug = async (req: Request<{ slug: string }>, res: Respons
     return res.status(200).json(responseData);
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in getPostBySlug controller!`, { error: err.message });
+    logger.error(`Error in getPostBySlug controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -823,7 +848,7 @@ export const getPostsByHashtag = async (
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in getPostsByHashtag controller!`, { error: err.message });
+    logger.error(`Error in getPostsByHashtag controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -846,26 +871,17 @@ export const getTrendingHashtags = async (req: Request, res: Response) => {
     }
 
     // Aggregate hashtags from the last 7 days, sorted by frequency
+    // Uses MongoDB aggregation pipeline for efficiency (avoid loading all posts into JS)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const posts = await Post.find(
-      { hashtags: { $exists: true, $not: { $size: 0 } }, createdAt: { $gte: sevenDaysAgo } },
-      { hashtags: 1 }
-    )
-      .lean();
+    const results = await Post.aggregate([
+      { $match: { hashtags: { $exists: true, $not: { $size: 0 } }, createdAt: { $gte: sevenDaysAgo } } },
+      { $unwind: "$hashtags" },
+      { $group: { _id: "$hashtags", count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 },
+    ]).option({ maxTimeMS: 5000 });
 
-    // Count hashtag frequencies
-    const freq: Record<string, number> = {};
-    for (const post of posts) {
-      for (const tag of post.hashtags || []) {
-        freq[tag] = (freq[tag] || 0) + 1;
-      }
-    }
-
-    // Sort by frequency and return top 10
-    const sorted = Object.entries(freq)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 10)
-      .map(([tag]) => tag);
+    const sorted = results.map((r: any) => r._id);
 
     await setCache(cacheKey, { hashtags: sorted }, 300); // 5 min cache
 
@@ -874,7 +890,7 @@ export const getTrendingHashtags = async (req: Request, res: Response) => {
       hashtags: sorted,
     });
   } catch (err: any) {
-    logger.error(`Error in getTrendingHashtags!`, { error: err.message });
+    logger.error(`Error in getTrendingHashtags!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -938,7 +954,7 @@ export const viewsCount = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in viewsCount controller!`, { error: err.message });
+    logger.error(`Error in viewsCount controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -1000,7 +1016,7 @@ export const pinPost = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in pinPost controller!`, { error: err.message });
+    logger.error(`Error in pinPost controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -1078,7 +1094,7 @@ export const votePoll = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in votePoll controller!`, { error: err.message });
+    logger.error(`Error in votePoll controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -1126,7 +1142,7 @@ export const inviteCollab = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in inviteCollab controller!`, { error: err.message });
+    logger.error(`Error in inviteCollab controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -1163,7 +1179,7 @@ export const acceptCollab = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in acceptCollab controller!`, { error: err.message });
+    logger.error(`Error in acceptCollab controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -1203,7 +1219,7 @@ export const publishDraft = async (req: Request<Params>, res: Response) => {
     return res.status(200).json({ success: true, message: "Post published!", post: populated });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in publishDraft controller!`, { error: err.message });
+    logger.error(`Error in publishDraft controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -1283,7 +1299,7 @@ export const quoteRepost = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in quoteRepost controller!`, { error: err.message });
+    logger.error(`Error in quoteRepost controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -1331,7 +1347,7 @@ export const unpinPost = async (req: Request<Params>, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error(`Error in unpinPost controller!`, { error: err.message });
+    logger.error(`Error in unpinPost controller!`, { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };

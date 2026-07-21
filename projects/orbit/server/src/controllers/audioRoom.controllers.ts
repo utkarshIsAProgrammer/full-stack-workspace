@@ -54,18 +54,33 @@ export const createAudioRoom = async (
 };
 
 export const getLiveRooms = async (
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ) => {
   try {
-    const rooms = await AudioRoom.find({ isLive: true })
+    const limit = Math.min(Number(req.query.limit) || 20, 50);
+    const cursor = req.query.cursor as string | undefined;
+
+    const query: any = { isLive: true };
+    if (cursor && mongoose.Types.ObjectId.isValid(cursor)) {
+      query._id = { $lt: new mongoose.Types.ObjectId(cursor) };
+    }
+
+    const rooms = await AudioRoom.find(query)
       .populate("host", "username fullName profilePic")
       .populate("speakers", "username fullName profilePic")
-      .sort({ startedAt: -1 })
+      .sort({ _id: -1 })
+      .limit(limit + 1)
       .lean();
 
-    return res.status(200).json({ success: true, rooms });
+    const hasMore = rooms.length > limit;
+    if (hasMore) {
+      rooms.pop();
+    }
+    const nextCursor = rooms.slice(-1).shift()?._id || null;
+
+    return res.status(200).json({ success: true, rooms, hasMore, nextCursor });
   } catch (err: any) {
     logger.error("Error getting live rooms", { error: err.message });
     return next(new AppError("Internal server error!"));

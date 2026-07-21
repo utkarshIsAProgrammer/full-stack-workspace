@@ -28,18 +28,33 @@ export const searchMessages = async (req: Request, res: Response) => {
 
     const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-    // Search messages using text index (case-insensitive regex fallback)
-    const messages = await Message.find({
+    // Pagination
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const cursor = req.query.cursor as string | undefined;
+
+    const searchQuery: any = {
       conversation: conversationId,
       text: { $regex: escapedQuery, $options: "i" },
       deletedFor: { $ne: currentUserId },
-    })
+    };
+    if (cursor && mongoose.Types.ObjectId.isValid(cursor)) {
+      searchQuery._id = { $lt: new mongoose.Types.ObjectId(cursor) };
+    }
+
+    // Search messages using text index (case-insensitive regex fallback)
+    const messages = await Message.find(searchQuery)
       .sort({ createdAt: -1 })
-      .limit(50)
+      .limit(limit + 1)
       .populate("sender", "username fullName profilePic")
       .lean();
 
-    return res.status(200).json({ success: true, messages, count: messages.length });
+    const hasMore = messages.length > limit;
+    if (hasMore) {
+      messages.pop();
+    }
+    const nextCursor = messages.slice(-1).shift()?._id || null;
+
+    return res.status(200).json({ success: true, messages, count: messages.length, hasMore, nextCursor });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
     logger.error("Message search error", { error: err.message });

@@ -146,19 +146,6 @@ const uploadPostImages = multer({
   },
 });
 
-// chat media storage (supports auto resource type for images and audio files)
-const chatMediaStorage = new CloudinaryStorage({
-	async getParams(req, file) {
-    const isAudio = file.mimetype.startsWith("audio/");
-    return {
-      folder: isAudio ? "orbit/chats/voice_notes" : "orbit/chats/media",
-      resource_type: "auto",
-      allowed_formats: undefined,
-      public_id: `${Date.now()}-${file.originalname.replace(/\.[^/.]+$/, "")}`,
-    };
-  },
-});
-
 const chatFileFilter = (req: any, file: any, cb: any) => {
   const allowedPrefixes = ["image/", "audio/", "video/", "application/pdf", "text/plain"];
   const isAllowed = allowedPrefixes.some((prefix) => file.mimetype.startsWith(prefix));
@@ -171,7 +158,7 @@ const chatFileFilter = (req: any, file: any, cb: any) => {
 };
 
 const uploadChatMedia = multer({
-  storage: chatMediaStorage,
+  storage: multer.memoryStorage(),
   fileFilter: chatFileFilter,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit

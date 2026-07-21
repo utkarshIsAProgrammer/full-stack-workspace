@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { getRankedFeed } from "../services/feedService";
-import { markPostAsSeen } from "../services/affinityService";
+import { markPostsAsSeen } from "../services/affinityService";
 import { AppError, UnauthorizedError } from "../utilities/errors";
 import { logger } from "../utilities/logger";
 
@@ -33,9 +33,8 @@ export const getFeed = async (req: Request, res: Response) => {
     // the next feed request's candidate pool.
     if (posts.length > 0 && !cursor) {
       // Only mark on the first page to avoid skewing pagination
-      for (const post of posts) {
-        markPostAsSeen(currentUserId, post._id.toString());
-      }
+      const postIds = posts.map((post) => post._id.toString());
+      markPostsAsSeen(currentUserId, postIds);
     }
 
     return res.status(200).json({

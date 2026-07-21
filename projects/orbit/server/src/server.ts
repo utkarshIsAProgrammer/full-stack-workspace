@@ -41,12 +41,65 @@ import translationRoutes from "./routes/translation.routes";
 import leaderboardRoutes from "./routes/leaderboard.routes";
 import { adminRoutes } from "./routes/admin.routes";
 
-import { startAffinityScheduler } from "./configs/scheduler";
+import { startAffinityScheduler, startNotificationPruner } from "./configs/scheduler";
+import trendRoutes from "./routes/trending.routes";
+import analyticsRoutes from "./routes/analytics.routes";
+import feedForYouRoutes from "./routes/feedForYou.routes";
+import moderationRoutes from "./routes/moderation.routes";
+import dataExportRoutes from "./routes/dataExport.routes";
+import webhookRoutes from "./routes/webhook.routes";
+import apiKeyRoutes from "./routes/apiKey.routes";
+import bulkOpRoutes from "./routes/bulkOperations.routes";
+import groupRoutes from "./routes/group.routes";
 import { AppError } from "./utilities/errors";
 import { logger } from "./utilities/logger";
 import { cookieOptions } from "./configs/cookie";
 import { csrfProtection } from "./middlewares/csrf.middleware";
 import { generalLimiter } from "./middlewares/ratelimit.middleware";
+
+// ─── Monitoring & Documentation ────────────────────────────────────
+import { initSentry, sentryErrorHandler } from "./configs/sentry";
+import { setupSwagger } from "./configs/swagger";
+
+// ─── CLUSTERING (multi-core) ────────────────────────────────────
+// Fork one worker per CPU core. Each worker shares the same port.
+// If clustering is disabled or only 1 CPU, runs in single-process mode.
+//
+// The primary process forks workers and then exits without starting the server.
+// Workers and single-process mode continue to the full app setup below.
+import cluster from "cluster";
+import os from "os";
+
+// Cluster mode: ONLY in production, NEVER in development/dev mode.
+// tsx --watch cannot fork workers (causes EPIPE crashes), and clustering
+// adds unneeded complexity for local development.
+const isClusterEnabled = process.env.NODE_ENV === "production" && process.env.CLUSTER_ENABLED !== "false";
+const numCPUs = Math.min(os.cpus().length, parseInt(process.env.CLUSTER_MAX_WORKERS || "2", 10));
+
+if (isClusterEnabled && cluster.isPrimary && numCPUs > 1) {
+  logger.info(`Primary process starting ${numCPUs} workers...`);
+
+  for (let i = 0; i < numCPUs; i++) {
+    cluster.fork();
+  }
+
+  cluster.on("exit", (worker, code, signal) => {
+    logger.warn(`Worker ${worker.process.pid} died (code: ${code}, signal: ${signal}). Restarting...`);
+    cluster.fork();
+  });
+
+  cluster.on("online", (worker) => {
+    logger.info(`Worker ${worker.process.pid} is online`);
+  });
+
+  // Primary exits — workers handle their own graceful shutdown
+  process.exit(0);
+}
+
+// ─── Worker or single-process mode starts here ───────────────────
+if (!cluster.isPrimary) {
+  logger.info(`Worker ${process.pid} started`);
+}
 
 // ─── Global process-level error handlers ──────────────────────────
 process.on(
@@ -73,18 +126,54 @@ const env = validateEnv();
 const app = express();
 const server = http.createServer(app);
 const port = env.PORT;
-const allowedOrigins =
-	env.NODE_ENV === "development"
-		? [
-				env.CLIENT_URL.replace(/\/$/, ""),
-				"http://localhost:5173",
-				"http://localhost:5174",
-			].filter(Boolean)
-		: [env.CLIENT_URL.replace(/\/$/, "")].filter(Boolean);
-
 app.set("trust proxy", 1);
 
-app.use(compression());
+// ─── Sentry initialization (must be first) ─────────────────────────
+initSentry();
+
+// Compression: skip payloads under 1 KB (small responses don't benefit)
+app.use(compression({ threshold: 1024 }));
+
+// HTTP Keep-Alive tuning
+server.keepAliveTimeout = 65000; // 65 seconds (default is 5s)
+server.headersTimeout = 66000; // Slightly higher than keepAliveTimeout
+
+// ─── Graceful Shutdown ────────────────────────────────────────────
+async function gracefulShutdown(signal: string) {
+  logger.info(`${signal} received. Starting graceful shutdown...`);
+
+  // Stop accepting new connections
+  server.close(async () => {
+    logger.info("HTTP server closed.");
+
+    // Disconnect Socket.IO
+    try {
+      await shutdownSocket();
+    } catch (err: any) {
+      logger.error("Socket shutdown error", { error: err.message });
+    }
+
+    // Disconnect MongoDB
+    try {
+      await mongoose.disconnect();
+      logger.info("MongoDB disconnected.");
+    } catch (err: any) {
+      logger.error("MongoDB disconnect error", { error: err.message });
+    }
+
+    logger.info("Graceful shutdown complete. Exiting.");
+    process.exit(0);
+  });
+
+  // Force exit if graceful shutdown takes too long
+  setTimeout(() => {
+    logger.error("Forced shutdown after timeout.");
+    process.exit(1);
+  }, 30000); // 30 second timeout
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 app.use(
 	cors({
@@ -97,13 +186,30 @@ app.use(
 				callback(null, true);
 				return;
 			}
+
 			const originWithoutSlash = origin.replace(/\/$/, "");
-			if (
-				allowedOrigins.includes(originWithoutSlash)
-			) {
+
+			// In development, allow any localhost origin (Vite can pick any port)
+			if (env.NODE_ENV === "development") {
+				const isLocalhost =
+					originWithoutSlash.startsWith("http://localhost:") ||
+					originWithoutSlash.startsWith("http://127.0.0.1:") ||
+					originWithoutSlash.startsWith("https://localhost:") ||
+					originWithoutSlash.startsWith("https://127.0.0.1:");
+				if (isLocalhost) {
+					callback(null, true);
+					return;
+				}
+			}
+
+			// Also check the configured CLIENT_URL explicitly
+			if (originWithoutSlash === env.CLIENT_URL.replace(/\/$/, "")) {
 				callback(null, true);
 				return;
 			}
+
+			// Log rejected origin for debugging, then deny
+			logger.warn("CORS blocked origin", { origin: originWithoutSlash });
 			callback(new Error("Not allowed by CORS"));
 		},
 		credentials: true,
@@ -153,8 +259,8 @@ app.use(
 		referrerPolicy: { policy: "strict-origin-when-cross-origin" },
 	}),
 );
-app.use(express.json({ limit: "1mb" }));
-app.use(express.urlencoded({ limit: "1mb", extended: true }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 app.use(cookieParser());
 
 // Request ID Middleware — must run before timeout & logging middlewares
@@ -179,36 +285,56 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 	next();
 });
 
-// Health Check
+// Enhanced Health Check with detailed system metrics
 app.get("/api/health", async (req: Request, res: Response) => {
+	const start = Date.now();
 	try {
-		let dbStatus = "connected";
-		let redisStatus = "connected";
+		let dbStatus = "disconnected";
+		let dbState = mongoose.connection.readyState;
+		const stateMap: Record<number, string> = {
+			0: "disconnected",
+			1: "connected",
+			2: "connecting",
+			3: "disconnecting",
+		};
+		dbStatus = stateMap[dbState] || "unknown";
 
-		// Check MongoDB connection
-		if (mongoose.connection.readyState !== 1) {
-			dbStatus = "disconnected";
-		}
-
-		// Check Redis connection
+		let redisStatus = "disconnected";
+		let redisLatencyMs = -1;
 		try {
+			const redisStart = Date.now();
 			await redis.ping();
-		} catch (redisErr) {
+			redisLatencyMs = Date.now() - redisStart;
+			redisStatus = "connected";
+		} catch {
 			redisStatus = "disconnected";
 		}
 
-		const allHealthy =
-			dbStatus === "connected" && redisStatus === "connected";
+		const allHealthy = dbState === 1 && redisStatus === "connected";
+		const memoryUsage = process.memoryUsage();
 
 		return res.status(allHealthy ? 200 : 503).json({
 			success: allHealthy,
 			message: allHealthy ? "Server is healthy!" : "Server is unhealthy!",
 			timestamp: new Date().toISOString(),
 			requestId: req.requestId,
+			uptime: process.uptime(),
 			checks: {
-				database: dbStatus,
-				redis: redisStatus,
+				database: {
+					status: dbStatus,
+					state: dbState,
+				},
+				redis: {
+					status: redisStatus,
+					latencyMs: redisLatencyMs,
+				},
 			},
+			memory: {
+				rss: Math.round(memoryUsage.rss / 1024 / 1024) + "MB",
+				heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024) + "MB",
+				heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024) + "MB",
+			},
+			responseTimeMs: Date.now() - start,
 		});
 	} catch (err: any) {
 		logger.error("Health check failed", { error: err.message });
@@ -273,6 +399,39 @@ app.use("/api/translate", translationRoutes);
 // Leaderboard routes
 app.use("/api/leaderboard", leaderboardRoutes);
 
+// Trending routes (users + topics)
+app.use("/api/trending", trendRoutes);
+
+// Analytics dashboard routes
+app.use("/api/analytics", analyticsRoutes);
+
+// For You feed (affinity-based) — route already includes /for-you
+app.use("/api/feed", feedForYouRoutes);
+
+// Moderation queue routes
+app.use("/api/moderation", moderationRoutes);
+
+// Data export routes
+app.use("/api/export", dataExportRoutes);
+
+// Webhook routes
+app.use("/api/webhooks", webhookRoutes);
+
+// Developer API key routes
+app.use("/api/developer", apiKeyRoutes);
+
+// Bulk operations routes
+app.use("/api/bulk", bulkOpRoutes);
+
+// Group chat routes
+app.use("/api/chats/groups", groupRoutes);
+
+// ─── Swagger API Documentation ───────────────────────────────────
+setupSwagger(app);
+
+// ─── Sentry Error Handler (before global handler) ────────────────
+app.use(sentryErrorHandler as any);
+
 // 404 Handler
 app.use((req: Request, res: Response) => {
 	return res.status(404).json({
@@ -282,46 +441,56 @@ app.use((req: Request, res: Response) => {
 	});
 });
 
+/** Error shape from known libraries */
+interface ZodIssue {
+	path: (string | number)[];
+	message: string;
+}
+
+interface MongoError extends Error {
+	code?: number;
+	keyPattern?: Record<string, unknown>;
+	issues?: ZodIssue[];
+}
+
 // Global Error Handler
-app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-	logger.error(err.message, {
+app.use((err: MongoError, req: Request, res: Response, _next: NextFunction) => {
+	const message = err.message || "Internal Server Error";
+	logger.error(message, {
 		requestId: req.requestId,
 		stack: err.stack,
 	});
 
 	let statusCode = 500;
-	let message = "Internal Server Error";
-	let errors: any[] = [];
+	let responseMessage = message;
+	let errors: { field: string; message: string }[] = [];
 
 	// Handle Zod errors specifically
-	if (err.name === "ZodError") {
+	if (err.name === "ZodError" && err.issues) {
 		statusCode = 400;
-		errors = err.issues.map((issue: any) => ({
+		errors = err.issues.map((issue) => ({
 			field: issue.path.join("."),
 			message: issue.message,
 		}));
-		// Use the first error as the main message, or combine them
-		message = errors[0]?.message || "Validation failed";
+		responseMessage = errors[0]?.message || "Validation failed";
 	} else if (err instanceof AppError) {
 		statusCode = err.statusCode;
-		message = err.message;
+		responseMessage = err.message;
 	} else if (err.name === "ValidationError") {
 		statusCode = 400;
-		message = err.message;
+		responseMessage = message;
 	} else if (
 		(err.name === "MongoError" || err.name === "MongoServerError") &&
 		err.code === 11000
 	) {
 		statusCode = 409;
-		// Extract the field from the error message for better UX
-		const field = Object.keys(err.keyPattern || {})[0];
-		message = field ? `${field} already exists` : "Duplicate field value";
+		const field = err.keyPattern ? Object.keys(err.keyPattern)[0] : null;
+		responseMessage = field ? `${field} already exists` : "Duplicate field value";
 	}
 
-	// Standardised error response shape
 	return res.status(statusCode).json({
 		success: false,
-		message,
+		message: responseMessage,
 		...(errors.length > 0 && { errors }),
 		requestId: req.requestId,
 		...(env.NODE_ENV === "development" && { stack: err.stack }),
@@ -333,6 +502,9 @@ connectDB().then(async () => {
 
 	// Start background affinity recomputation for feed ranking
 	startAffinityScheduler();
+
+	// Start daily pruner for read notifications older than 30 days
+	startNotificationPruner();
 
 	server.listen(port, () => {
 		logger.info(`Server is running on PORT: ${port}`);

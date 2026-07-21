@@ -21,15 +21,27 @@ export const getGlimpseFeed = async (req: Request, res: Response) => {
     }
 
     const now = new Date();
-    // Return all non-expired glimpses
-    const glimpses = await Glimpse.find({
-      expiresAt: { $gt: now },
-    })
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const cursor = req.query.cursor as string | undefined;
+
+    const query: any = { expiresAt: { $gt: now } };
+    if (cursor) {
+      query._id = { $lt: cursor };
+    }
+
+    // Fetch glimpses with cursor pagination
+    const glimpses = await Glimpse.find(query)
       .populate("author", "username fullName profilePic")
       .populate("viewers.user", "username fullName profilePic")
       .sort({ createdAt: -1 })
-      .limit(50)
+      .limit(limit + 1)
       .lean({ virtuals: true });
+
+    const hasMore = glimpses.length > limit;
+    if (hasMore) {
+      glimpses.pop();
+    }
+    const nextCursor = glimpses.slice(-1).shift()?._id || null;
 
     // Enrich with per-user view status
     const enriched = glimpses.map((g) => ({
@@ -42,10 +54,12 @@ export const getGlimpseFeed = async (req: Request, res: Response) => {
     return res.status(200).json({
       success: true,
       glimpses: enriched,
+      hasMore,
+      nextCursor,
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error("Error in getGlimpseFeed controller!", { error: err.message });
+    logger.error("Error in getGlimpseFeed controller!", { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -102,9 +116,9 @@ export const createGlimpse = async (req: Request, res: Response) => {
     try {
       const io = getIO();
       io.emit("glimpse:created", enrichedGlimpse);
-    } catch (socketErr: any) {
+    } catch (socketErr) {
       logger.warn("Failed to broadcast glimpse:created via socket", {
-        error: socketErr.message,
+        error: (socketErr as Error).message,
       });
     }
 
@@ -115,7 +129,7 @@ export const createGlimpse = async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error("Error in createGlimpse controller!", { error: err.message });
+    logger.error("Error in createGlimpse controller!", { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -124,9 +138,9 @@ export const createGlimpse = async (req: Request, res: Response) => {
 const deleteGlimpseAndCleanup = async (glimpse: any) => {
   if (glimpse?.media?.public_id) {
     const resourceType = glimpse.mediaType === "video" ? "video" : "image";
-    cloudinary.uploader.destroy(glimpse.media.public_id, { resource_type: resourceType }).catch((err: any) => {
+    cloudinary.uploader.destroy(glimpse.media.public_id, { resource_type: resourceType }).catch((_err: unknown) => {
       logger.warn("Failed to delete Cloudinary media for glimpse", {
-        error: err?.message,
+        error: (_err as any)?.message,
         public_id: glimpse.media.public_id,
       });
     });
@@ -216,9 +230,9 @@ export const viewGlimpse = async (req: Request, res: Response) => {
         viewerId: currentUserId,
         viewers,
       });
-    } catch (socketErr: any) {
+    } catch (socketErr) {
       logger.warn("Failed to emit glimpse socket events", {
-        error: socketErr.message,
+        error: (socketErr as Error).message,
       });
     }
 
@@ -229,7 +243,7 @@ export const viewGlimpse = async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error("Error in viewGlimpse controller!", { error: err.message });
+    logger.error("Error in viewGlimpse controller!", { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -270,7 +284,7 @@ export const getGlimpse = async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error("Error in getGlimpse controller!", { error: err.message });
+    logger.error("Error in getGlimpse controller!", { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -331,8 +345,8 @@ export const reactToGlimpse = async (req: Request, res: Response) => {
         action,
         reactionsCount: glimpse.reactions?.length || 0,
       });
-    } catch (socketErr: any) {
-      logger.warn("Failed to emit glimpse:reacted socket event", { error: socketErr.message });
+    } catch (socketErr) {
+      logger.warn("Failed to emit glimpse:reacted socket event", { error: (socketErr as Error).message });
     }
 
     // Create notification for the author (only if reaction was added)
@@ -346,8 +360,8 @@ export const reactToGlimpse = async (req: Request, res: Response) => {
           glimpse: glimpseId,
         });
       }
-    } catch (notifErr: any) {
-      logger.warn("Failed to create glimpse reaction notification", { error: notifErr.message });
+    } catch (notifErr) {
+      logger.warn("Failed to create glimpse reaction notification", { error: (notifErr as Error).message });
     }
 
     return res.status(200).json({
@@ -359,7 +373,7 @@ export const reactToGlimpse = async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error("Error in reactToGlimpse controller!", { error: err.message });
+    logger.error("Error in reactToGlimpse controller!", { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -465,8 +479,8 @@ export const replyToGlimpse = async (req: Request, res: Response) => {
         message: populatedMessage,
         unreadCount: 1,
       });
-    } catch (socketErr: any) {
-      logger.warn("Failed to emit glimpse reply socket events", { error: socketErr.message });
+    } catch (socketErr) {
+      logger.warn("Failed to emit glimpse reply socket events", { error: (socketErr as Error).message });
     }
 
     // Create notification for the author
@@ -477,8 +491,8 @@ export const replyToGlimpse = async (req: Request, res: Response) => {
         type: "glimpse_reply",
         glimpse: glimpseId,
       });
-    } catch (notifErr: any) {
-      logger.warn("Failed to create glimpse reply notification", { error: notifErr.message });
+    } catch (notifErr) {
+      logger.warn("Failed to create glimpse reply notification", { error: (notifErr as Error).message });
     }
 
     return res.status(200).json({
@@ -489,7 +503,7 @@ export const replyToGlimpse = async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error("Error in replyToGlimpse controller!", { error: err.message });
+    logger.error("Error in replyToGlimpse controller!", { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };
@@ -524,8 +538,8 @@ export const deleteGlimpse = async (req: Request, res: Response) => {
     // Broadcast socket event to all clients so they can animate deletion in real-time
     try {
       getIO().emit("glimpse:expired", { glimpseId });
-    } catch (socketErr: any) {
-      logger.warn("Failed to emit glimpse:expired socket event", { error: socketErr.message });
+    } catch (socketErr) {
+      logger.warn("Failed to emit glimpse:expired socket event", { error: (socketErr as Error).message });
     }
 
     return res.status(200).json({
@@ -534,7 +548,7 @@ export const deleteGlimpse = async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
-    logger.error("Error in deleteGlimpse controller!", { error: err.message });
+    logger.error("Error in deleteGlimpse controller!", { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };

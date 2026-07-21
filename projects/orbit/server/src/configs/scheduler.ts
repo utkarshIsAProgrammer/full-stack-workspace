@@ -1,5 +1,6 @@
 import cron from "node-cron";
 import { User } from "../models/user.model";
+import Notification from "../models/notification.model";
 import { recomputeAffinityScores } from "../services/affinityService";
 import { logger } from "../utilities/logger";
 
@@ -63,4 +64,35 @@ export function startAffinityScheduler(): void {
   });
 
   logger.info("Affinity scheduler registered (runs every 30 minutes)");
+}
+
+/**
+ * Start the notification pruning scheduler.
+ *
+ * Runs daily at 3:00 AM. Deletes read notifications that are older than
+ * 30 days to prevent unbounded collection growth. Unread notifications
+ * are preserved indefinitely so users never lose unseen alerts.
+ */
+export function startNotificationPruner(): void {
+  // Runs at 3:00 AM every day: "0 3 * * *"
+  cron.schedule("0 3 * * *", async () => {
+    logger.info("Notification pruner: starting cleanup");
+
+    try {
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+      const result = await Notification.deleteMany({
+        isRead: true,
+        createdAt: { $lt: thirtyDaysAgo },
+      });
+
+      logger.info("Notification pruner: cleanup complete", {
+        deletedCount: result.deletedCount,
+      });
+    } catch (err: any) {
+      logger.error("Notification pruner: error", { error: err.message });
+    }
+  });
+
+  logger.info("Notification pruner registered (runs daily at 3:00 AM)");
 }

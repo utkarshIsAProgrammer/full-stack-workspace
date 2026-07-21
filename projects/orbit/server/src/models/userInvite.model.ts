@@ -31,8 +31,8 @@ const userInviteSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-userInviteSchema.index({ inviteCode: 1 });
 userInviteSchema.index({ inviter: 1, status: 1 });
+// Note: inviteCode index is auto-created by `unique: true` in the field definition above
 
 const UserInvite = mongoose.model("UserInvite", userInviteSchema);
 export default UserInvite;

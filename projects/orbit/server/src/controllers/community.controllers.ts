@@ -333,8 +333,8 @@ export const getCommunities = async (
 		const communitiesWithMembership = communities.map((c: any) => {
 			const isMember = currentUserId
 				? c.members?.some(
-						(m: any) => m.user?._id?.toString() === currentUserId.toString(),
-					) || false
+					(m: any) => m.user?._id?.toString() === currentUserId.toString(),
+				) || false
 				: false;
 			return { ...c, isMember };
 		});
@@ -382,8 +382,8 @@ export const getCommunity = async (
 
 		const isMember = currentUserId
 			? (community as any).members?.some(
-					(m: any) => m.user?._id?.toString() === currentUserId.toString(),
-				) || false
+				(m: any) => m.user?._id?.toString() === currentUserId.toString(),
+			) || false
 			: false;
 
 		return res.status(200).json({
@@ -1125,124 +1125,124 @@ export const deleteCommunityMessageForMe = async (
  * Only the creator can update the community.
  * PUT /api/communities/:communityId
  */
-	export const updateCommunity = async (
-		req: Request<CommunityParams>,
-		res: Response,
-		next: NextFunction,
-	) => {
-		const { communityId } = req.params;
-		const currentUserId = req.user?._id;
+export const updateCommunity = async (
+	req: Request<CommunityParams>,
+	res: Response,
+	next: NextFunction,
+) => {
+	const { communityId } = req.params;
+	const currentUserId = req.user?._id;
 
-		try {
-			if (!currentUserId) {
-				return next(new UnauthorizedError("Unauthorized!"));
-			}
+	try {
+		if (!currentUserId) {
+			return next(new UnauthorizedError("Unauthorized!"));
+		}
 
-			if (!mongoose.Types.ObjectId.isValid(communityId)) {
-				return next(new BadRequestError("Invalid community ID!"));
-			}
+		if (!mongoose.Types.ObjectId.isValid(communityId)) {
+			return next(new BadRequestError("Invalid community ID!"));
+		}
 
-			const community = await Community.findById(communityId);
-			if (!community) {
-				return next(new NotFoundError("Community not found!"));
-			}
+		const community = await Community.findById(communityId);
+		if (!community) {
+			return next(new NotFoundError("Community not found!"));
+		}
 
-			// Only the creator can update
-			if (community.creator.toString() !== currentUserId.toString()) {
-				return next(
-					new ForbiddenError(
-						"Only the community creator can update the community!",
-					),
-				);
-			}
-
-			// Validate and update name
-			const { name, description } = req.body;
-			if (name !== undefined) {
-				if (typeof name !== "string" || !name.trim()) {
-					return next(new BadRequestError("Community name is required!"));
-				}
-				if (name.trim().length > 50) {
-					return next(new BadRequestError("Community name cannot exceed 50 characters!"));
-				}
-				community.name = name.trim();
-			}
-
-			if (description !== undefined) {
-				if (typeof description !== "string") {
-					return next(new BadRequestError("Description must be a string!"));
-				}
-				if (description.length > 500) {
-					return next(new BadRequestError("Description cannot exceed 500 characters!"));
-				}
-				community.description = description.trim();
-			}
-
-			// Handle optional image upload
-			if (req.file) {
-				// Delete old image from Cloudinary if it exists
-				if (community.image?.public_id) {
-					cloudinary.uploader
-						.destroy(community.image.public_id)
-						.catch((err) => {
-							logger.error(
-								"Failed to delete old community image from Cloudinary",
-								{ error: err.message },
-							);
-						});
-				}
-				community.image = {
-					url: (req.file as any).path,
-					public_id: (req.file as any).filename,
-				};
-			}
-
-			// Handle image removal (explicitly sent as empty string or null)
-			if (req.body.removeImage === "true") {
-				if (community.image?.public_id) {
-					cloudinary.uploader
-						.destroy(community.image.public_id)
-						.catch((err) => {
-							logger.error(
-								"Failed to delete community image from Cloudinary",
-								{ error: err.message },
-							);
-						});
-				}
-				community.image = { url: "", public_id: "" };
-			}
-
-			await community.save();
-
-			const populated = await Community.findById(community._id)
-				.populate("creator", "username fullName profilePic")
-				.populate("members.user", "username fullName profilePic")
-				.lean();
-
-			const io = getIO();
-			io.to(`community:${communityId}`).emit("community:updated", {
-				communityId,
-				community: { ...populated, isMember: true } as any,
-			});
-
-			return res.status(200).json({
-				success: true,
-				message: "Community updated successfully!",
-				community: { ...populated, isMember: true },
-			});
-		} catch (err: any) {
-			logger.error("Error in updateCommunity controller", {
-				error: err.message,
-			});
+		// Only the creator can update
+		if (community.creator.toString() !== currentUserId.toString()) {
 			return next(
-				err instanceof AppError
-					? err
-					: new AppError("Internal server error!"),
+				new ForbiddenError(
+					"Only the community creator can update the community!",
+				),
 			);
 		}
-	};
 
-	export const toggleCommunityMessageReaction = async (
+		// Validate and update name
+		const { name, description } = req.body;
+		if (name !== undefined) {
+			if (typeof name !== "string" || !name.trim()) {
+				return next(new BadRequestError("Community name is required!"));
+			}
+			if (name.trim().length > 50) {
+				return next(new BadRequestError("Community name cannot exceed 50 characters!"));
+			}
+			community.name = name.trim();
+		}
+
+		if (description !== undefined) {
+			if (typeof description !== "string") {
+				return next(new BadRequestError("Description must be a string!"));
+			}
+			if (description.length > 500) {
+				return next(new BadRequestError("Description cannot exceed 500 characters!"));
+			}
+			community.description = description.trim();
+		}
+
+		// Handle optional image upload
+		if (req.file) {
+			// Delete old image from Cloudinary if it exists
+			if (community.image?.public_id) {
+				cloudinary.uploader
+					.destroy(community.image.public_id)
+					.catch((err) => {
+						logger.error(
+							"Failed to delete old community image from Cloudinary",
+							{ error: err.message },
+						);
+					});
+			}
+			community.image = {
+				url: (req.file as any).path,
+				public_id: (req.file as any).filename,
+			};
+		}
+
+		// Handle image removal (explicitly sent as empty string or null)
+		if (req.body.removeImage === "true") {
+			if (community.image?.public_id) {
+				cloudinary.uploader
+					.destroy(community.image.public_id)
+					.catch((err) => {
+						logger.error(
+							"Failed to delete community image from Cloudinary",
+							{ error: err.message },
+						);
+					});
+			}
+			community.image = { url: "", public_id: "" };
+		}
+
+		await community.save();
+
+		const populated = await Community.findById(community._id)
+			.populate("creator", "username fullName profilePic")
+			.populate("members.user", "username fullName profilePic")
+			.lean();
+
+		const io = getIO();
+		io.to(`community:${communityId}`).emit("community:updated", {
+			communityId,
+			community: { ...populated, isMember: true } as any,
+		});
+
+		return res.status(200).json({
+			success: true,
+			message: "Community updated successfully!",
+			community: { ...populated, isMember: true },
+		});
+	} catch (err: any) {
+		logger.error("Error in updateCommunity controller", {
+			error: err.message,
+		});
+		return next(
+			err instanceof AppError
+				? err
+				: new AppError("Internal server error!"),
+		);
+	}
+};
+
+export const toggleCommunityMessageReaction = async (
 	req: Request<MessageParams>,
 	res: Response,
 	next: NextFunction,

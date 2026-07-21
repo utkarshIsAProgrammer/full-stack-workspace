@@ -17,6 +17,7 @@ import { createNotification } from "../utilities/notification";
 import { getCache, setCache, clearChatCache } from "../configs/cache";
 import { sanitizePlainText } from "../configs/sanitize";
 import cloudinary from "../configs/cloudinary";
+import { imagekit } from "../configs/imagekit";
 import {
 	isRecipientActiveInConversation,
 	getUserPresenceStatus,
@@ -179,7 +180,7 @@ export const getOrCreateConversation = async (
 						conversation: { ...existing, presence: retryPresence },
 					});
 				}
-			} catch (retryErr: any) {
+			} catch (retryErr) {
 				return next(new AppError("Internal server error!"));
 			}
 		}
@@ -453,34 +454,80 @@ export const sendMessage = async (
 			return next(new ForbiddenError("Cannot communicate with a blocked user!"));
 		}
 
-		// Map files uploaded via Multer
+		// Map files uploaded via Multer and upload to ImageKit (fallback to Cloudinary if keys aren't configured)
 		const uploadedFiles = (req.files as any[]) || [];
-		const fileAttachments = uploadedFiles.map((file) => {
-			let type: "voice_note" | "image" | "gif" | "video" | "file" = "file";
-			if (file.mimetype.startsWith("audio/")) {
-				type = "voice_note";
-			} else if (file.mimetype.startsWith("video/")) {
-				type = "video";
-			} else if (file.mimetype.startsWith("image/")) {
-				if (file.mimetype === "image/gif") {
-					type = "gif";
-				} else {
-					type = "image";
+		const fileAttachments = await Promise.all(
+			uploadedFiles.map(async (file) => {
+				let type: "voice_note" | "image" | "gif" | "video" | "file" = "file";
+				if (file.mimetype.startsWith("audio/")) {
+					type = "voice_note";
+				} else if (file.mimetype.startsWith("video/")) {
+					type = "video";
+				} else if (file.mimetype.startsWith("image/")) {
+					if (file.mimetype === "image/gif") {
+						type = "gif";
+					} else {
+						type = "image";
+					}
 				}
-			}
-			const attachment: any = {
-				url: file.path,
-				public_id: file.filename,
-				type,
-			};
-			if (type === "voice_note") {
-				const duration = req.body.duration ? Number(req.body.duration) : 0;
-				if (duration > 0) {
-					attachment.duration = duration;
+
+				let url = "";
+				let public_id = "";
+
+				if (imagekit) {
+					try {
+						// Upload to ImageKit
+						const uploadRes = await imagekit.upload({
+							file: file.buffer,
+							fileName: `${Date.now()}-${file.originalname}`,
+							folder: type === "voice_note" ? "/orbit/chats/voice_notes" : "/orbit/chats/media",
+						});
+						url = uploadRes.url;
+						public_id = uploadRes.fileId;
+					} catch (ikErr) {
+						logger.error("Failed to upload to ImageKit, falling back to Cloudinary", { error: (ikErr as Error).message });
+					}
 				}
-			}
-			return attachment;
-		});
+
+				// Fallback to Cloudinary if ImageKit is disabled or failed
+				if (!url) {
+					const cloudinaryUpload = (): Promise<any> => {
+						return new Promise((resolve, reject) => {
+							const stream = cloudinary.uploader.upload_stream(
+								{
+									folder: type === "voice_note" ? "orbit/chats/voice_notes" : "orbit/chats/media",
+									resource_type: "auto",
+								},
+								(error, result) => {
+									if (error || !result) {
+										reject(error || new Error("Cloudinary upload failed"));
+									} else {
+										resolve(result);
+									}
+								}
+							);
+							stream.end(file.buffer);
+						});
+					};
+					const uploadRes = await cloudinaryUpload();
+					url = uploadRes.secure_url;
+					public_id = uploadRes.public_id;
+				}
+
+				const attachment: any = {
+					url,
+					public_id,
+					type,
+				};
+				if (type === "voice_note") {
+					const duration = req.body.duration ? Number(req.body.duration) : 0;
+					if (duration > 0) {
+						attachment.duration = duration;
+					}
+				}
+				return attachment;
+			})
+		);
 
 		// Parse external attachments (e.g. external gifs, memes)
 		let bodyAttachments: any[] = [];
@@ -571,8 +618,8 @@ export const sendMessage = async (
 						});
 					}
 				}
-			} catch (notifErr: any) {
-				logger.error("Failed to create message_reply notification", { error: notifErr.message });
+			} catch (notifErr) {
+				logger.error("Failed to create message_reply notification", { error: (notifErr as Error).message });
 			}
 		}
 

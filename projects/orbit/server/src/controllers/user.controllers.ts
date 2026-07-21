@@ -20,6 +20,7 @@ import {
 import Comment from "../models/comment.model";
 import Like from "../models/like.model";
 import Follow from "../models/follow.model";
+import FollowRequest from "../models/followRequest.model";
 import Save from "../models/saves.model";
 import Repost from "../models/repost.model";
 import { Conversation } from "../models/conversation.model";
@@ -55,7 +56,7 @@ export const getUserById = async (
 		}
 
 		const cacheKey = `user:${userId}`;
-		let user: any = null;
+		let user: unknown = null;
 
 		try {
 			const cached = await getCache(cacheKey);
@@ -95,7 +96,7 @@ export const getUserById = async (
 			user: {
 				...user,
 				followingByMe: isFollowing,
-				pinnedPosts: user.pinnedPosts || [],
+				pinnedPosts: (user as any).pinnedPosts || [],
 			},
 		};
 
@@ -245,7 +246,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
 		}
 
 		// handle orphaned cloudinary images from posts
-		const userPosts = await Post.find({ author: user._id }).select(
+		const userPosts = await Post.find({ author: (user as any)._id }).select(
 			"image images",
 		);
 		const imageDeletions = userPosts.flatMap((post) => {
@@ -280,7 +281,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
 		// ── Clean up follow relationships and fix counts on other users ──
 		// 1. Users that the deleted user was FOLLOWING → decrement their followersCount
 		const usersBeingFollowed = await Follow.find({
-			follower: user._id,
+			follower: (user as any)._id,
 		}).select("following");
 		if (usersBeingFollowed.length > 0) {
 			const followingIds = usersBeingFollowed.map((f) => f.following);
@@ -292,7 +293,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
 
 		// 2. Users who were FOLLOWING the deleted user → decrement their followingCount
 		const usersFollowingDeleted = await Follow.find({
-			following: user._id,
+			following: (user as any)._id,
 		}).select("follower");
 		if (usersFollowingDeleted.length > 0) {
 			const followerIds = usersFollowingDeleted.map((f) => f.follower);
@@ -316,7 +317,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
 		const userComments = await Comment.aggregate([
 			{
 				$match: {
-					author: user._id,
+					author: (user as any)._id,
 				},
 			},
 			{ $group: { _id: "$post", count: { $sum: 1 } } },
@@ -331,7 +332,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
 		const userLikes = await Like.aggregate([
 			{
 				$match: {
-					author: user._id,
+					author: (user as any)._id,
 					post: { $ne: null },
 				},
 			},
@@ -345,7 +346,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
 		}
 
 		const userSaves = await Save.aggregate([
-			{ $match: { user: user._id } },
+			{ $match: { user: (user as any)._id } },
 			{ $group: { _id: "$post", count: { $sum: 1 } } },
 		]);
 		for (const stat of userSaves) {
@@ -356,7 +357,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
 		}
 
 		const userReposts = await Repost.aggregate([
-			{ $match: { user: user._id } },
+			{ $match: { user: (user as any)._id } },
 			{ $group: { _id: "$post", count: { $sum: 1 } } },
 		]);
 		for (const stat of userReposts) {
@@ -381,18 +382,18 @@ export const deleteAccount = async (req: Request, res: Response) => {
 		}
 
 		// Delete orphaned data
-		await Post.deleteMany({ author: user._id });
-		await Comment.deleteMany({ author: user._id });
-		await Like.deleteMany({ author: user._id });
-		await Save.deleteMany({ user: user._id });
-		await Repost.deleteMany({ user: user._id });
+		await Post.deleteMany({ author: (user as any)._id });
+		await Comment.deleteMany({ author: (user as any)._id });
+		await Like.deleteMany({ author: (user as any)._id });
+		await Save.deleteMany({ user: (user as any)._id });
+		await Repost.deleteMany({ user: (user as any)._id });
 		await Follow.deleteMany({
-			$or: [{ follower: user._id }, { following: user._id }],
+			$or: [{ follower: (user as any)._id }, { following: (user as any)._id }],
 		});
 
 		// Clean up direct chat data (Conversations, Messages, and attachments)
 		const userConversations = await Conversation.find({
-			participants: user._id,
+			participants: (user as any)._id,
 		});
 		const userConversationIds = userConversations.map((c) => c._id);
 
@@ -582,7 +583,7 @@ export const getUserByUsername = async (
 	const currentUserId = req.user?._id;
 	try {
 		const cacheKey = `user:username:${username}`;
-		let user: any = null;
+		let user: unknown = null;
 
 		try {
 			const cached = await getCache(cacheKey);
@@ -611,15 +612,15 @@ export const getUserByUsername = async (
 		if (currentUserId) {
 			const existingFollow = await Follow.findOne({
 				follower: currentUserId,
-				following: user._id,
+				following: (user as any)._id,
 			}).lean();
 			isFollowing = !!existingFollow;
 		}
 
 		// sync follow counts from Follow collection (authoritative)
 		const [actualFollowers, actualFollowing] = await Promise.all([
-			Follow.countDocuments({ following: user._id }),
-			Follow.countDocuments({ follower: user._id }),
+			Follow.countDocuments({ following: (user as any)._id }),
+			Follow.countDocuments({ follower: (user as any)._id }),
 		]);
 
 		const responseData = {
@@ -630,7 +631,7 @@ export const getUserByUsername = async (
 				followersCount: actualFollowers,
 				followingCount: actualFollowing,
 				followingByMe: isFollowing,
-				pinnedPosts: user.pinnedPosts || [],
+				pinnedPosts: (user as any).pinnedPosts || [],
 			},
 		};
 
@@ -878,10 +879,10 @@ export const pinPost = async (req: Request<Params>, res: Response) => {
 			throw new NotFoundError("User not found!");
 		}
 
-		const pinned = user.pinnedPosts || [];
+		const pinned = (user as any).pinnedPosts || [];
 
 		// check if already pinned
-		if (pinned.some((id) => id.toString() === postId)) {
+		if (pinned.some((id: any) => id.toString() === postId)) {
 			throw new BadRequestError("Post already pinned!");
 		}
 
@@ -889,7 +890,7 @@ export const pinPost = async (req: Request<Params>, res: Response) => {
 			throw new BadRequestError("Maximum 3 pinned posts allowed!");
 		}
 
-		pinned.push(new mongoose.Types.ObjectId(postId));
+		(user as any).pinnedPosts = pinned; (user as any).pinnedPosts = pinned;
 		user.pinnedPosts = pinned;
 		await user.save();
 
@@ -932,14 +933,14 @@ export const unpinPost = async (req: Request<Params>, res: Response) => {
 			throw new NotFoundError("User not found!");
 		}
 
-		const pinned = user.pinnedPosts || [];
-		const filtered = pinned.filter((id) => id.toString() !== postId);
+		const pinned = (user as any).pinnedPosts || [];
+		const filtered = pinned.filter((id: any) => id.toString() !== postId);
 
 		if (filtered.length === pinned.length) {
 			throw new BadRequestError("Post is not pinned!");
 		}
 
-		user.pinnedPosts = filtered;
+		(user as any).pinnedPosts = filtered;
 		await user.save();
 
 		// Emit real-time unpin event
@@ -981,7 +982,7 @@ export const getPinnedPosts = async (req: Request<Params>, res: Response) => {
 			throw new NotFoundError("User not found!");
 		}
 
-		const pinnedIds = user.pinnedPosts || [];
+		const pinnedIds = (user as any).pinnedPosts || [];
 		if (pinnedIds.length === 0) {
 			return res.status(200).json({ success: true, posts: [] });
 		}
@@ -997,11 +998,11 @@ export const getPinnedPosts = async (req: Request<Params>, res: Response) => {
 
 		// preserve pinned order and add pinnedByMe flag
 		const orderedPosts = pinnedIds
-			.map((id) =>
+			.map((id: any) =>
 				postsWithStatus.find((p) => p._id.toString() === id.toString()),
 			)
 			.filter(Boolean)
-			.map((post) => ({
+			.map((post: any) => ({
 				...post,
 				pinnedByMe: true,
 			}));
@@ -1038,19 +1039,23 @@ export const sendFollowRequest = async (req: Request<Params>, res: Response) => 
     if (!mongoose.Types.ObjectId.isValid(userId)) throw new BadRequestError("Invalid user ID!");
     if (currentUserId.toString() === userId) throw new BadRequestError("Cannot follow yourself!");
 
-    const targetUser = await User.findById(userId).select("isPrivate followRequests").lean();
+    const targetUser = await User.findById(userId).select("isPrivate").lean();
     if (!targetUser) throw new NotFoundError("User not found!");
 
-    const followReqIds = (targetUser as any).followRequests || [];
-    const alreadyRequested = followReqIds.some((id: any) => id.toString() === currentUserId.toString());
-
     if ((targetUser as any).isPrivate) {
+      // Check for existing pending request in the FollowRequest collection
+      const alreadyRequested = await FollowRequest.exists({
+        sender: currentUserId,
+        recipient: userId,
+      });
+
       if (alreadyRequested) {
         return res.status(200).json({ success: true, message: "Follow request already sent!" });
       }
 
-      await User.findByIdAndUpdate(userId, {
-        $push: { followRequests: currentUserId },
+      await FollowRequest.create({
+        sender: currentUserId,
+        recipient: userId,
       });
 
       await createNotification({
@@ -1081,17 +1086,12 @@ export const approveFollowRequest = async (req: Request<Params>, res: Response) 
     if (!mongoose.Types.ObjectId.isValid(userId)) throw new BadRequestError("Invalid user ID!");
 
     // Check that the current user has a pending request from userId
-    const currentUser = await User.findById(currentUserId);
-    if (!currentUser) throw new NotFoundError("User not found!");
-
-    const reqIds = currentUser.followRequests || [];
-    const hasRequest = reqIds.some((id: any) => id.toString() === userId);
-    if (!hasRequest) throw new BadRequestError("No pending follow request from this user!");
-
-    // Remove from followRequests
-    await User.findByIdAndUpdate(currentUserId, {
-      $pull: { followRequests: userId },
+    const pendingRequest = await FollowRequest.findOneAndDelete({
+      sender: userId,
+      recipient: currentUserId,
     });
+
+    if (!pendingRequest) throw new BadRequestError("No pending follow request from this user!");
 
     // Create the follow relationship
     await Follow.create({ follower: userId, following: currentUserId });
@@ -1128,16 +1128,12 @@ export const declineFollowRequest = async (req: Request<Params>, res: Response) 
     if (!currentUserId) throw new UnauthorizedError("Unauthorized!");
     if (!mongoose.Types.ObjectId.isValid(userId)) throw new BadRequestError("Invalid user ID!");
 
-    const currentUser = await User.findById(currentUserId);
-    if (!currentUser) throw new NotFoundError("User not found!");
-
-    const reqIds = currentUser.followRequests || [];
-    const hasRequest = reqIds.some((id: any) => id.toString() === userId);
-    if (!hasRequest) throw new BadRequestError("No pending follow request from this user!");
-
-    await User.findByIdAndUpdate(currentUserId, {
-      $pull: { followRequests: userId },
+    const deleted = await FollowRequest.findOneAndDelete({
+      sender: userId,
+      recipient: currentUserId,
     });
+
+    if (!deleted) throw new BadRequestError("No pending follow request from this user!");
 
     return res.status(200).json({ success: true, message: "Follow request declined!" });
   } catch (err: any) {

@@ -23,4 +23,11 @@ router.put("/read", protect, notificationLimiter, markAsRead); // Client alias
 router.put("/mark-as-read/:notificationId", protect, notificationLimiter, markAsRead);
 router.put("/:notificationId/read", protect, notificationLimiter, markAsRead); // Client alias
 
+// Email notification preferences
+import { getEmailPreferences, updateEmailPreferences, triggerDigest } from "../controllers/emailPreference.controller";
+
+router.get("/preferences", protect, notificationLimiter, getEmailPreferences);
+router.put("/preferences", protect, notificationLimiter, updateEmailPreferences);
+router.post("/digest", protect, notificationLimiter, triggerDigest);
+
 export { router as notificationRoutes };

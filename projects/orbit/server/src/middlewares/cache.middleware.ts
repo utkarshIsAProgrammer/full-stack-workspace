@@ -1,21 +1,23 @@
 /**
  * Redis Caching Middleware for API Responses
  * 
- * This middleware provides Redis-based caching for API responses
- * to improve performance and reduce database load.
+ * Provides Redis-based caching for API GET responses to reduce DB load.
+ * Uses SCAN-based pattern invalidation (safe for Upstash Redis REST).
  */
 
 import { Request, Response, NextFunction } from 'express';
 import { redis } from '../configs/redis';
+import { logger } from '../utilities/logger';
+import { clearByPattern } from '../configs/cache';
 
 interface CacheOptions {
-  ttl?: number; // Time to live in seconds
+  ttl?: number; // Time to live in seconds (default: 300 = 5 min)
   keyPrefix?: string;
   skipCache?: boolean;
 }
 
 /**
- * Generate cache key from request
+ * Generate a unique cache key from the request path + query + user ID.
  */
 const generateCacheKey = (req: Request, prefix: string = ''): string => {
   const userId = req.user?._id?.toString() || (req.user as any)?.id || 'anonymous';
@@ -25,13 +27,14 @@ const generateCacheKey = (req: Request, prefix: string = ''): string => {
 };
 
 /**
- * Cache middleware factory
+ * Cache middleware factory.
+ * Intercepts GET responses and caches them in Redis.
  */
 export const cacheMiddleware = (options: CacheOptions = {}) => {
   const { ttl = 300, keyPrefix = 'api', skipCache = false } = options;
 
   return async (req: Request, res: Response, next: NextFunction) => {
-    // Skip caching for non-GET requests
+    // Only cache GET requests
     if (req.method !== 'GET' || skipCache) {
       return next();
     }
@@ -39,48 +42,47 @@ export const cacheMiddleware = (options: CacheOptions = {}) => {
     try {
       const cacheKey = generateCacheKey(req, keyPrefix);
 
-      // Try to get cached response
-      const cached = await redis.get(cacheKey);
+      // Try cache hit first
+      const cached = await redis.get<string>(cacheKey);
       
       if (cached) {
-        // @upstash/redis already parses JSON, so cached is an object or string
-        const data = typeof cached === 'string' ? JSON.parse(cached) : cached;
+        // @upstash/redis stores strings, so parse it back
+        const data = typeof cached === 'string'
+          ? JSON.parse(cached)
+          : cached;
         return res.json(data);
       }
 
-      // Store original json method
+      // Intercept res.json() to capture and cache the response
       const originalJson = res.json.bind(res);
 
-      // Override json method to cache response
       res.json = function(data: any) {
-        // Cache the response
-        redis.setex(cacheKey, ttl, JSON.stringify(data)).catch((err: any) => {
-          console.error('Cache set error:', err);
-        });
+        // Fire-and-forget cache write
+        redis.set(cacheKey, JSON.stringify(data), { ex: ttl })
+          .catch((_err: unknown) => {
+            logger.error('Cache middleware set error', { error: (_err as any)?.message });
+          });
 
         return originalJson(data);
       };
 
       next();
-    } catch (error) {
-      console.error('Cache middleware error:', error);
-      // Continue without caching if Redis fails
+    } catch (error: any) {
+      logger.error('Cache middleware error', { error: error?.message });
+      // Fall through without caching
       next();
     }
   };
 };
 
 /**
- * Invalidate cache for a specific pattern
+ * Invalidate cache entries matching a prefix pattern.
+ * Uses the SCAN-based approach from configs/cache.ts (safe for production).
  */
 export const invalidateCache = async (pattern: string): Promise<void> => {
   try {
-    const keys = await redis.keys(pattern);
-    
-    if (keys.length > 0) {
-      await redis.del(...keys);
-    }
-  } catch (error) {
-    console.error('Cache invalidation error:', error);
+    await clearByPattern(pattern);
+  } catch (error: any) {
+    logger.error('Cache invalidation error', { pattern, error: error?.message });
   }
 };

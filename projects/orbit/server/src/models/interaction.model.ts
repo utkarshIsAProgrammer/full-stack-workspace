@@ -66,5 +66,10 @@ interactionSchema.index({ targetAuthorId: 1, timestamp: -1 });
 // Fast dedup check and single-interaction lookup
 interactionSchema.index({ userId: 1, postId: 1, type: 1 });
 
+// TTL index: automatically remove interactions older than 90 days.
+// This matches the affinity engine's LOOKBACK_DAYS (90) — interactions
+// beyond this window are never queried and can be safely purged by MongoDB.
+interactionSchema.index({ timestamp: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
+
 const Interaction = mongoose.model("Interaction", interactionSchema);
 export default Interaction;

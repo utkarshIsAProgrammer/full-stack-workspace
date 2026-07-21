@@ -28,6 +28,7 @@ import { protectViews } from "../middlewares/view.middleware";
 import { uploadPostMedia } from "../middlewares/upload.middleware";
 import { searchLimiter, interactionLimiter } from "../middlewares/ratelimit.middleware";
 import { cacheMiddleware } from "../middlewares/cache.middleware";
+import { getDrafts, createDraft, createScheduledPost } from "../controllers/draft.controller";
 
 const router = express.Router();
 
@@ -79,6 +80,16 @@ router.post("/:postId/publish", protect, interactionLimiter, publishDraft);
 
 // Quote repost (repost with commentary)
 router.post("/:postId/quote-repost", protect, interactionLimiter, quoteRepost);
+
+// Draft & scheduled post management
+router.get("/drafts", protect, getDrafts);
+router.post(
+  "/drafts",
+  protect,
+  uploadPostMedia.fields([{ name: "images", maxCount: 10 }, { name: "image", maxCount: 1 }, { name: "video", maxCount: 1 }]),
+  createDraft
+);
+router.post("/schedule", protect, interactionLimiter, createScheduledPost);
 
 export { router as postRoutes };
 

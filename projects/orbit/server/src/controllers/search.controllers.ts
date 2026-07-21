@@ -41,8 +41,8 @@ export const searchUsers = async (req: Request, res: Response) => {
           .sort({ _id: -1 })
           .limit(limit + 1)
           .lean();
-      } catch (textErr: any) {
-        logger.info("Text search failed, falling back to regex search", { error: textErr.message });
+      } catch (textErr) {
+        logger.info("Text search failed, falling back to regex search", { error: (textErr as Error).message });
       }
 
       if (users.length === 0) {
@@ -163,8 +163,8 @@ export const searchPosts = async (req: Request, res: Response) => {
           .sort({ _id: -1 })
           .limit(limit + 1)
           .lean();
-      } catch (textErr: any) {
-        logger.info("Text search failed, falling back to regex search", { error: textErr.message });
+      } catch (textErr) {
+        logger.info("Text search failed, falling back to regex search", { error: (textErr as Error).message });
       }
 
       if (posts.length === 0) {

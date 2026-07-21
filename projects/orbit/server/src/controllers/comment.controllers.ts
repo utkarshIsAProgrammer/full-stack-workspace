@@ -324,7 +324,7 @@ export const addComment = async (req: Request<Params>, res: Response) => {
     );
     
     // increment parent comment's replies count if this is a reply
-    let updatedParentComment: any = null;
+    let updatedParentComment: unknown = null;
     if (parent) {
       updatedParentComment = await Comment.findByIdAndUpdate(
         parent,
@@ -363,7 +363,7 @@ export const addComment = async (req: Request<Params>, res: Response) => {
     // Emit socket event
     if (populatedComment && updatedPost) {
       if (parent && updatedParentComment) {
-        emitCommentReply(postId, parent, populatedComment, author.toString(), updatedPost.commentsCount, updatedParentComment.repliesCount);
+        emitCommentReply(postId, parent, populatedComment, author.toString(), updatedPost.commentsCount, (updatedParentComment as any).repliesCount);
       } else if (parent) {
         emitCommentReply(postId, parent, populatedComment, author.toString(), updatedPost.commentsCount, 1);
       } else {
@@ -524,7 +524,7 @@ export const deleteComment = async (
       );
     
     // if this is a reply, decrement parent's repliesCount
-    let updatedParentComment: any = null;
+    let updatedParentComment: unknown = null;
     if (comment.parent) {
       updatedParentComment = await Comment.findByIdAndUpdate(
         comment.parent,

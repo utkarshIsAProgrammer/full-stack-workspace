@@ -53,7 +53,7 @@ const audioRoomSchema = new mongoose.Schema(
       default: 0,
     },
   },
-  { timestamps: true }
+  { timestamps: true, suppressReservedKeysWarning: true }
 );
 
 audioRoomSchema.index({ isLive: 1, startedAt: -1 });

@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import type { Request, Response, NextFunction } from "express";
 import Report from "../models/report.model";
 import {
@@ -67,27 +68,32 @@ export const getReports = async (
     }
 
     const status = req.query.status as string || "pending";
-    const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(50, parseInt(req.query.limit as string) || 10);
+    const cursor = req.query.cursor as string | undefined;
 
     const query: any = {};
     if (status !== "all") query.status = status;
+    if (cursor && mongoose.Types.ObjectId.isValid(cursor)) {
+      query._id = { $lt: new mongoose.Types.ObjectId(cursor) };
+    }
 
     const reports = await Report.find(query)
       .populate("reporter", "username fullName profilePic")
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
+      .sort({ _id: -1 })
+      .limit(limit + 1)
       .lean();
 
-    const total = await Report.countDocuments(query);
+    const hasMore = reports.length > limit;
+    if (hasMore) {
+      reports.pop();
+    }
+    const nextCursor = reports.slice(-1).shift()?._id || null;
 
     return res.status(200).json({
       success: true,
       reports,
-      page,
-      totalPages: Math.ceil(total / limit),
-      total,
+      hasMore,
+      nextCursor,
     });
   } catch (err: any) {
     logger.error("Error getting reports", { error: err.message });

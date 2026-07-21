@@ -56,10 +56,6 @@ const checkConnectionRateLimit = async (ip: string): Promise<boolean> => {
 };
 
 export const initSocket = async (server: http.Server) => {
-  const allowedOrigins = [env.CLIENT_URL.replace(/\/$/, "")];
-  if (env.NODE_ENV === "development") {
-    allowedOrigins.push("http://localhost:5173", "http://localhost:5174");
-  }
   io = new SocketIOServer(server, {
     cors: {
       origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
@@ -68,12 +64,26 @@ export const initSocket = async (server: http.Server) => {
           return;
         }
         const originWithoutSlash = origin.replace(/\/$/, "");
-        if (
-          allowedOrigins.includes(originWithoutSlash)
-        ) {
+
+        // In development, allow any localhost origin
+        if (env.NODE_ENV === "development") {
+          const isLocalhost =
+            originWithoutSlash.startsWith("http://localhost:") ||
+            originWithoutSlash.startsWith("http://127.0.0.1:") ||
+            originWithoutSlash.startsWith("https://localhost:") ||
+            originWithoutSlash.startsWith("https://127.0.0.1:");
+          if (isLocalhost) {
+            callback(null, true);
+            return;
+          }
+        }
+
+        // Also check the configured CLIENT_URL
+        if (originWithoutSlash === env.CLIENT_URL.replace(/\/$/, "")) {
           callback(null, true);
           return;
         }
+
         callback(new Error("Not allowed by CORS"));
       },
       credentials: true,
@@ -225,30 +235,46 @@ export const initSocket = async (server: http.Server) => {
       // Broadcast presence IMMEDIATELY — not gated behind Redis.
       // Mobile browsers kill WebSocket when backgrounded, so we need to fire
       // presence as fast as possible before the user switches away.
+      //
+      // Uses CACHED conversation partner IDs to avoid a DB query on every
+      // connect/disconnect (which can be frequent with mobile backgrounding).
       const broadcastOnline = async () => {
         try {
-          const conversations = await Conversation.find({ participants: s.userId }).select("participants").lean();
-          for (const conv of conversations) {
-            const otherParticipant = conv.participants.find((p: any) => p.toString() !== s.userId);
-            if (otherParticipant) {
-              const otherId = otherParticipant.toString();
-              io.to(`user:${otherId}`).emit("user:presence", {
-                userId: s.userId,
+          // Try Redis cache first for conversation partner IDs
+          const cachedPartners = await getCache<string[]>(`user:partners:${s.userId}`);
+          let partnerIds: string[] = [];
+
+          if (cachedPartners && cachedPartners.length > 0) {
+            partnerIds = cachedPartners;
+          } else {
+            // Cache miss — query DB and cache for 5 minutes
+            const conversations = await Conversation.find({ participants: s.userId }).select("participants").lean();
+            partnerIds = conversations
+              .map((conv) => {
+                const other = conv.participants.find((p: any) => p.toString() !== s.userId);
+                return other ? other.toString() : null;
+              })
+              .filter(Boolean) as string[];
+
+            // Cache partner IDs (5 min TTL — new conversations update via clearByPattern on creation)
+            setCache(`user:partners:${s.userId}`, partnerIds, 300).catch(() => {});
+          }
+
+          // Notify partners that this user is online
+          for (const otherId of partnerIds) {
+            io.to(`user:${otherId}`).emit("user:presence", {
+              userId: s.userId,
+              status: "online",
+            });
+          }
+
+          // Send partner presences to the newly connected user
+          for (const otherId of partnerIds) {
+            if (onlineUsers.has(otherId)) {
+              io.to(`user:${s.userId}`).emit("user:presence", {
+                userId: otherId,
                 status: "online",
               });
-            }
-          }
-          // Send partner presences to the newly connected user
-          for (const conv of conversations) {
-            const otherParticipant = conv.participants.find((p: any) => p.toString() !== s.userId);
-            if (otherParticipant) {
-              const otherId = otherParticipant.toString();
-              if (onlineUsers.has(otherId)) {
-                io.to(`user:${s.userId}`).emit("user:presence", {
-                  userId: otherId,
-                  status: "online",
-                });
-              }
             }
           }
         } catch (error: any) {
@@ -257,10 +283,12 @@ export const initSocket = async (server: http.Server) => {
       };
 
       // Fire immediately (no await — don't block connection for this)
-      broadcastOnline();	// Redis: persist presence in background with short TTL (60s) — don't rely on deleteCache alone
-	      setCache(`presence:user:${s.userId}`, "online", 60).catch(err => {
-	        logger.error("Failed to set user presence in Redis", { error: err instanceof Error ? err.message : String(err), userId: s.userId });
-	      });
+      broadcastOnline();
+
+      // Redis: persist presence in background with short TTL (60s)
+      setCache(`presence:user:${s.userId}`, "online", 60).catch(err => {
+        logger.error("Failed to set user presence in Redis", { error: err instanceof Error ? err.message : String(err), userId: s.userId });
+      });
     }
 
     // Presence heartbeat — client sends this periodically to refresh their online status.
@@ -463,6 +491,19 @@ export const initSocket = async (server: http.Server) => {
         userId: s.userId,
         isTyping,
       });
+    });
+
+    // ── Audio Room Socket Events ──────────────────────────────────────
+    socket.on("room:join", ({ roomId }) => {
+      if (!s.userId || !roomId) return;
+      socket.join(`room:${roomId}`);
+      logger.info("Socket joined audio room", { userId: s.userId, roomId });
+    });
+
+    socket.on("room:leave", ({ roomId }) => {
+      if (!s.userId || !roomId) return;
+      socket.leave(`room:${roomId}`);
+      logger.info("Socket left audio room", { userId: s.userId, roomId });
     });
 
     // Handle unauthorized access attempts to protected events

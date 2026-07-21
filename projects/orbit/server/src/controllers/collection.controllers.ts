@@ -48,11 +48,26 @@ export const getCollections = async (
   try {
     if (!currentUserId) return next(new UnauthorizedError("Unauthorized!"));
 
-    const collections = await Collection.find({ user: currentUserId })
-      .sort({ createdAt: -1 })
+    const limit = Math.min(Number(req.query.limit) || 20, 50);
+    const cursor: string | undefined = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
+
+    const query: any = { user: currentUserId };
+    if (cursor && mongoose.Types.ObjectId.isValid(cursor)) {
+      query._id = { $lt: new mongoose.Types.ObjectId(cursor) };
+    }
+
+    const collections = await Collection.find(query)
+      .sort({ _id: -1 })
+      .limit(limit + 1)
       .lean();
 
-    return res.status(200).json({ success: true, collections });
+    const hasMore = collections.length > limit;
+    if (hasMore) {
+      collections.pop();
+    }
+    const nextCursor = collections.slice(-1).shift()?._id || null;
+
+    return res.status(200).json({ success: true, collections, hasMore, nextCursor });
   } catch (err: any) {
     logger.error("Error getting collections", { error: err.message });
     return next(new AppError("Internal server error!"));
@@ -168,20 +183,42 @@ export const getCollectionPosts = async (
 
   try {
     if (!currentUserId) return next(new UnauthorizedError("Unauthorized!"));
+    if (typeof collectionId !== "string" || !mongoose.Types.ObjectId.isValid(collectionId)) {
+      return next(new BadRequestError("Invalid collection ID!"));
+    }
 
-    const collection = await Collection.findById(collectionId)
-      .populate({
-        path: "posts",
-        populate: { path: "author", select: "username fullName profilePic" },
-      })
-      .lean();
-
+    const collection = await Collection.findById(collectionId).select("user posts").lean();
     if (!collection) return next(new NotFoundError("Collection not found!"));
-    if ((collection as any).user.toString() !== currentUserId.toString()) {
+    if (collection.user.toString() !== currentUserId.toString()) {
       return next(new BadRequestError("You can only view your own collections!"));
     }
 
-    return res.status(200).json({ success: true, posts: (collection as any).posts || [] });
+    const limit = Math.min(Number(req.query.limit) || 20, 50);
+    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
+
+    // Get a slice of the posts array using cursor
+    const postIds: any[] = collection.posts || [];
+    let startIndex = 0;
+    if (cursor) {
+      const cursorIndex = postIds.findIndex(
+        (p) => p.toString() === cursor
+      );
+      if (cursorIndex >= 0) {
+        startIndex = cursorIndex + 1;
+      }
+    }
+
+    const slicedIds = postIds.slice(startIndex, startIndex + limit);
+    const hasMore = startIndex + limit < postIds.length;
+    const nextCursor = hasMore ? postIds[startIndex + limit - 1]?.toString() || null : null;
+
+    // Fetch the sliced posts with author populated
+    const posts = await Post.find({ _id: { $in: slicedIds } })
+      .populate("author", "username fullName profilePic")
+      .sort({ _id: -1 })
+      .lean();
+
+    return res.status(200).json({ success: true, posts, hasMore, nextCursor });
   } catch (err: any) {
     logger.error("Error getting collection posts", { error: err.message });
     return next(new AppError("Internal server error!"));

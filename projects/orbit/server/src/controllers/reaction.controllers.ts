@@ -54,7 +54,7 @@ export const toggleReaction = async (
       (r) => (r.sender?._id || r.sender)?.toString() === userIdStr && r.emoji === emoji.trim(),
     );
 
-    let reaction: any = null;
+    let reaction: unknown = null;
     let type: "add" | "remove" = "add";
 
     if (existingIndex >= 0) {
@@ -73,7 +73,7 @@ export const toggleReaction = async (
         sender: currentUserId,
         createdAt: new Date(),
       };
-      message.reactions!.push(reaction);
+      message.reactions!.push(reaction as any);
     }
 
     await message.save();

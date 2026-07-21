@@ -1,12 +1,56 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { User, UserDocument } from "../models/user.model";
+import { User } from "../models/user.model";
 import { env } from "../configs/env";
 import { getCache, setCache } from "../configs/cache";
+import { getErrorMessage } from "../types/global";
 
 type JwtPayload = {
   userId: string;
 };
+
+/** Shape of the cached/returned user document (without password). */
+interface SafeUser {
+  _id: string;
+  username: string;
+  email: string;
+  fullName: string;
+  profilePic?: { url: string; public_id: string };
+  isBanned?: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Resolve a user from cache or database.
+ * Returns null if not found.
+ */
+async function resolveUser(userId: string): Promise<SafeUser | null> {
+  const cacheKey = `auth:user:${userId}`;
+  const cached = await getCache<SafeUser>(cacheKey);
+  if (cached) return cached;
+
+  const user = await User.findById(userId).select("-password").lean();
+  if (!user) return null;
+
+  // Cache for 5 minutes
+  await setCache(cacheKey, user, 300);
+  return user as unknown as SafeUser;
+}
+
+/**
+ * Extract JWT token from cookie or Authorization header.
+ */
+function extractToken(req: Request): string | null {
+  const fromCookie = req.cookies?.jwt;
+  if (fromCookie) return fromCookie;
+
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    return authHeader.split(" ")[1] ?? null;
+  }
+
+  return null;
+}
 
 export const protect = async (
   req: Request,
@@ -14,12 +58,7 @@ export const protect = async (
   next: NextFunction,
 ) => {
   try {
-    // get token from cookies or Authorization header
-    let token = req.cookies?.jwt;
-    if (!token && req.headers.authorization?.startsWith("Bearer ")) {
-      token = req.headers.authorization.split(" ")[1];
-    }
-
+    const token = extractToken(req);
     if (!token) {
       return res.status(401).json({
         success: false,
@@ -27,32 +66,17 @@ export const protect = async (
       });
     }
 
-    // verify the token is using secret key
-    const decoded = jwt.verify(
-      token,
-      env.JWT_SECRET,
-      {
-        issuer: "orbit",
-        audience: "orbit-users",
-      }
-    ) as JwtPayload;
+    const decoded = jwt.verify(token, env.JWT_SECRET, {
+      issuer: "orbit",
+      audience: "orbit-users",
+    }) as JwtPayload;
 
-    // fetch user from cache or db and exclude password field
-    const cacheKey = `auth:user:${decoded.userId}`;
-    let user = await getCache<any>(cacheKey);
-
+    const user = await resolveUser(decoded.userId);
     if (!user) {
-      user = await User.findById(decoded.userId).select("-password").lean();
-
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: "User not found!",
-        });
-      }
-
-      // cache for 5 minutes
-      await setCache(cacheKey, user, 300);
+      return res.status(404).json({
+        success: false,
+        message: "User not found!",
+      });
     }
 
     if (user.isBanned) {
@@ -62,16 +86,14 @@ export const protect = async (
       });
     }
 
-    // attach user to request object
-    req.user = user;
-
+    req.user = user as any;
     next();
   } catch (err: any) {
     let message = "Invalid token!";
     if (err instanceof jwt.TokenExpiredError) {
       message = "Token expired!";
     } else if (err instanceof jwt.JsonWebTokenError) {
-      message = "Invalid token!";
+      message = getErrorMessage(err);
     }
     return res.status(401).json({
       success: false,
@@ -86,41 +108,22 @@ export const optionalAuth = async (
   next: NextFunction,
 ) => {
   try {
-    let token = req.cookies?.jwt;
-    if (!token && req.headers.authorization?.startsWith("Bearer ")) {
-      token = req.headers.authorization.split(" ")[1];
-    }
+    const token = extractToken(req);
+    if (!token) return next();
 
-    if (!token) {
-      return next();
-    }
+    const decoded = jwt.verify(token, env.JWT_SECRET, {
+      issuer: "orbit",
+      audience: "orbit-users",
+    }) as JwtPayload;
 
-    const decoded = jwt.verify(
-      token,
-      env.JWT_SECRET,
-      {
-        issuer: "orbit",
-        audience: "orbit-users",
-      }
-    ) as JwtPayload;
-
-    const cacheKey = `auth:user:${decoded.userId}`;
-    let user = await getCache<any>(cacheKey);
-
-    if (!user) {
-      user = await User.findById(decoded.userId).select("-password").lean();
-      if (user) {
-        await setCache(cacheKey, user, 300);
-      }
-    }
-
+    const user = await resolveUser(decoded.userId);
     if (user && !user.isBanned) {
-      req.user = user;
+      req.user = user as any;
     }
 
     next();
-  } catch (err) {
-    // silently ignore token errors for optional auth
+  } catch (err: any) {
+    // Silently ignore token errors for optional auth
     next();
   }
 };

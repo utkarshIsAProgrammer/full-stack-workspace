@@ -93,7 +93,8 @@ interface FeedResult {
 async function generateCandidates(
   userId: string,
   affinityScores: Map<string, number>,
-  seenPosts: string[]
+  seenPosts: string[],
+  followedUserIds: string[]
 ): Promise<any[]> {
   const threeDaysAgo = new Date(Date.now() - POOL.RECENT_DAYS * 24 * 60 * 60 * 1000);
   const candidateMap = new Map<string, any>(); // dedup by post._id
@@ -116,12 +117,6 @@ async function generateCandidates(
       excludedUserIds.add(m.user.toString());
     }
   });
-
-  // 1. Posts from followed users + self
-  const followedUserIds = await Follow.find({ follower: userId })
-    .select("following")
-    .lean()
-    .then((docs) => docs.map((d) => d.following.toString()));
 
   const networkUserIds = [...followedUserIds, userId.toString()].filter((id) => !excludedUserIds.has(id));
 
@@ -419,20 +414,19 @@ export async function getRankedFeed(
   const contentAffinity = (user as any).contentAffinity as Map<string, number> || new Map();
   const seenPosts: string[] = (user as any).seenPosts || [];
 
+  // Get followed IDs once to reuse in candidate generation and scoring
+  const followedUserIds = await Follow.find({ follower: userId })
+    .select("following")
+    .lean()
+    .then((docs) => docs.map((d) => d.following.toString()));
+  const followedIds = new Set(followedUserIds);
+
   // 3. Generate candidates (new users with empty affinity fall back to recency/follow-based feed)
-  const candidates = await generateCandidates(userId, affinityScores, seenPosts);
+  const candidates = await generateCandidates(userId, affinityScores, seenPosts, followedUserIds);
 
   if (candidates.length === 0) {
     return { posts: [], nextCursor: null, hasMore: false };
   }
-
-  // 4. Get followed IDs for scoring
-  const followedIds = new Set(
-    await Follow.find({ follower: userId })
-      .select("following")
-      .lean()
-      .then((docs) => docs.map((d) => d.following.toString()))
-  );
 
   // 5. Score each candidate
   let scored: ScoredPost[] = candidates.map((post) =>

@@ -55,6 +55,8 @@ communitySchema.index({ name: 1 });
 communitySchema.index({ "members.user": 1 });
 communitySchema.index({ creator: 1 });
 communitySchema.index({ createdAt: -1 });
+communitySchema.index({ "members.user": 1, updatedAt: -1 });
+communitySchema.index({ memberCount: -1 });
 
 type CommunityType = InferSchemaType<typeof communitySchema>;
 export type CommunityDocument = HydratedDocument<CommunityType>;
