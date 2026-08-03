@@ -36,7 +36,11 @@ const userMissionSchema = new mongoose.Schema<IUserMission>(
     date: { type: String, required: true },
     missions: [
       {
-        type: String,
+        type: {
+          type: String,
+          enum: ["post", "comment", "like", "profile_view", "share", "story"],
+          required: true,
+        },
         current: { type: Number, default: 0 },
         target: Number,
         completed: { type: Boolean, default: false },

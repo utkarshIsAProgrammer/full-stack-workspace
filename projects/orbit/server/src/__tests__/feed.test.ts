@@ -44,6 +44,8 @@ async function createApp() {
   app.use(cookieParser());
   const { feedRoutes } = await import("../routes/feed.routes");
   app.use("/api/feed", feedRoutes);
+  const feedForYouRoutes = (await import("../routes/feedForYou.routes")).default;
+  app.use("/api/feed", feedForYouRoutes);
   return app;
 }
 

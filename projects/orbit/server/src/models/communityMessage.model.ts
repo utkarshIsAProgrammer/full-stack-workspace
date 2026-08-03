@@ -80,6 +80,18 @@ const communityMessageSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     }],
+    // Messages hidden ENTIRELY for this user because they left the community
+    // (per-user history clearing). Distinct from deletedFor (delete-for-me) —
+    // delete-for-me messages are returned to the client with their deletedFor
+    // array intact so the UI can render a "This message was deleted" placeholder.
+    clearedFor: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    }],
+    seenBy: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    }],
   },
   { timestamps: true }
 );

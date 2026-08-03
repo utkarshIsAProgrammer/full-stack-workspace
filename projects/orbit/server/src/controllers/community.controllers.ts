@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import type { Request, Response, NextFunction } from "express";
 import { Community } from "../models/community.model";
 import { CommunityMessage } from "../models/communityMessage.model";
+import Notification from "../models/notification.model";
 import {
 	BadRequestError,
 	NotFoundError,
@@ -13,6 +14,7 @@ import { logger } from "../utilities/logger";
 import { sanitizePlainText } from "../configs/sanitize";
 import cloudinary from "../configs/cloudinary";
 import { getIO } from "../configs/socket";
+import { generateToken } from "../services/livekitService";
 
 type CommunityParams = {
 	communityId: string;
@@ -77,7 +79,7 @@ export const createCommunity = async (
 		return res.status(201).json({
 			success: true,
 			message: "Community created successfully!",
-			community: populated,
+			community: { ...populated, isMember: true },
 		});
 	} catch (err: any) {
 		logger.error("Error in createCommunity controller", {
@@ -282,6 +284,7 @@ export const getPinnedMessages = async (
 		const pinnedMessages = await CommunityMessage.find({
 			_id: { $in: community.pinnedMessages },
 			isDeleted: { $ne: true },
+			clearedFor: { $nin: [currentUserId] },
 		})
 			.populate("sender", "username fullName profilePic")
 			.populate({
@@ -534,6 +537,22 @@ export const joinCommunity = async (
 		community.memberCount = community.members.length;
 		await community.save();
 
+		// ── Rejoin handling: only see messages sent after this join ──
+		// If the user has left this community before (their ID exists in any
+		// message's clearedFor from the leave-time bulk update), hide every
+		// message created before now so they start with a clean chat history.
+		// deletedFor is also checked to catch legacy leave-clear records.
+		const hasLeftBefore = await CommunityMessage.exists({
+			community: communityId,
+			$or: [{ clearedFor: currentUserId }, { deletedFor: currentUserId }],
+		});
+		if (hasLeftBefore) {
+			await CommunityMessage.updateMany(
+				{ community: communityId, createdAt: { $lt: new Date() } },
+				{ $addToSet: { clearedFor: currentUserId } },
+			);
+		}
+
 		// Join the socket room for real-time updates
 		const io = getIO();
 		io.to(`community:${communityId}`).emit("community:member-joined", {
@@ -610,6 +629,15 @@ export const leaveCommunity = async (
 		) as any;
 		community.memberCount = community.members.length;
 		await community.save();
+
+		// ── Clear the leaving user's chat history (per-user soft delete) ──
+		// Every message in the community is marked clearedFor for this user so
+		// they can no longer see any of it after leaving (or after rejoining).
+		// Other members are completely unaffected — nothing is deleted globally.
+		await CommunityMessage.updateMany(
+			{ community: communityId },
+			{ $addToSet: { clearedFor: currentUserId } },
+		);
 
 		const io = getIO();
 		io.to(`community:${communityId}`).emit("community:member-left", {
@@ -731,7 +759,15 @@ export const getCommunityMessages = async (
 		}
 
 		// Build pagination query
-		const query: any = { community: communityId, isDeleted: { $ne: true } };
+		const query: any = {
+			community: communityId,
+			isDeleted: { $ne: true },
+			// Hide messages the user cleared when they left the community
+			// (per-user soft delete). Delete-for-me messages are returned intact
+			// (with their deletedFor array) so the client can render the
+			// "This message was deleted" placeholder for that user only.
+			clearedFor: { $nin: [currentUserId] },
+		};
 		if (cursor && mongoose.Types.ObjectId.isValid(cursor)) {
 			query._id = { $lt: cursor };
 		}
@@ -810,30 +846,66 @@ export const sendCommunityMessage = async (
 			);
 		}
 
-		// Handle file uploads
+		// Check if messaging is enabled (creator can always send)
+		if (
+			!community.messagingEnabled &&
+			community.creator.toString() !== currentUserId.toString()
+		) {
+			return next(
+				new ForbiddenError(
+					"Messaging is currently disabled in this community!",
+				),
+			);
+		}
+
+		// Handle file uploads — upload to Cloudinary from memory buffer
 		const uploadedFiles = (req.files as any[]) || [];
-		const fileAttachments = uploadedFiles.map((file) => {
-			let type: "voice_note" | "image" | "gif" | "video" | "file" = "file";
-			if (file.mimetype.startsWith("audio/")) {
-				type = "voice_note";
-			} else if (file.mimetype.startsWith("video/")) {
-				type = "video";
-			} else if (file.mimetype.startsWith("image/")) {
-				type = file.mimetype === "image/gif" ? "gif" : "image";
-			}
-			const attachment: any = {
-				url: file.path,
-				public_id: file.filename,
-				type,
-			};
-			if (type === "voice_note") {
-				const duration = req.body.duration ? Number(req.body.duration) : 0;
-				if (duration > 0) {
-					attachment.duration = duration;
+		const fileAttachments = await Promise.all(
+			uploadedFiles.map(async (file) => {
+				let type: "voice_note" | "image" | "gif" | "video" | "file" = "file";
+				if (file.mimetype.startsWith("audio/")) {
+					type = "voice_note";
+				} else if (file.mimetype.startsWith("video/")) {
+					type = "video";
+				} else if (file.mimetype.startsWith("image/")) {
+					type = file.mimetype === "image/gif" ? "gif" : "image";
 				}
-			}
-			return attachment;
-		});
+
+				// Upload to Cloudinary from buffer (memoryStorage does not provide file.path/file.filename)
+				const cloudinaryUpload = (): Promise<any> => {
+					return new Promise((resolve, reject) => {
+						const stream = cloudinary.uploader.upload_stream(
+							{
+								folder: type === "voice_note" ? "orbit/chats/voice_notes" : "orbit/chats/media",
+								resource_type: "auto",
+							},
+							(error, result) => {
+								if (error || !result) {
+									reject(error || new Error("Cloudinary upload failed"));
+								} else {
+									resolve(result);
+								}
+							}
+						);
+						stream.end(file.buffer);
+					});
+				};
+				const uploadRes = await cloudinaryUpload();
+
+				const attachment: any = {
+					url: uploadRes.secure_url,
+					public_id: uploadRes.public_id,
+					type,
+				};
+				if (type === "voice_note") {
+					const duration = req.body.duration ? Number(req.body.duration) : 0;
+					if (duration > 0) {
+						attachment.duration = duration;
+					}
+				}
+				return attachment;
+			})
+		);
 
 		// Parse external attachments
 		let bodyAttachments: any[] = [];
@@ -885,6 +957,54 @@ export const sendCommunityMessage = async (
 		// Emit to community room
 		const io = getIO();
 		io.to(`community:${communityId}`).emit("community:message:new", populatedMessage);
+
+		// Determine message type from attachments for notification text
+		let messageType: "text" | "photo" | "video" | "voice_note" | "file" | "gif" | "sticker" = "text";
+		if (attachments.length > 0) {
+			const firstAttach = attachments[0];
+			if (firstAttach.type === "image") messageType = "photo";
+			else if (firstAttach.type === "gif") messageType = "gif";
+			else if (firstAttach.type === "sticker") messageType = "sticker";
+			else if (firstAttach.type === "video") messageType = "video";
+			else if (firstAttach.type === "voice_note") messageType = "voice_note";
+			else if (firstAttach.type === "file") messageType = "file";
+		}
+
+		// Create notifications for all other members (not the sender)
+		const otherMembers = community.members.filter(
+			(m) => m.user.toString() !== currentUserId.toString()
+		);
+
+		// Create notifications and populate sender for socket emission
+		const createAndEmitNotif = async (recipientId: string) => {
+			try {
+				const notif = new Notification({
+					recipient: recipientId,
+					sender: currentUserId,
+					type: "community_message",
+					community: communityId,
+					message: populatedMessage?._id,
+					messageType,
+				});
+				await notif.save();
+
+				// Populate sender for the socket payload so App.tsx can read sender.fullName
+				const populated = await Notification.findById(notif._id)
+					.populate("sender", "username fullName profilePic")
+					.lean();
+
+				io.to(`user:${recipientId}`).emit("notification", populated);
+			} catch (err: any) {
+				logger.error("Failed to create community message notification", {
+					error: err.message,
+					recipientId,
+				});
+			}
+		};
+
+		Promise.allSettled(
+			otherMembers.map((m) => createAndEmitNotif(m.user.toString()))
+		);
 
 		return res.status(201).json({
 			success: true,
@@ -1010,7 +1130,7 @@ export const deleteCommunityMessage = async (
 			);
 		}
 
-		// 5 minutes check for non-creators
+		// 5 minutes check for regular members (creator bypasses this)
 		if (isSender && !isCreator) {
 			const diffMs = Date.now() - message.createdAt.getTime();
 			const DELETE_TIME_LIMIT = 5 * 60 * 1000;
@@ -1096,7 +1216,7 @@ export const deleteCommunityMessageForMe = async (
 		);
 
 		if (!alreadyDeleted) {
-			message.deletedFor.push(currentUserId);
+			message.deletedFor.push(new mongoose.Types.ObjectId(userIdStr));
 			await message.save();
 		}
 
@@ -1240,6 +1360,587 @@ export const updateCommunity = async (
 				: new AppError("Internal server error!"),
 		);
 	}
+};
+
+// ─── Search Community Messages ────────────────────────────────────
+/**
+ * Search messages within a community by text content.
+ * GET /api/communities/:communityId/messages/search?q=...
+ */
+export const searchCommunityMessages = async (
+	req: Request<CommunityParams>,
+	res: Response,
+	next: NextFunction,
+) => {
+	const { communityId } = req.params;
+	const currentUserId = req.user?._id;
+	const q = (req.query.q as string || "").trim();
+	const limit = Math.min(Number(req.query.limit) || 20, 50);
+
+	try {
+		if (!currentUserId) {
+			return next(new UnauthorizedError("Unauthorized!"));
+		}
+
+		if (!mongoose.Types.ObjectId.isValid(communityId)) {
+			return next(new BadRequestError("Invalid community ID!"));
+		}
+
+		if (!q || q.length < 1) {
+			return next(new BadRequestError("Search query is required!"));
+		}
+
+		// Verify user is a member
+		const community = await Community.findById(communityId);
+		if (!community) {
+			return next(new NotFoundError("Community not found!"));
+		}
+
+		if (
+			!community.members.some(
+				(m) => m.user.toString() === currentUserId.toString(),
+			)
+		) {
+			return next(
+				new ForbiddenError(
+					"You must be a member to search messages!",
+				),
+			);
+		}
+
+		// Escape regex special characters in the search query
+		const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+		const messages = await CommunityMessage.find({
+			community: communityId,
+			isDeleted: { $ne: true },
+			clearedFor: { $nin: [currentUserId] },
+			text: { $regex: escapedQ, $options: "i" },
+		})
+			.populate("sender", "username fullName profilePic")
+			.populate({
+				path: "replyTo",
+				select: "sender text attachments createdAt",
+				populate: { path: "sender", select: "username fullName profilePic" },
+			})
+			.sort({ createdAt: -1 })
+			.limit(limit)
+			.lean();
+
+		return res.status(200).json({
+			success: true,
+			messages: messages.reverse(),
+			total: messages.length,
+		});
+	} catch (err: any) {
+		logger.error("Error in searchCommunityMessages controller", {
+			error: err.message,
+		});
+		return next(
+			err instanceof AppError
+				? err
+				: new AppError("Internal server error!"),
+		);
+	}
+};
+
+// ─── Admin / Creator Actions ────────────────────────────────────
+
+/**
+ * Remove a member from the community (creator/admins only).
+ * POST /api/communities/:communityId/remove-member
+ */
+export const removeMemberFromCommunity = async (
+  req: Request<CommunityParams>,
+  res: Response,
+  next: NextFunction,
+) => {
+  const { communityId } = req.params;
+  const { memberId } = req.body;
+  const currentUserId = req.user?._id;
+
+  try {
+    if (!currentUserId) {
+      return next(new UnauthorizedError("Unauthorized!"));
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(communityId)) {
+      return next(new BadRequestError("Invalid community ID!"));
+    }
+
+    if (!memberId || !mongoose.Types.ObjectId.isValid(memberId)) {
+      return next(new BadRequestError("Valid member ID is required!"));
+    }
+
+    const community = await Community.findById(communityId);
+    if (!community) {
+      return next(new NotFoundError("Community not found!"));
+    }
+
+    const userIdStr = currentUserId.toString();
+    const memberIdStr = memberId.toString();
+
+    // Only the creator can remove members
+    if (community.creator.toString() !== userIdStr) {
+      return next(
+        new ForbiddenError("Only the community creator can remove members!"),
+      );
+    }
+
+    // Cannot remove the creator
+    if (memberIdStr === community.creator.toString()) {
+      return next(new BadRequestError("Cannot remove the community creator!"));
+    }
+
+    // Check member exists
+    const memberExists = community.members.some(
+      (m) => m.user.toString() === memberIdStr,
+    );
+
+    if (!memberExists) {
+      return next(new NotFoundError("Member not found in this community!"));
+    }
+
+    // Remove member
+    community.members = community.members.filter(
+      (m) => m.user.toString() !== memberIdStr,
+    ) as any;
+    community.memberCount = community.members.length;
+    await community.save();
+
+    const io = getIO();
+    io.to(`community:${communityId}`).emit("community:member-removed", {
+      communityId,
+      removedUserId: memberIdStr,
+      memberCount: community.memberCount,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Member removed successfully!",
+      memberCount: community.memberCount,
+    });
+  } catch (err: any) {
+    logger.error("Error in removeMemberFromCommunity controller", {
+      error: err.message,
+    });
+    return next(
+      err instanceof AppError
+        ? err
+        : new AppError("Internal server error!"),
+    );
+  }
+};
+
+/**
+ * Toggle messaging enabled/disabled for the community (creator only).
+ * POST /api/communities/:communityId/toggle-messaging
+ */
+export const toggleCommunityMessaging = async (
+  req: Request<CommunityParams>,
+  res: Response,
+  next: NextFunction,
+) => {
+  const { communityId } = req.params;
+  const currentUserId = req.user?._id;
+
+  try {
+    if (!currentUserId) {
+      return next(new UnauthorizedError("Unauthorized!"));
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(communityId)) {
+      return next(new BadRequestError("Invalid community ID!"));
+    }
+
+    const community = await Community.findById(communityId);
+    if (!community) {
+      return next(new NotFoundError("Community not found!"));
+    }
+
+    if (community.creator.toString() !== currentUserId.toString()) {
+      return next(
+        new ForbiddenError("Only the community creator can toggle messaging!"),
+      );
+    }
+
+    community.messagingEnabled = !community.messagingEnabled;
+    await community.save();
+
+    const io = getIO();
+    io.to(`community:${communityId}`).emit("community:messaging-toggled", {
+      communityId,
+      messagingEnabled: community.messagingEnabled,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: community.messagingEnabled
+        ? "Messaging enabled!"
+        : "Messaging disabled!",
+      messagingEnabled: community.messagingEnabled,
+    });
+  } catch (err: any) {
+    logger.error("Error in toggleCommunityMessaging controller", {
+      error: err.message,
+    });
+    return next(
+      err instanceof AppError
+        ? err
+        : new AppError("Internal server error!"),
+    );
+  }
+};
+
+/**
+ * Toggle audio calls enabled/disabled for the community (creator only).
+ * POST /api/communities/:communityId/toggle-audio-calls
+ */
+export const toggleCommunityAudioCalls = async (
+  req: Request<CommunityParams>,
+  res: Response,
+  next: NextFunction,
+) => {
+  const { communityId } = req.params;
+  const currentUserId = req.user?._id;
+
+  try {
+    if (!currentUserId) {
+      return next(new UnauthorizedError("Unauthorized!"));
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(communityId)) {
+      return next(new BadRequestError("Invalid community ID!"));
+    }
+
+    const community = await Community.findById(communityId);
+    if (!community) {
+      return next(new NotFoundError("Community not found!"));
+    }
+
+    if (community.creator.toString() !== currentUserId.toString()) {
+      return next(
+        new ForbiddenError("Only the community creator can toggle audio calls!"),
+      );
+    }
+
+    community.audioCallEnabled = !community.audioCallEnabled;
+    await community.save();
+
+    const io = getIO();
+    io.to(`community:${communityId}`).emit("community:calls-toggled", {
+      communityId,
+      audioCallEnabled: community.audioCallEnabled,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: community.audioCallEnabled
+        ? "Audio calls enabled!"
+        : "Audio calls disabled!",
+      audioCallEnabled: community.audioCallEnabled,
+    });
+  } catch (err: any) {
+    logger.error("Error in toggleCommunityAudioCalls controller", {
+      error: err.message,
+    });
+    return next(
+      err instanceof AppError
+        ? err
+        : new AppError("Internal server error!"),
+    );
+  }
+};
+
+/**
+ * Toggle video calls enabled/disabled for the community (creator only).
+ * POST /api/communities/:communityId/toggle-video-calls
+ */
+export const toggleCommunityVideoCalls = async (
+  req: Request<CommunityParams>,
+  res: Response,
+  next: NextFunction,
+) => {
+  const { communityId } = req.params;
+  const currentUserId = req.user?._id;
+
+  try {
+    if (!currentUserId) {
+      return next(new UnauthorizedError("Unauthorized!"));
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(communityId)) {
+      return next(new BadRequestError("Invalid community ID!"));
+    }
+
+    const community = await Community.findById(communityId);
+    if (!community) {
+      return next(new NotFoundError("Community not found!"));
+    }
+
+    if (community.creator.toString() !== currentUserId.toString()) {
+      return next(
+        new ForbiddenError("Only the community creator can toggle video calls!"),
+      );
+    }
+
+    community.videoCallEnabled = !community.videoCallEnabled;
+    await community.save();
+
+    const io = getIO();
+    io.to(`community:${communityId}`).emit("community:calls-toggled", {
+      communityId,
+      videoCallEnabled: community.videoCallEnabled,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: community.videoCallEnabled
+        ? "Video calls enabled!"
+        : "Video calls disabled!",
+      videoCallEnabled: community.videoCallEnabled,
+    });
+  } catch (err: any) {
+    logger.error("Error in toggleCommunityVideoCalls controller", {
+      error: err.message,
+    });
+    return next(
+      err instanceof AppError
+        ? err
+        : new AppError("Internal server error!"),
+    );
+  }
+};
+
+/**
+ * Clear all messages in the community (creator only).
+ * POST /api/communities/:communityId/clear-chat
+ */
+export const clearCommunityChat = async (
+  req: Request<CommunityParams>,
+  res: Response,
+  next: NextFunction,
+) => {
+  const { communityId } = req.params;
+  const currentUserId = req.user?._id;
+
+  try {
+    if (!currentUserId) {
+      return next(new UnauthorizedError("Unauthorized!"));
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(communityId)) {
+      return next(new BadRequestError("Invalid community ID!"));
+    }
+
+    const community = await Community.findById(communityId);
+    if (!community) {
+      return next(new NotFoundError("Community not found!"));
+    }
+
+    if (community.creator.toString() !== currentUserId.toString()) {
+      return next(
+        new ForbiddenError("Only the community creator can clear the chat!"),
+      );
+    }
+
+    // Soft-delete all messages
+    await CommunityMessage.updateMany(
+      { community: communityId },
+      {
+        $set: {
+          isDeleted: true,
+          text: "This message was deleted",
+          attachments: [],
+        },
+      },
+    );
+
+    // Clear pinned messages since those are references
+    community.pinnedMessages = [];
+    await community.save();
+
+    const io = getIO();
+    io.to(`community:${communityId}`).emit("community:chat-cleared", {
+      communityId,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Chat cleared successfully!",
+    });
+  } catch (err: any) {
+    logger.error("Error in clearCommunityChat controller", {
+      error: err.message,
+    });
+    return next(
+      err instanceof AppError
+        ? err
+        : new AppError("Internal server error!"),
+    );
+  }
+};
+
+// ─── Get community media by type ────────────────────────────────
+/**
+ * Get community messages filtered by attachment type (image, video, voice_note, file).
+ * GET /api/communities/:communityId/media?type=image&limit=50
+ */
+export const getCommunityMedia = async (
+	req: Request<CommunityParams>,
+	res: Response,
+	next: NextFunction,
+) => {
+	const { communityId } = req.params;
+	const currentUserId = req.user?._id;
+	const mediaType = (req.query.type as string) || "";
+	const limit = Math.min(Number(req.query.limit) || 50, 100);
+	const skip = Math.max(0, Number(req.query.skip) || 0);
+
+	try {
+		if (!currentUserId) {
+			return next(new UnauthorizedError("Unauthorized!"));
+		}
+
+		if (!mongoose.Types.ObjectId.isValid(communityId)) {
+			return next(new BadRequestError("Invalid community ID!"));
+		}
+
+		const validTypes = ["image", "video", "voice_note", "file", "gif"];
+		if (!mediaType || !validTypes.includes(mediaType)) {
+			return next(new BadRequestError("Invalid media type! Must be one of: image, video, voice_note, file, gif"));
+		}
+
+		// Verify user is a member
+		const community = await Community.findById(communityId);
+		if (!community) {
+			return next(new NotFoundError("Community not found!"));
+		}
+
+		const isMember = community.members.some(
+			(m) => m.user.toString() === currentUserId.toString(),
+		);
+		if (!isMember) {
+			return next(new ForbiddenError("You must be a member to view community media!"));
+		}
+
+		// Query messages with attachments matching the requested type.
+		// Media is hidden for the user if they cleared the community history
+		// (clearedFor) OR deleted the message for themselves (deletedFor).
+		const messages = await CommunityMessage.find({
+			community: communityId,
+			isDeleted: { $ne: true },
+			"attachments.type": mediaType,
+			$nor: [{ clearedFor: currentUserId }, { deletedFor: currentUserId }],
+		})
+			.populate("sender", "username fullName profilePic")
+			.sort({ createdAt: -1 })
+			.skip(skip)
+			.limit(limit)
+			.lean();
+
+		return res.status(200).json({
+			success: true,
+			messages,
+			total: messages.length,
+		});
+	} catch (err: any) {
+		logger.error("Error in getCommunityMedia controller", {
+			error: err.message,
+		});
+		return next(
+			err instanceof AppError
+				? err
+				: new AppError("Internal server error!"),
+		);
+	}
+};
+
+// ─── LiveKit Group Call Token ────────────────────────────────────
+/**
+ * Generate a LiveKit access token for a community group call.
+ * Creates a LiveKit room for the community so all members can join.
+ * POST /api/communities/:communityId/livekit-token
+ */
+export const generateLiveKitToken = async (
+  req: Request<CommunityParams>,
+  res: Response,
+  next: NextFunction,
+) => {
+  const { communityId } = req.params;
+  const currentUserId = req.user?._id;
+  const { type } = (req.body || {}) as { type?: "audio" | "video" };
+  const callType: "audio" | "video" = type === "video" ? "video" : "audio";
+
+  try {
+    if (!currentUserId) {
+      return next(new UnauthorizedError("Unauthorized!"));
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(communityId)) {
+      return next(new BadRequestError("Invalid community ID!"));
+    }
+
+    // Verify user is a member
+    const community = await Community.findById(communityId);
+    if (!community) {
+      return next(new NotFoundError("Community not found!"));
+    }
+
+    const isMember = community.members.some(
+      (m) => m.user.toString() === currentUserId.toString(),
+    );
+    if (!isMember) {
+      return next(new ForbiddenError("You must be a member to start a call!"));
+    }
+
+    // Check if calls are enabled
+    if (!community.audioCallEnabled && !community.videoCallEnabled) {
+      return next(new BadRequestError("Calls are disabled in this community!"));
+    }
+
+    // Validate the specific call type is enabled for this community
+    if (callType === "audio" && !community.audioCallEnabled) {
+      return next(new BadRequestError("Audio calls are disabled in this community!"));
+    }
+    if (callType === "video" && !community.videoCallEnabled) {
+      return next(new BadRequestError("Video calls are disabled in this community!"));
+    }
+
+    // Stable room name per community — every member who requests a token
+    // joins the SAME LiveKit room, so a real group call can form.
+    const roomName = `community-${communityId}`;
+
+    // Generate the LiveKit token
+    const token = await generateToken(
+      roomName,
+      (req.user as any).fullName || "Unknown",
+      currentUserId.toString(),
+      true,
+      true,
+    );
+
+    if (!token) {
+      return next(new AppError("LiveKit is not configured. Please set LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET."));
+    }
+
+    return res.status(200).json({
+      success: true,
+      token,
+      roomName,
+      livekitUrl: process.env.LIVEKIT_URL || "",
+      type: callType,
+    });
+  } catch (err: any) {
+    logger.error("Error in generateLiveKitToken controller", {
+      error: err.message,
+    });
+    return next(
+      err instanceof AppError
+        ? err
+        : new AppError("Internal server error!"),
+    );
+  }
 };
 
 export const toggleCommunityMessageReaction = async (

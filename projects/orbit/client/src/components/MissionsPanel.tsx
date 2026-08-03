@@ -56,9 +56,6 @@ export default function MissionsPanel() {
       });
       const json = await res.json();
       if (res.ok && json.success) {
-        window.dispatchEvent(new CustomEvent("showToast", {
-          detail: { message: json.message || "Reward claimed!", type: "success" },
-        }));
         fetchMissions();
       } else {
         window.dispatchEvent(new CustomEvent("showToast", {
@@ -77,7 +74,7 @@ export default function MissionsPanel() {
       <div className="rounded-xl border border-zinc-800/50 bg-zinc-900/30 p-4">
         <div className="flex items-center gap-2 mb-3">
           <ListChecks className="h-4 w-4 text-violet-400" />
-          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Daily Missions</span>
+          <span className="text-label-sm font-semibold text-zinc-300">Daily Missions</span>
         </div>
         <div className="flex items-center justify-center py-4">
           <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
@@ -96,7 +93,7 @@ export default function MissionsPanel() {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <ListChecks className="h-4 w-4 text-violet-400" />
-          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Daily Missions</span>
+          <span className="text-label-sm font-semibold text-zinc-300">Daily Missions</span>
         </div>
         <span className="text-[10px] text-zinc-500">
           {claimedCount}/{totalCount} claimed

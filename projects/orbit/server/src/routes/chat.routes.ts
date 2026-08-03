@@ -7,10 +7,12 @@ import {
   editMessage,
   deleteMessage,
   deleteMessageForMe,
-  undoMessage,
   getUserPresence,
   deleteConversation,
   clearConversationMessages,
+  pinMessage,
+  unpinMessage,
+  getPinnedMessages,
 } from "../controllers/chat.controllers";
 import { toggleReaction } from "../controllers/reaction.controllers";
 import { searchMessages } from "../controllers/messageSearch.controllers";
@@ -44,14 +46,16 @@ router.put("/messages/:messageId", interactionLimiter, editMessage);
 router.delete("/messages/:messageId", interactionLimiter, deleteMessage);
 router.delete("/messages/:messageId/delete-for-me", interactionLimiter, deleteMessageForMe);
 
-// Undo send route (5-second window, hard delete)
-router.delete("/messages/:messageId/undo", interactionLimiter, undoMessage);
-
 // Reaction route
 router.post("/messages/:messageId/reactions", interactionLimiter, toggleReaction);
 
 // Message search route
 router.get("/conversations/:conversationId/search", generalLimiter, searchMessages);
+
+// Pin / Unpin routes
+router.post("/messages/:messageId/pin", interactionLimiter, pinMessage);
+router.post("/messages/:messageId/unpin", interactionLimiter, unpinMessage);
+router.get("/conversations/:conversationId/pinned-messages", generalLimiter, getPinnedMessages);
 
 // Presence route
 router.get("/users/:userId/presence", generalLimiter, cacheMiddleware({ ttl: 60 }), getUserPresence);

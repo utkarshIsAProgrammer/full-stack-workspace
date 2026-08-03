@@ -43,9 +43,6 @@ export default function BlockButton({ targetUserId, onBlockChange }: BlockButton
         if (res.ok && data.success) {
           setIsBlocked(false);
           onBlockChange?.(false);
-          window.dispatchEvent(new CustomEvent("showToast", {
-            detail: { message: "User unblocked", type: "success" },
-          }));
         }
       } else {
         const res = await apiFetch(`/api/blocks/${targetUserId}`, { method: "POST" });
@@ -53,9 +50,6 @@ export default function BlockButton({ targetUserId, onBlockChange }: BlockButton
         if (res.ok && data.success) {
           setIsBlocked(true);
           onBlockChange?.(true);
-          window.dispatchEvent(new CustomEvent("showToast", {
-            detail: { message: "User blocked", type: "success" },
-          }));
         }
       }
     } catch (err) {

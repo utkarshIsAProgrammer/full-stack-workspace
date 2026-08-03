@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { apiFetch } from "./api";
 
 export type NotificationPermissionState = "default" | "granted" | "denied" | "unsupported";
 
@@ -25,10 +26,91 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
 
   try {
     const permission = await Notification.requestPermission();
+    if (permission === "granted") {
+      // Subscribe to push notifications after permission is granted
+      await subscribeToPushNotifications();
+    }
     return permission;
   } catch (err) {
     logger.error("Failed to request notification permission", err);
     return "denied";
+  }
+}
+
+/**
+ * Convert a base64 URL-encoded string to a Uint8Array (for VAPID public key).
+ */
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+}
+
+/**
+ * Subscribe the current device to push notifications via the service worker.
+ * This creates a PushSubscription and sends it to the backend for storage.
+ */
+async function subscribeToPushNotifications(): Promise<void> {
+  try {
+    // Check if service worker is active (PWA)
+    const reg = await navigator.serviceWorker.ready;
+    if (!reg) {
+      logger.warn("[Push] Service worker not ready — push subscription skipped");
+      return;
+    }
+
+    // Check if already subscribed
+    const existingSubscription = await reg.pushManager.getSubscription();
+    if (existingSubscription) {
+      // Subscription exists — send it to backend if not already registered
+      // The backend will deduplicate by endpoint
+      await sendSubscriptionToServer(existingSubscription);
+      return;
+    }
+
+    // Fetch the VAPID public key from the backend
+    const res = await apiFetch("/api/push/vapid-key");
+    if (!res.ok) {
+      logger.warn("[Push] Could not fetch VAPID key — push subscription skipped");
+      return;
+    }
+    const data = await res.json();
+    if (!data.success || !data.publicKey) {
+      logger.warn("[Push] No VAPID key configured on server — push subscription skipped");
+      return;
+    }
+
+    const vapidPublicKey = data.publicKey as string;
+
+    // Create a new subscription
+    const subscription = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+    });
+
+    await sendSubscriptionToServer(subscription);
+    logger.info("[Push] Successfully subscribed to push notifications");
+  } catch (err) {
+    // Push subscription failed — common on HTTP-only sites (requires HTTPS or localhost)
+    logger.warn("[Push] Failed to subscribe to push notifications", err);
+  }
+}
+
+/**
+ * Send the push subscription object to the backend for storage.
+ */
+async function sendSubscriptionToServer(subscription: PushSubscription): Promise<void> {
+  try {
+    await apiFetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subscription: subscription.toJSON(),
+      }),
+    });
+  } catch (err) {
+    logger.warn("[Push] Failed to register push subscription with server", err);
   }
 }
 

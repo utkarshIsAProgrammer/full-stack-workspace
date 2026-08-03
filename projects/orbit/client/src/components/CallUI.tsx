@@ -53,6 +53,21 @@ export default function CallUI({
 	const [hasMultipleCameras, setHasMultipleCameras] = useState(false);
 	const [callDuration, setCallDuration] = useState(0);
 	const [micLevel, setMicLevel] = useState(0); // 0–100 for the volume meter
+	const [poorNetwork, setPoorNetwork] = useState(false);
+
+	// Listens for the adaptive bitrate monitor's quality reports (dispatched
+	// from App.tsx). Shows a subtle "reducing quality" banner while the call
+	// is congestion-limited, so users understand why the picture softened.
+	useEffect(() => {
+		const handleQuality = (e: Event) => {
+			const detail = (e as CustomEvent<{ poor: boolean }>).detail;
+			setPoorNetwork(!!detail?.poor);
+		};
+		window.addEventListener("callNetworkQuality", handleQuality as EventListener);
+		return () => {
+			window.removeEventListener("callNetworkQuality", handleQuality as EventListener);
+		};
+	}, []);
 	const localVideoRef = useRef<HTMLVideoElement>(null);
 	const remoteVideoRef = useRef<HTMLVideoElement>(null);
 	const remoteAudioRef = useRef<HTMLAudioElement>(null);
@@ -400,13 +415,17 @@ export default function CallUI({
 		if (!pc || !localStream) return;
 
 		try {
-			// Stop current video tracks
-			localStream.getVideoTracks().forEach((t) => t.stop());
-
-			// Get new stream with opposite facing mode
+			// Request the new camera FIRST (before stopping the old track) so
+			// that if getUserMedia fails, the current video keeps working
+			// instead of being left permanently dead.
 			const newStream = await navigator.mediaDevices.getUserMedia({
 				audio: false,
-				video: { facingMode: newFacingMode },
+				video: {
+					facingMode: newFacingMode,
+					width: { ideal: 1280 },
+					height: { ideal: 720 },
+					frameRate: { ideal: 30 },
+				},
 			});
 
 			const newVideoTrack = newStream.getVideoTracks()[0];
@@ -414,6 +433,9 @@ export default function CallUI({
 				newStream.getTracks().forEach((t) => t.stop());
 				return;
 			}
+
+			// Stop old video tracks only after the new camera is acquired
+			localStream.getVideoTracks().forEach((t) => t.stop());
 
 			// Remove old video tracks from local stream
 			localStream
@@ -629,7 +651,7 @@ export default function CallUI({
 							/>
 						)}
 					</div>
-					<h3 className="text-xl font-bold text-white mt-5 tracking-tight">
+					<h3 className="text-display-xs text-white mt-5">
 						{callState.partnerName}
 					</h3>
 					<p className="text-sm text-zinc-400 mt-1.5 font-medium tracking-wide">
@@ -651,6 +673,17 @@ export default function CallUI({
 								</span>
 							</motion.div>
 						)}
+					{callState.status === "active" && poorNetwork && (
+						<motion.div
+							initial={{ opacity: 0, y: -5 }}
+							animate={{ opacity: 1, y: 0 }}
+							className="flex items-center justify-center gap-2 mt-4">
+							<span className="h-2 w-2 rounded-full bg-orange-400 animate-pulse" />
+							<span className="text-[11px] font-black text-orange-300 uppercase tracking-[0.12em]">
+								Poor connection — reducing video quality
+							</span>
+						</motion.div>
+					)}
 				</div>
 
 				{/* Local video preview (picture-in-picture for video calls) */}

@@ -3,20 +3,14 @@ import ImageCropModal from "./ImageCropModal";
 import React, { useState, useEffect, useCallback } from "react";
 import { useKeyboardOpen } from "../hooks/useKeyboardOpen";
 import {
-	User as UserIcon,
-	Lock,
 	Trash2,
 	LogOut,
 	Camera,
 	CheckCircle,
 	AlertCircle,
-	Shield,
-	ShieldBan,
 	Eye,
 	EyeOff,
 	X,
-	Gift,
-
 } from "lucide-react";
 import { User as UserType } from "../types";
 import GlassCard from "./GlassCard";
@@ -36,9 +30,7 @@ interface SettingsProps {
 	onUserUpdate: (newUser: UserType) => void;
 	onLogout: () => void;
 	onEditProfileOpenChange?: (open: boolean) => void;
-}
-
-export default function Settings({
+}	export default function Settings({
 	user,
 	onUserUpdate,
 	onLogout,
@@ -55,6 +47,20 @@ export default function Settings({
 		setActiveSubTab(tab);
 		setFieldErrors({});
 	};
+
+	// Shared settings navigation config — rendered as a desktop sidebar and
+	// a single horizontal line for non-desktop devices (text only, slim).
+	const settingsNav: {
+		id: "profile" | "password" | "account" | "blocked" | "invites" | "logout";
+		label: string;
+	}[] = [
+		{ id: "profile", label: "Profile" },
+		{ id: "password", label: "Password" },
+		{ id: "account", label: "Account" },
+		{ id: "invites", label: "Invites" },
+		{ id: "blocked", label: "Blocked" },
+		{ id: "logout", label: "Log Out" },
+	];
 
 	// Notify parent when edit profile tab opens/closes (for dock hiding)
 	useEffect(() => {
@@ -292,7 +298,7 @@ export default function Settings({
 			{!isKeyboardOpen && (
 				<div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
 					<div>
-						<h2 className="text-xl font-bold font-sans text-zinc-100 leading-normal tracking-tight">
+						<h2 className="text-display-sm text-zinc-100">
 							Account Settings
 						</h2>
 						<p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
@@ -302,19 +308,81 @@ export default function Settings({
 					</div>
 				</div>
 			)}
-			<div className="flex flex-col gap-6 w-full max-w-2xl mx-auto">
-				{/* Main interactive cards area */}
-				<div className="w-full min-h-75">
+			<div className="flex flex-col lg:flex-row gap-6 w-full mx-auto lg:items-start lg:gap-6">
+
+				{/* Desktop sidebar nav (lg+) — text only, sticky */}
+				<nav
+					className="hidden lg:flex lg:flex-col lg:gap-1 lg:w-48 lg:shrink-0 lg:sticky lg:top-24"
+					aria-label="Settings sections">
+					<div className="flex flex-col gap-1 rounded-2xl border border-zinc-800/60 bg-zinc-950/55 backdrop-blur-xl p-1.5 shadow-xl">
+						{settingsNav.map((item) => {
+							const active = activeSubTab === item.id;
+							return (
+								<button
+									key={item.id}
+									type="button"
+									onClick={() => switchSubTab(item.id)}
+									aria-current={active ? "page" : undefined}
+									className={`flex w-full items-center rounded-xl px-3 py-2 text-[12.5px] font-semibold transition-all cursor-pointer ${
+										active
+											? item.id === "logout"
+												? "bg-red-600 text-white shadow-md"
+												: "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm"
+											: item.id === "logout"
+												? "text-red-500 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-500/10"
+												: "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900/60"
+									}`}>
+									<span className="truncate">{item.label}</span>
+								</button>
+							);
+						})}
+					</div>
+				</nav>
+
+				{/* Content column — tablet tab bar + cards + mobile dock */}
+				<div className="flex-1 min-w-0 w-full flex flex-col gap-6">
+
+					{/* Compact top nav — one horizontal line for all non-desktop
+					    devices (mobile + tablet). Text only, evenly spread, slim,
+					    no scroll. */}
+					<div className="lg:hidden -mx-1 px-1">
+						<div className="flex items-center justify-between gap-0.5 rounded-full border border-zinc-800/60 bg-zinc-950/55 backdrop-blur-xl px-1 py-1 shadow-xl">
+							{settingsNav.map((item) => {
+								const active = activeSubTab === item.id;
+								return (
+									<button
+										key={item.id}
+										type="button"
+										onClick={() => switchSubTab(item.id)}
+										aria-current={active ? "page" : undefined}
+										className={`flex min-w-0 flex-1 items-center justify-center rounded-full px-2 py-1.5 text-[11px] font-semibold transition-all cursor-pointer sm:text-[12px] ${
+											active
+												? item.id === "logout"
+													? "bg-red-600 text-white shadow-sm"
+													: "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm"
+												: item.id === "logout"
+													? "text-red-500 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-500/10"
+													: "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
+										}`}>
+										<span className="w-full truncate text-center">{item.label}</span>
+									</button>
+								);
+							})}
+						</div>
+					</div>
+
+					{/* Main interactive cards area */}
+					<div className="w-full min-h-75">
 					{activeSubTab === "profile" && (
 						<GlassCard
 							animate={true}
 							className={`transition-all duration-200 ${
-								isKeyboardOpen ? "p-4" : "p-6"
+								isKeyboardOpen ? "!p-4" : "!p-6"
 							}`}>
 							<h3
-								className={`font-bold text-white uppercase tracking-wider mb-4 border-b border-zinc-900 pb-2 transition-all duration-200 ${
-									isKeyboardOpen ? "text-[11px]" : "text-sm"
-								}`}>
+							className={`font-bold text-white uppercase tracking-wider mb-4 border-b border-zinc-900 pb-2 transition-all duration-200 ${
+								isKeyboardOpen ? "text-[11px]" : "text-sm"
+							}`}>
 								Edit Profile
 							</h3>
 
@@ -497,7 +565,7 @@ export default function Settings({
 										rows={3}
 										value={bio}
 										onChange={(e) => setBio(e.target.value)}
-										className="w-full !rounded-xl border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all resize-none leading-relaxed"
+										className="w-full !rounded-lg border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all resize-none leading-relaxed"
 										maxLength={300}
 										spellCheck={false}
 									/>
@@ -525,12 +593,12 @@ export default function Settings({
 						<GlassCard
 							animate={true}
 							className={`transition-all duration-200 ${
-								isKeyboardOpen ? "p-4" : "p-6"
+								isKeyboardOpen ? "!p-4" : "!p-6"
 							}`}>
 							<h3
-								className={`font-bold text-white uppercase tracking-wider mb-4 border-b border-zinc-900 pb-2 transition-all duration-200 ${
-									isKeyboardOpen ? "text-[11px]" : "text-sm"
-								}`}>
+							className={`font-bold text-white uppercase tracking-wider mb-4 border-b border-zinc-900 pb-2 transition-all duration-200 ${
+								isKeyboardOpen ? "text-[11px]" : "text-sm"
+							}`}>
 								Modify Password
 							</h3>
 
@@ -682,7 +750,7 @@ export default function Settings({
 						<GlassCard
 							animate={true}
 							className={`border-rose-500/25 dark:border-rose-950/25 bg-red-950/10 dark:bg-red-950/10 shadow-none transition-all duration-200 ${
-								isKeyboardOpen ? "p-4" : "p-6"
+								isKeyboardOpen ? "!p-4" : "!p-6"
 							}`}>
 							<div className="flex items-center gap-2 mb-3 border-b border-rose-500/20 pb-2">
 								<Trash2 className="h-4 w-4 text-rose-500 animate-bounce" />
@@ -822,7 +890,7 @@ export default function Settings({
 								<LogOut className="h-5 w-5" />
 							</div>
 							<div className="space-y-1.5">
-								<h3 className="text-xs font-black uppercase tracking-widest text-white">
+								<h3 className="text-label font-semibold text-white">
 									Sign Out of Orbit
 								</h3>
 								<p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 leading-normal max-w-xs mx-auto uppercase tracking-tight">
@@ -849,82 +917,6 @@ export default function Settings({
 						</GlassCard>
 					)}
 				</div>
-
-				{/* BOTTOM ALIGNED SETTINGS MENU PANEL (SUB-DOCK) */}
-				<div className="mt-6 flex justify-center w-full relative z-20 pb-3 sm:mt-8 sm:pb-4">
-					<div className="flex flex-row flex-wrap items-center justify-center gap-1 rounded-full border border-zinc-800/60 bg-zinc-950/55 backdrop-blur-xl px-2 py-2 shadow-xl max-w-lg w-full sm:gap-1.5 sm:px-3">
-						<button
-							type="button"
-							onClick={() => switchSubTab("profile")}
-							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
-								activeSubTab === "profile"
-									? "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm scale-102"
-									: "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
-							}`}>
-							<UserIcon className="h-3.5 w-3.5" />
-							<span className="hidden sm:inline">Profile</span>
-						</button>
-
-						<button
-							type="button"
-							onClick={() => switchSubTab("password")}
-							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
-								activeSubTab === "password"
-									? "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm scale-102"
-									: "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
-							}`}>
-							<Lock className="h-3.5 w-3.5" />
-							<span className="hidden sm:inline">Password</span>
-						</button>
-
-						<button
-							type="button"
-							onClick={() => switchSubTab("account")}
-							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
-								activeSubTab === "account"
-									? "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm scale-102"
-									: "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
-							}`}>
-							<Shield className="h-3.5 w-3.5" />
-							<span className="hidden sm:inline">Account</span>
-						</button>
-
-						<button
-							type="button"
-							onClick={() => switchSubTab("invites")}
-							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
-								activeSubTab === "invites"
-									? "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm scale-102"
-									: "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
-							}`}>
-							<Gift className="h-3.5 w-3.5" />
-							<span className="hidden sm:inline">Invites</span>
-						</button>
-
-						<button
-							type="button"
-							onClick={() => switchSubTab("blocked")}
-							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
-								activeSubTab === "blocked"
-									? "bg-slate-900 text-white dark:bg-white dark:text-black shadow-sm scale-102"
-									: "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
-							}`}>
-							<ShieldBan className="h-3.5 w-3.5" />
-							<span className="hidden sm:inline">Blocked</span>
-						</button>
-
-						<button
-							type="button"
-							onClick={() => switchSubTab("logout")}
-							className={`flex-1 flex items-center justify-center gap-1.5 rounded-full py-2.5 text-[12px] md:text-sm font-extrabold transition-all uppercase tracking-wider cursor-pointer ${
-								activeSubTab === "logout"
-									? "bg-red-600 text-white dark:bg-red-650 dark:text-white"
-									: "text-red-500 dark:text-red-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
-							}`}>
-							<LogOut className="h-3.5 w-3.5" />
-							<span className="hidden sm:inline">Log Out</span>
-						</button>
-					</div>
 				</div>
 			</div>
 		</div>

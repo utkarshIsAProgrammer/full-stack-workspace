@@ -76,37 +76,32 @@ describe("Reposts API", () => {
     app = await createApp();
   });
 
-  describe("POST /api/reposts/toggle — Toggle Repost", () => {
-    it("should repost a post", async () => {
-      const res = await request(app)
-        .post("/api/reposts/toggle")
+  describe("POST /api/reposts/:postId — Toggle Repost", () => {
+    it("should reject reposting your own post", async () => {
+      await request(app)
+        .post(`/api/reposts/${postId}`)
         .set("Cookie", userCookies)
-        .send({ postId })
-        .expect(200);
-      expect(res.body.success).toBe(true);
+        .expect(400);
     });
 
     it("should reject unauthenticated requests", async () => {
       await request(app)
-        .post("/api/reposts/toggle")
-        .send({ postId })
+        .post(`/api/reposts/${postId}`)
         .expect(401);
     });
 
     it("should repost a post from another user", async () => {
       const res = await request(app)
-        .post("/api/reposts/toggle")
+        .post(`/api/reposts/${postId}`)
         .set("Cookie", user2Cookies)
-        .send({ postId })
-        .expect(200);
+        .expect(201);
       expect(res.body.success).toBe(true);
     });
 
     it("should toggle off repost", async () => {
       const res = await request(app)
-        .post("/api/reposts/toggle")
-        .set("Cookie", userCookies)
-        .send({ postId })
+        .post(`/api/reposts/${postId}`)
+        .set("Cookie", user2Cookies)
         .expect(200);
       expect(res.body.success).toBe(true);
     });

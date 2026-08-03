@@ -8,6 +8,7 @@ import {
   AppError,
 } from "../utilities/errors";
 import { logger } from "../utilities/logger";
+import { awardXP } from "../services/xpService";
 
 export const getMyStreaks = async (
   req: Request,
@@ -37,11 +38,36 @@ export const getMyStreaks = async (
       dailyRewardClaimed = lastClaim ? lastClaim.getTime() === today.getTime() : false;
     }
 
+    // Compute streak break status
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const midnight = new Date(today);
+    midnight.setDate(midnight.getDate() + 1); // next midnight
+    const msUntilMidnight = midnight.getTime() - now.getTime();
+    const hoursUntilMidnight = Math.floor(msUntilMidnight / (1000 * 60 * 60));
+    const minutesUntilMidnight = Math.floor((msUntilMidnight % (1000 * 60 * 60)) / (1000 * 60));
+
+    // Determine if streak is broken
+    let streakBroken = false;
+    if (streak.lastActiveDate && streak.currentStreak > 0) {
+      const lastActive = new Date(streak.lastActiveDate.getFullYear(), streak.lastActiveDate.getMonth(), streak.lastActiveDate.getDate());
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+      // If last active was NOT today and NOT yesterday, streak is already broken
+      if (lastActive.getTime() !== today.getTime() && lastActive.getTime() !== yesterday.getTime()) {
+        streakBroken = true;
+      }
+    }
+
     return res.status(200).json({
       success: true,
       streak: {
         ...(streak as any)._doc,
         dailyRewardClaimed,
+        streakBroken,
+        timeLeftBeforeBreak: streakBroken ? 0 : hoursUntilMidnight * 60 + minutesUntilMidnight, // minutes until midnight
+        timeLeftHours: hoursUntilMidnight,
+        timeLeftMinutes: minutesUntilMidnight,
       },
     });
   } catch (err: any) {
@@ -111,6 +137,9 @@ export const claimDailyReward = async (
       streak.lastActiveDate = now;
     }
     await streak.save();
+
+    // Award XP for daily login streak bonus (fire-and-forget)
+    awardXP(currentUserId.toString(), "STREAK_BONUS").catch(() => {});
 
     return res.status(200).json({
       success: true,

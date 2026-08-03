@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { X, Loader2, Quote as QuoteIcon } from "lucide-react";
 import type { Post } from "../types";
 import UserAvatar from "./UserAvatar";
+import { useAutoGrow } from "../hooks/useAutoGrow";
 
 interface QuoteRepostModalProps {
 	post: Post;
@@ -19,8 +20,8 @@ export default function QuoteRepostModal({
 	onSubmit,
 }: QuoteRepostModalProps) {
 	const [quoteText, setQuoteText] = useState("");
+	const quoteTextRef = useAutoGrow<HTMLTextAreaElement>(quoteText);
 	const [submitting, setSubmitting] = useState(false);
-	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 	// Reset state when modal opens
 	useEffect(() => {
@@ -28,7 +29,7 @@ export default function QuoteRepostModal({
 			setQuoteText("");
 			setSubmitting(false);
 			// Focus textarea after animation
-			setTimeout(() => textareaRef.current?.focus(), 200);
+			setTimeout(() => quoteTextRef.current?.focus(), 200);
 		}
 	}, [isOpen]);
 
@@ -78,7 +79,7 @@ export default function QuoteRepostModal({
 					<div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-zinc-800/40">
 						<div className="flex items-center gap-2.5">
 							<QuoteIcon className="h-4 w-4 text-zinc-400" />
-							<h2 className="text-sm font-bold text-white">
+							<h2 className="text-label text-lg font-semibold text-white">
 								Quote Repost
 							</h2>
 						</div>
@@ -128,7 +129,7 @@ export default function QuoteRepostModal({
 							Add your comment
 						</label>
 						<textarea
-							ref={textareaRef}
+							ref={quoteTextRef}
 							value={quoteText}
 							onChange={(e) =>
 								setQuoteText(e.target.value)
@@ -136,7 +137,7 @@ export default function QuoteRepostModal({
 							placeholder="What's on your mind?"
 							maxLength={1000}
 							rows={3}
-							className="w-full bg-zinc-900/60 border border-zinc-800/60 rounded-2xl px-3.5 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 outline-none resize-none focus:border-zinc-600/60 transition-colors"
+							className="w-full bg-zinc-900/60 border border-zinc-800/60 rounded-lg px-3.5 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 outline-none resize-none focus:border-zinc-600/60 transition-colors"
 						/>
 						<div className="flex items-center justify-between mt-1.5">
 							<span className="text-[10px] text-zinc-500">

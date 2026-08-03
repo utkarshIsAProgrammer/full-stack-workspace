@@ -4,12 +4,12 @@ import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 
 interface ReputationInfo {
-  totalRep: number;
-  tier: number;
+  totalXP: number;
+  level: number;
   badges: string[];
-  nextTierRep: number;
-  currentTierRep: number;
-  tierMinRep: number;
+  nextLevelXP: number;
+  currentLevelXP: number;
+  levelMinXP: number;
 }
 
 interface ReputationDisplayProps {
@@ -29,12 +29,12 @@ export default function ReputationDisplay({ userId, compact = false }: Reputatio
         const data = await res.json();
         if (res.ok && data.success) {
           setRepInfo({
-            totalRep: data.totalXP ?? 0,
-            tier: data.level ?? 1,
+            totalXP: data.totalXP ?? 0,
+            level: data.level ?? 1,
             badges: data.badges ?? [],
-            nextTierRep: data.nextLevelXP ?? 100,
-            currentTierRep: data.currentLevelXP ?? 0,
-            tierMinRep: data.levelMinXP ?? 0,
+            nextLevelXP: data.nextLevelXP ?? 100,
+            currentLevelXP: data.currentLevelXP ?? 0,
+            levelMinXP: data.levelMinXP ?? 0,
           });
         }
       } catch (err) {
@@ -46,32 +46,67 @@ export default function ReputationDisplay({ userId, compact = false }: Reputatio
     fetchRep();
   }, [userId]);
 
-  const getTierLabel = (tier: number): string => {
-    const labels = ["Newcomer", "Regular", "Contributor", "Influencer", "Icon", "Legend"];
-    return labels[Math.min(tier - 1, labels.length - 1)] || `Tier ${tier}`;
+  const getLevelLabel = (level: number): string => {
+    if (level === 1) return "Newcomer";
+    if (level === 2) return "Explorer";
+    if (level === 3) return "Regular";
+    if (level === 4) return "Contributor";
+    if (level === 5) return "Influencer";
+    if (level >= 6 && level <= 9) return "Icon";
+    if (level >= 10 && level <= 14) return "Legend";
+    if (level >= 15) return "Orbit Elite";
+    return `Level ${level}`;
   };
 
   if (loading) {
     return (
       <div className="flex items-center gap-1.5 text-xs text-zinc-500">
         <Loader2 className="h-3 w-3 animate-spin" />
-        Rep...
+        XP...
       </div>
     );
   }
 
   if (!repInfo) return null;
 
-  const progress = repInfo.nextTierRep > repInfo.tierMinRep
-    ? Math.min(100, Math.round(((repInfo.totalRep - repInfo.tierMinRep) / (repInfo.nextTierRep - repInfo.tierMinRep)) * 100))
+  const progress = repInfo.nextLevelXP > repInfo.levelMinXP
+    ? Math.min(100, Math.round(((repInfo.totalXP - repInfo.levelMinXP) / (repInfo.nextLevelXP - repInfo.levelMinXP)) * 100))
     : 100;
 
   if (compact) {
     return (
-      <div className="flex items-center gap-1 text-xs text-zinc-400">
-        <Award className="h-3 w-3 text-amber-400" />
-        <span className="font-bold">{getTierLabel(repInfo.tier)}</span>
-        <span className="text-zinc-600">{repInfo.totalRep} rep</span>
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+          <Award className="h-3.5 w-3.5 text-amber-400" />
+          <span className="font-bold text-zinc-300">{getLevelLabel(repInfo.level)}</span>
+          <span className="text-zinc-600">{repInfo.totalXP.toLocaleString()} XP</span>
+          {repInfo.badges.length > 0 && (
+            <span className="ml-1 flex items-center gap-1">
+              {repInfo.badges.slice(0, 3).map((badge) => (
+                <span
+                  key={badge}
+                  className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[8px] font-bold text-amber-400 leading-none"
+                  title={badge.replace(/_/g, " ")}
+                >
+                  {badge === "first_100" ? "🏅" : badge === "first_1k" ? "🥇" : badge === "first_10k" ? "💎" : badge === "level_5" ? "⭐️" : badge === "level_10" ? "🏆" : badge === "level_20" ? "👑" : "📛"}
+                </span>
+              ))}
+              {repInfo.badges.length > 3 && (
+                <span className="text-[8px] text-zinc-500">+{repInfo.badges.length - 3}</span>
+              )}
+            </span>
+          )}
+        </div>
+        {/* Thin progress bar */}
+        <div className="h-1 w-full max-w-[200px] rounded-full bg-zinc-800 overflow-hidden">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-amber-500 to-orange-400 transition-all duration-500"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <span className="text-[9px] text-zinc-500">
+          {repInfo.totalXP.toLocaleString()} / {repInfo.nextLevelXP.toLocaleString()} XP
+        </span>
       </div>
     );
   }
@@ -81,10 +116,10 @@ export default function ReputationDisplay({ userId, compact = false }: Reputatio
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-1.5">
           <Award className="h-4 w-4 text-amber-400" />
-          <span className="text-sm font-bold text-white">{getTierLabel(repInfo.tier)}</span>
+          <span className="text-sm font-bold text-white">{getLevelLabel(repInfo.level)}</span>
         </div>
         <span className="text-[11px] text-zinc-400">
-          {repInfo.totalRep.toLocaleString()} reputation
+          {repInfo.totalXP.toLocaleString()} XP
         </span>
       </div>
       {/* Progress bar */}
@@ -94,13 +129,12 @@ export default function ReputationDisplay({ userId, compact = false }: Reputatio
           style={{ width: `${progress}%` }}
         />
       </div>
-      <div className="flex justify-between mt-1">
-        <span className="text-[9px] text-zinc-500">
-          {repInfo.totalRep.toLocaleString()} rep
-        </span>
-        <span className="text-[9px] text-zinc-500">
-          {repInfo.nextTierRep.toLocaleString()} rep
-        </span>
+      <div className="flex justify-between mt-1">          <span className="text-[9px] text-zinc-500">
+            {repInfo.totalXP.toLocaleString()} XP
+          </span>
+          <span className="text-[9px] text-zinc-500">
+            {repInfo.nextLevelXP.toLocaleString()} XP
+          </span>
       </div>
       {repInfo.badges.length > 0 && (
         <div className="flex flex-wrap gap-1 mt-2">

@@ -16,6 +16,7 @@ import UserAvatar from "./UserAvatar";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 import { extractEmoji } from "../utils/validation";
+import { useAutoGrow } from "../hooks/useAutoGrow";
 
 interface CommentNodeProps {
 	key?: React.Key;
@@ -60,6 +61,7 @@ export default function CommentNode({
 	);
 	const [isEditing, setIsEditing] = useState(false);
 	const [editText, setEditText] = useState(comment.content);
+	const editTextRef = useAutoGrow<HTMLTextAreaElement>(editText);
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 	const [isExpanded, setIsExpanded] = useState(false);
 
@@ -744,9 +746,10 @@ export default function CommentNode({
 				{isEditing ? (
 					<div className="space-y-2">
 						<textarea
+							ref={editTextRef}
 							value={editText}
 							onChange={(e) => setEditText(e.target.value)}
-							className="w-full rounded-full border border-white/5 bg-zinc-950/60 px-2.5 py-1.5 text-[12px] md:text-sm text-zinc-200 placeholder-zinc-550 outline-none focus:border-white/15 focus:bg-zinc-950/80 resize-none transition-all"
+							className="w-full rounded-xl border border-white/5 bg-zinc-950/60 px-2.5 py-1.5 text-[12px] md:text-sm text-zinc-200 placeholder-zinc-550 outline-none focus:border-white/15 focus:bg-zinc-950/80 resize-none transition-all"
 							rows={2}
 							maxLength={1000}
 							spellCheck={false}

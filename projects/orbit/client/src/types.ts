@@ -22,13 +22,18 @@ export interface CloudinaryImage {
   isAdmin?: boolean;
 }
 
+export interface PostPollOption {
+  text: string;
+  votes: number;
+  votedByMe?: boolean;
+}
+
 export interface PostPoll {
-  options: {
-    text: string;
-    votes: string[];
-  }[];
+  options: PostPollOption[];
   expiresAt: string | null;
   totalVotes: number;
+  expired?: boolean;
+  myVote?: number | null;
 }
 
 export interface Post {
@@ -67,6 +72,7 @@ export interface Post {
   status?: "draft" | "scheduled" | "published";
   scheduledAt?: string | null;
   createdAt: string;
+  updatedAt?: string;
   likedByMe?: boolean;
   savedByMe?: boolean;
   repostedByMe?: boolean;
@@ -104,7 +110,7 @@ export interface Comment {
   reactions?: CommentReaction[];
 }
 
-export type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message_reply" | "glimpse_reaction" | "glimpse_reply" | "poll_vote" | "collab_invite" | "follow_request" | "daily_reward" | "streak_reminder" | "room_invite";
+export type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message_reply" | "community_message" | "glimpse_reaction" | "glimpse_reply" | "poll_vote" | "collab_invite" | "invite_accepted" | "follow_request" | "daily_reward" | "streak_reminder";
 
 export interface Notification {
   _id: string;
@@ -130,6 +136,15 @@ export interface Notification {
     _id: string;
     title: string;
   } | null;
+  community?: {
+    _id: string;
+    name: string;
+  } | null;
+  message?: {
+    _id: string;
+    text: string;
+  } | null;
+  messageType?: "text" | "photo" | "video" | "voice_note" | "file" | "gif" | "sticker";
   isRead: boolean;
   createdAt: string;
 }
@@ -246,6 +261,10 @@ export interface Community {
   memberCount: number;
   isMember?: boolean;
   pinnedMessages?: string[];
+  messagingEnabled?: boolean;
+  audioCallEnabled?: boolean;
+  videoCallEnabled?: boolean;
+  admins?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -286,6 +305,7 @@ export interface CommunityMessage {
   isEdited?: boolean;
   isDeleted?: boolean;
   deletedFor?: string[];
+  seenBy?: string[];
   reactions?: MessageReaction[];
   createdAt: string;
   updatedAt: string;

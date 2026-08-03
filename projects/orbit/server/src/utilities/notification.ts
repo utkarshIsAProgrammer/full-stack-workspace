@@ -4,7 +4,7 @@ import { sendNotification } from "../configs/socket";
 import { sendPushToUser, buildPushPayload } from "../services/pushService";
 import { logger } from "./logger";
 
-type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message_reply" | "glimpse_reaction" | "glimpse_reply" | "poll_vote" | "collab_invite" | "follow_request" | "daily_reward" | "streak_reminder" | "room_invite" | "invite_accepted";
+type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message_reply" | "glimpse_reaction" | "glimpse_reply" | "poll_vote" | "collab_invite" | "follow_request" | "daily_reward" | "streak_reminder" | "invite_accepted";
 
 type NotificationParams = {
   recipient: string;

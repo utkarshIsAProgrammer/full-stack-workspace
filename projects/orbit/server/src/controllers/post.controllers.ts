@@ -23,12 +23,12 @@ import { User } from "../models/user.model";
 import { env } from "../configs/env";
 import { createNotification, extractMentions } from "../utilities/notification";
 import { sanitizePlainText } from "../configs/sanitize";
-import { emitPostCreated, emitPostDeleted, emitPostUpdated, emitPostView, emitPostPin, emitPostUnpin, emitPostShare } from "../configs/socket";
+import { emitPostCreated, emitPostDeleted, emitPostUpdated, emitPollUpdated, emitPostView, emitPostPin, emitPostUnpin, emitPostShare } from "../configs/socket";
 import { logger } from "../utilities/logger";
-import { addUserStatusToPosts } from "../utilities/postStatus";
+import { addUserStatusToPosts, sanitizePoll } from "../utilities/postStatus";
 import { logInteraction } from "../services/affinityService";
 import { invalidateFeedCache } from "../services/feedService";
-import { awardXP } from "../services/xpService";
+import { awardXP, XP_REWARDS } from "../services/xpService";
 import { progressMission } from "../services/dailyMissionService";
 import { getMulterFiles, getErrorMessage } from "../types/global";
 
@@ -131,6 +131,7 @@ export const getPost = async (req: Request<Params>, res: Response) => {
     // fetch post
     let post = await Post.findById(postId)
       .populate("author", "username email fullName profilePic")
+      .populate("collaborator", "username fullName profilePic")
       .lean();
 
     // check existence
@@ -138,21 +139,33 @@ export const getPost = async (req: Request<Params>, res: Response) => {
       throw new NotFoundError("Post not found!");
     }
 
+    // Drafts & scheduled posts are only visible to their author
+    if (post.status && post.status !== "published") {
+      const isAuthor =
+        currentUserId &&
+        post.author?._id?.toString() === currentUserId;
+      if (!isAuthor) {
+        throw new NotFoundError("Post not found!");
+      }
+    }
+
     // Visibility check: hide closeFriends posts from non-close-friends
     if (!(await canViewCloseFriendsPost(post, currentUserId))) {
       throw new NotFoundError("Post not found!");
     }
 
-    // Add user status
-    const postWithStatus = await addUserStatusToPosts([post], currentUserId);
-    post = postWithStatus[0];
-
-    // cache the post (without user status — status re-attached on read)
+    // Cache the RAW post (before user status + poll sanitization) so the
+    // cache is shared across users without leaking one viewer's poll vote.
+    // User status / sanitized poll are re-attached per request below.
     try {
       await setCache(cacheKey, { post }, 60 * 30); // 30 min — single posts rarely change
     } catch (err: any) {
       logger.error(`Cache set error in getPost!`, { error: err?.message });
     }
+
+    // Add user status + sanitize poll for THIS viewer only
+    const postsWithStatus = await addUserStatusToPosts([post], currentUserId);
+    post = postsWithStatus[0];
 
     return res.status(200).json({
       success: true,
@@ -202,7 +215,7 @@ export const getAllPosts = async (req: Request, res: Response) => {
     }
 
     // query
-    const query: any = {};
+    const query: any = { status: "published" };
 
     // author filter
     if (authorId && mongoose.Types.ObjectId.isValid(authorId)) {
@@ -354,6 +367,64 @@ export const createPost = async (req: Request, res: Response) => {
       ? { url: uploaded.video.path, public_id: uploaded.video.filename }
       : undefined;
 
+    // ── Parse poll (JSON string from FormData) ───────────────────────
+    let pollData: any = undefined;
+    if (result.data.poll) {
+      try {
+        const parsed = JSON.parse(result.data.poll);
+        const options = (parsed?.options || [])
+          .map((o: any) => ({
+            text: sanitizePlainText(String(o?.text || "")).trim(),
+          }))
+          .filter((o: any) => o.text.length > 0);
+        if (options.length < 2) {
+          throw new BadRequestError("A poll needs at least 2 options!");
+        }
+        if (options.length > 10) {
+          throw new BadRequestError("A poll can have at most 10 options!");
+        }
+        pollData = {
+          options,
+          expiresAt: parsed?.expiresAt ? new Date(parsed.expiresAt) : null,
+          totalVotes: 0,
+        };
+      } catch (err: any) {
+        if (err instanceof BadRequestError) throw err;
+        throw new BadRequestError("Invalid poll data!");
+      }
+    }
+
+    // ── Resolve collaborator by @username ────────────────────────────
+    let collaboratorId: mongoose.Types.ObjectId | null = null;
+    if (result.data.collaborator?.trim()) {
+      const username = result.data.collaborator.trim().replace(/^@/, "");
+      const collabUser = await User.findOne({ username })
+        .select("_id username fullName")
+        .lean();
+      if (!collabUser) {
+        throw new BadRequestError(`User @${username} not found!`);
+      }
+      if (collabUser._id.toString() === author.toString()) {
+        throw new BadRequestError("You cannot invite yourself as a collaborator!");
+      }
+      collaboratorId = collabUser._id;
+    }
+
+    // ── Status / scheduling handling ─────────────────────────────────
+    const requestedStatus = result.data.status || "published";
+    let finalStatus = requestedStatus;
+    let scheduledDate: Date | null = null;
+
+    if (requestedStatus === "scheduled") {
+      if (!result.data.scheduledAt) {
+        throw new BadRequestError("scheduledAt is required for scheduled posts!");
+      }
+      scheduledDate = new Date(result.data.scheduledAt);
+      if (isNaN(scheduledDate.getTime()) || scheduledDate <= new Date()) {
+        throw new BadRequestError("scheduledAt must be a future date/time!");
+      }
+    }
+
     // create post
     const post = new Post({
       ...result.data,
@@ -362,6 +433,11 @@ export const createPost = async (req: Request, res: Response) => {
       hashtags,
       author,
       visibility: result.data.visibility || "public",
+      status: finalStatus,
+      scheduledAt: scheduledDate,
+      poll: pollData || null,
+      collaborator: collaboratorId,
+      collabAccepted: false,
 
       image: images.length > 0 ? { url: images[0]!.url, public_id: images[0]!.public_id } : null,
       images: images.length > 0 ? images : undefined,
@@ -383,30 +459,56 @@ export const createPost = async (req: Request, res: Response) => {
       });
     }
 
-    // invalidate feed cache
-    await clearFeedCache();
-    await clearUserPostsCache(author.toString());
-    // Invalidate personal feed cache so the new post appears immediately
-    await invalidateFeedCache(author.toString());
+    // Notify the invited collaborator
+    if (collaboratorId) {
+      await createNotification({
+        recipient: collaboratorId.toString(),
+        sender: author.toString(),
+        type: "collab_invite",
+        post: post._id.toString(),
+      });
+    }
+
+    const isDraftOrScheduled = finalStatus === "draft" || finalStatus === "scheduled";
+
+    // Drafts & scheduled posts are NOT visible on feeds yet — only published
+    // posts clear the feed cache and appear for other users in realtime.
+    if (!isDraftOrScheduled) {
+      // invalidate feed cache
+      await clearFeedCache();
+      await clearUserPostsCache(author.toString());
+      // Invalidate personal feed cache so the new post appears immediately
+      await invalidateFeedCache(author.toString());
+    }
 
     // populate post with author and user status
     let populatedPost = await Post.findById(post._id)
       .populate("author", "username email fullName profilePic")
+      .populate("collaborator", "username fullName profilePic")
       .lean();
 
     if (populatedPost) {
       const postsWithStatus = await addUserStatusToPosts([populatedPost], req.user?._id?.toString());
       populatedPost = postsWithStatus[0];
-      emitPostCreated(populatedPost);
+      if (!isDraftOrScheduled) {
+        emitPostCreated(populatedPost);
+      }
     }
 
-    // Award XP and progress mission (fire-and-forget)
-    awardXP(author.toString(), "CREATE_POST").catch(() => {});
-    progressMission(author.toString(), "post").catch(() => {});
+    // Only published posts award XP / progress missions
+    if (!isDraftOrScheduled) {
+      // Award XP and progress mission (fire-and-forget)
+      awardXP(author.toString(), "CREATE_POST").catch(() => {});
+      progressMission(author.toString(), "post").catch(() => {});
+    }
 
     return res.status(201).json({
       success: true,
-      message: "Post created successfully!",
+      message: finalStatus === "draft"
+        ? "Draft saved!"
+        : finalStatus === "scheduled"
+          ? "Post scheduled!"
+          : "Post created successfully!",
       post: populatedPost,
     });
   } catch (err: any) {
@@ -723,6 +825,12 @@ export const sharePost = async (req: Request<Params>, res: Response) => {
     // invalidate cache
     await deleteCache(`post:${postId}`);
 
+    // Award XP and progress mission (fire-and-forget)
+    if (req.user?._id) {
+      awardXP(req.user._id.toString(), "SHARE_POST").catch(() => {});
+      progressMission(req.user._id.toString(), "share").catch(() => {});
+    }
+
     // emit share socket event
     emitPostShare(postId, post.sharesCount);
 
@@ -750,11 +858,17 @@ export const getPostBySlug = async (req: Request<{ slug: string }>, res: Respons
     // cache key
     const cacheKey = `post:slug:${slug}`;
 
-    // get cached post
+    // get cached post (raw, without user status) — re-attach status for THIS viewer
     try {
-      const cachedPost = await getCache(cacheKey);
-      if (cachedPost) {
-        return res.status(200).json(cachedPost);
+      const cached = await getCache<{ success: boolean; message: string; post: any }>(cacheKey);
+      if (cached?.post) {
+        const currentUserId = req.user?._id?.toString();
+        const postsWithStatus = await addUserStatusToPosts([cached.post], currentUserId);
+        return res.status(200).json({
+          success: true,
+          message: "Post fetched successfully!",
+          post: postsWithStatus[0],
+        });
       }
     } catch (cacheError: any) {
       logger.error(`Cache error in getPostBySlug controller!`, { error: cacheError.message });
@@ -763,6 +877,7 @@ export const getPostBySlug = async (req: Request<{ slug: string }>, res: Respons
     // fetch post
     const post = await Post.findOne({ slug })
       .populate("author", "username email fullName profilePic")
+      .populate("collaborator", "username fullName profilePic")
       .lean();
 
     // check existence
@@ -772,12 +887,20 @@ export const getPostBySlug = async (req: Request<{ slug: string }>, res: Respons
 
     // Visibility check: hide closeFriends posts from non-close-friends
     const currentUserId = req.user?._id?.toString();
+    if (post.status && post.status !== "published") {
+      const isAuthor = currentUserId && post.author?._id?.toString() === currentUserId;
+      if (!isAuthor) {
+        throw new NotFoundError("Post not found!");
+      }
+    }
     if (!(await canViewCloseFriendsPost(post, currentUserId))) {
       throw new NotFoundError("Post not found!");
     }
 
-    // response data
-    const responseData = {
+    // Cache the RAW post (without user status / poll sanitization) so the
+    // cache is shared across users without leaking one viewer's poll vote.
+    // Status + sanitized poll are re-attached per request below.
+    const rawResponseData = {
       success: true,
       message: "Post fetched successfully!",
       post,
@@ -785,12 +908,19 @@ export const getPostBySlug = async (req: Request<{ slug: string }>, res: Respons
 
     // cache post
     try {
-      await setCache(cacheKey, responseData, 60 * 30);
+      await setCache(cacheKey, rawResponseData, 60 * 30);
     } catch (cacheError: any) {
       logger.error(`Cache set error in getPostBySlug controller!`, { error: cacheError.message });
     }
 
-    return res.status(200).json(responseData);
+    // Add user status + sanitize poll for THIS viewer only
+    const postsWithStatus = await addUserStatusToPosts([post], currentUserId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Post fetched successfully!",
+      post: postsWithStatus[0],
+    });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
     logger.error(`Error in getPostBySlug controller!`, { error: err?.message });
@@ -979,7 +1109,7 @@ export const pinPost = async (req: Request<Params>, res: Response) => {
       throw new NotFoundError("Post not found!");
     }
     if (post.author.toString() !== currentUserId.toString()) {
-      throw new BadRequestError("Cannot pin another user's post!");
+      throw new ForbiddenError("Cannot pin another user's post!");
     }
 
     const user = await User.findById(currentUserId);
@@ -1047,35 +1177,50 @@ export const votePoll = async (req: Request<Params>, res: Response) => {
 
     const userIdStr = currentUserId.toString();
 
-    // Check if user already voted on this poll
-    let hadPreviousVote = false;
-    for (const opt of post.poll.options) {
-      const voteIdx = opt.votes.findIndex((v) => v.toString() === userIdStr);
-      if (voteIdx > -1) {
-        hadPreviousVote = true;
-        break;
-      }
+    // One vote per user: reject re-votes (including trying to change the
+    // selected option). The client already locks the UI after voting, but
+    // the server must enforce it too so votes can never be tampered with.
+    const alreadyVoted = post.poll.options.some((opt) =>
+      (opt.votes || []).some((v: any) => v?.toString() === userIdStr),
+    );
+    if (alreadyVoted) {
+      return res.status(400).json({
+        success: false,
+        message: "You have already voted on this poll!",
+        poll: sanitizePoll(post.poll, userIdStr),
+      });
     }
 
-    // Atomic update: remove previous vote if present, push new vote, and adjust totalVotes
-    await Post.updateOne(
-      { _id: postId },
-      { $pull: { "poll.options.$[].votes": currentUserId } }
-    );
-
-    const updatedPost = await Post.findByIdAndUpdate(
-      postId,
+    // Single atomic update — one DB round-trip instead of three. The filter
+    // guard makes the increment race-safe: it only matches posts where NO
+    // option's votes array contains this user, so concurrent double-taps from
+    // the same account can never push twice.
+    const updatedPost = await Post.findOneAndUpdate(
+      {
+        _id: postId,
+        "poll.options": { $not: { $elemMatch: { votes: currentUserId } } },
+      },
       {
         $push: { [`poll.options.${optionIndex}.votes`]: currentUserId },
-        $inc: { "poll.totalVotes": hadPreviousVote ? 0 : 1 },
+        $inc: { "poll.totalVotes": 1 },
       },
       { new: true }
     );
 
-    const finalPost = updatedPost || post;
+    // Lost the race (or a second tab voted between our pre-check and here) —
+    // the poll is locked to the user's first vote.
+    if (!updatedPost) {
+      return res.status(400).json({
+        success: false,
+        message: "You have already voted on this poll!",
+        poll: sanitizePoll(post.poll, userIdStr),
+      });
+    }
+
+    const finalPost = updatedPost;
 
     // Notify post author if someone voted (skip own poll votes)
-    if (finalPost.author.toString() !== userIdStr && !hadPreviousVote) {
+    if (finalPost.author.toString() !== userIdStr) {
       await createNotification({
         recipient: finalPost.author.toString(),
         sender: userIdStr,
@@ -1084,13 +1229,22 @@ export const votePoll = async (req: Request<Params>, res: Response) => {
       });
     }
 
-    await deleteCache(`post:${postId}`);
+    // Invalidate the single-post cache AND every feed/list cache so other
+    // users fetch fresh vote counts instead of a 30-minute-stale snapshot.
+    await Promise.allSettled([
+      deleteCache(`post:${postId}`),
+      clearFeedCache(),
+    ]);
 
-    // Return the updated poll state
+    // Broadcast the updated poll so everyone viewing the post sees counts
+    // move in realtime (each client keeps its own myVote locally).
+    emitPollUpdated(postId, sanitizePoll(finalPost.poll));
+
+    // Return the updated poll state (sanitized — no raw voter-ID arrays)
     return res.status(200).json({
       success: true,
       message: "Vote recorded!",
-      poll: finalPost.poll,
+      poll: sanitizePoll(finalPost.poll, userIdStr),
     });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
@@ -1208,6 +1362,9 @@ export const publishDraft = async (req: Request<Params>, res: Response) => {
 
     await deleteCache(`post:${postId}`);
     await clearFeedCache();
+    // Also clear the author's profile posts cache so the newly published
+    // post shows up on their profile tab immediately (not after TTL).
+    await clearUserPostsCache(currentUserId.toString());
 
     const populated = await Post.findById(post._id).populate("author", "username fullName profilePic").lean();
 

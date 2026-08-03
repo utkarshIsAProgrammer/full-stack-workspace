@@ -7,6 +7,18 @@ export const initSentry = () => {
       dsn: import.meta.env.VITE_SENTRY_DSN,
       environment: import.meta.env.MODE,
       tracesSampleRate: import.meta.env.PROD ? 0.1 : 0,
+      integrations: [
+        // In-app user feedback widget — users can report bugs or suggest features
+        // without leaving the app. Only shown in production when DSN is configured.
+        Sentry.feedbackIntegration({
+          colorScheme: "dark",
+          isEmailRequired: false,
+          showBranding: false,
+          formTitle: "Report an Issue",
+          submitButtonLabel: "Send Feedback",
+          messagePlaceholder: "Describe what happened or what you'd like to see...",
+        }),
+      ],
       beforeSend(event, hint) {
         // Filter out certain errors if needed
         if (event.exception) {
@@ -28,3 +40,20 @@ export const captureException = (error: Error, context?: Record<string, any>) =>
   });
 };
 
+/**
+ * Open the Sentry feedback widget programmatically.
+ * Useful for adding a "Report Bug" button in settings or the dock.
+ */
+export const openFeedbackWidget = () => {
+  try {
+    const widget = Sentry.getFeedback();
+    if (widget) {
+      widget.createForm().catch(() => {
+        // Widget form failed to open
+      });
+    }
+  } catch {
+    // Widget not available (e.g. not in production or DSN not configured)
+    console.debug("[Sentry] Feedback widget not available");
+  }
+};

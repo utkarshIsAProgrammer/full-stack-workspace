@@ -10,6 +10,7 @@ import {
   leaveCommunity,
   deleteCommunity,
   getCommunityMessages,
+  searchCommunityMessages,
   sendCommunityMessage,
   editCommunityMessage,
   deleteCommunityMessage,
@@ -18,6 +19,13 @@ import {
   pinCommunityMessage,
   unpinCommunityMessage,
   getPinnedMessages,
+  removeMemberFromCommunity,
+  toggleCommunityMessaging,
+  toggleCommunityAudioCalls,
+  toggleCommunityVideoCalls,
+  clearCommunityChat,
+  generateLiveKitToken,
+  getCommunityMedia,
 } from "../controllers/community.controllers";
 import { protect } from "../middlewares/auth.middleware";
 import upload, { uploadChatMedia } from "../middlewares/upload.middleware";
@@ -45,6 +53,7 @@ router.post("/:communityId/leave", generalLimiter, leaveCommunity);
 
 // Community messages
 router.get("/:communityId/messages", generalLimiter, getCommunityMessages);
+router.get("/:communityId/messages/search", generalLimiter, searchCommunityMessages);
 router.post(
   "/:communityId/messages",
   interactionLimiter,
@@ -64,5 +73,18 @@ router.post("/messages/:messageId/reactions", interactionLimiter, toggleCommunit
 router.get("/:communityId/pinned-messages", generalLimiter, getPinnedMessages);
 router.post("/messages/:messageId/pin", interactionLimiter, pinCommunityMessage);
 router.post("/messages/:messageId/unpin", interactionLimiter, unpinCommunityMessage);
+
+// Admin / Creator actions
+router.post("/:communityId/remove-member", generalLimiter, removeMemberFromCommunity);
+router.post("/:communityId/toggle-messaging", generalLimiter, toggleCommunityMessaging);
+router.post("/:communityId/toggle-audio-calls", generalLimiter, toggleCommunityAudioCalls);
+router.post("/:communityId/toggle-video-calls", generalLimiter, toggleCommunityVideoCalls);
+router.post("/:communityId/clear-chat", generalLimiter, clearCommunityChat);
+
+// Community media by type (images, videos, voice notes, files)
+router.get("/:communityId/media", generalLimiter, getCommunityMedia);
+
+// LiveKit group call token
+router.post("/:communityId/livekit-token", generalLimiter, generateLiveKitToken);
 
 export { router as communityRoutes };

@@ -11,13 +11,17 @@ import {
 	Hash,
 } from "lucide-react";
 import { User as UserType } from "../types";
+import { warmCache, getEndpointsForTab } from "../utils/api";
 
 interface DockItem {
 	id: string;
 	label: string;
-	icon: React.ComponentType<{ className?: string }>;
+	icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
 	badge?: number;
 	specialPic?: boolean;
+	// Some icons (Hash, User, Settings) have thinner strokes or more empty space —
+	// bump strokeWidth to make them visually match the others.
+	strokeWidth?: number;
 }
 
 interface DockProps {
@@ -39,6 +43,12 @@ export default React.memo(function Dock({
 }: Omit<DockProps, never>) {
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+	const [profilePicError, setProfilePicError] = useState(false);
+
+	// Reset profile pic error state when user changes
+	useEffect(() => {
+		setProfilePicError(false);
+	}, [user?._id]);
 
 	// Detect mobile keyboard via visualViewport height drop
 	useEffect(() => {
@@ -75,9 +85,9 @@ export default React.memo(function Dock({
 			icon: MessageSquare,
 			badge: chatBadgeCount,
 		},
-		{ id: "communities", label: "Communities", icon: Hash },
-		{ id: "profile", label: "Profile", icon: User, specialPic: true },
-		{ id: "settings", label: "Settings", icon: Settings },
+		{ id: "communities", label: "Communities", icon: Hash, strokeWidth: 3 },
+		{ id: "profile", label: "Profile", icon: User, specialPic: true, strokeWidth: 2.5 },
+		{ id: "settings", label: "Settings", icon: Settings, strokeWidth: 2.5 },
 	];
 
 	// Note: composectr button is rendered inline, not via renderDockItem
@@ -93,10 +103,17 @@ export default React.memo(function Dock({
 			<button
 				key={item.id}
 				onClick={() => setTab(item.id)}
-				onMouseEnter={() => setHoveredIndex(index)}
+				onMouseEnter={() => {
+					setHoveredIndex(index);
+					// Warm cache for this tab on hover — data will be ready by the time user clicks
+					const endpoints = getEndpointsForTab(item.id);
+					if (endpoints.length > 0) {
+						warmCache(endpoints);
+					}
+				}}
 				onMouseLeave={() => setHoveredIndex(null)}
 				aria-label={item.label}
-				className="group relative flex h-10 w-10 sm:h-11 sm:w-11 items-center justify-center rounded-xl sm:rounded-2xl text-zinc-500 dark:text-zinc-500 transition-colors hover:text-black dark:hover:text-white">
+				className="group relative flex h-10 w-10 sm:h-11 sm:w-11 items-center justify-center rounded-xl sm:rounded-2xl text-zinc-500 dark:text-zinc-500 transition-colors">
 				{/* Active indicator glow */}
 				{isActive && (
 					<motion.div
@@ -110,32 +127,30 @@ export default React.memo(function Dock({
 					/>
 				)}
 
-				{/* macOS reflection glow beneath on hover */}
-				{isHovered && (
-					<motion.div
-						initial={{ opacity: 0, scale: 0.8 }}
-						animate={{ opacity: 1, scale: 1 }}
-						exit={{ opacity: 0, scale: 0.8 }}
-						className="absolute -bottom-1 w-5 h-2 sm:w-7 sm:h-3 rounded-full bg-white/10 blur-md"
-						transition={{ duration: 0.2 }}
-					/>
-				)}
 
 				<motion.div
 					animate={{ scale, y: yOffset }}
 					transition={{ type: "spring", stiffness: 300, damping: 18 }}
 					whileTap={{ scale: 0.85 }}
 					className="relative z-10 flex items-center justify-center gpu-accelerated">
-					{item.specialPic && user?.profilePic?.url ? (
+					{item.specialPic && user?.profilePic?.url && !profilePicError ? (
 						<img
 							loading="lazy"
 							src={user.profilePic.url}
 							alt={user.fullName}
-							className={`h-6.5 w-6.5 sm:h-7 sm:w-7 aspect-square rounded-full object-cover border ${isActive ? "border-white" : "border-zinc-700"} shadow-sm`}
+							onError={() => setProfilePicError(true)}
+							onClick={() => {
+								// Don't stop propagation — let the parent button's onClick navigate to the profile tab
+								if (user?.profilePic?.url) {
+									window.dispatchEvent(new CustomEvent("openImagePreview", { detail: user.profilePic.url }));
+								}
+							}}
+							className={`h-6.5 w-6.5 sm:h-7 sm:w-7 aspect-square rounded-full object-cover border cursor-pointer ${isActive ? "border-white" : "border-zinc-700"} shadow-sm`}
 						/>
 					) : (
 						<Icon
-							className={`h-5 w-5 sm:h-5.5 sm:w-5.5 ${isActive ? "text-black dark:text-white" : "text-zinc-400 dark:text-zinc-450 group-hover:text-black dark:group-hover:text-white"}`}
+							strokeWidth={item.strokeWidth || 2}
+							className={`h-5 w-5 sm:h-5.5 sm:w-5.5 ${isActive ? "text-black dark:text-white" : "text-zinc-400 dark:text-zinc-450"}`}
 						/>
 					)}
 
@@ -152,7 +167,7 @@ export default React.memo(function Dock({
 
 
 				{/* Tooltip — macOS style */}
-				<span className="pointer-events-none absolute -top-11 scale-90 rounded-lg border border-zinc-700/30 bg-zinc-900/90 backdrop-blur-xl px-2.5 py-1 text-[10px] font-semibold text-white opacity-0 blur-sm transition-all duration-150 group-hover:scale-100 group-hover:opacity-100 group-hover:blur-0 whitespace-nowrap shadow-lg z-50">
+				<span className="pointer-events-none absolute -top-11 scale-90 rounded-lg border border-zinc-700/30 bg-zinc-900/90 backdrop-blur-xl px-2.5 py-1 text-[10px] font-semibold text-white opacity-0 transition-all duration-150 group-hover:scale-100 group-hover:opacity-100 whitespace-nowrap shadow-lg z-50">
 					{item.label}
 				</span>
 			</button>
@@ -162,21 +177,13 @@ export default React.memo(function Dock({
 	return (
 		<>
 			<div
-				className={`fixed left-1/2 z-[120] w-[calc(100%-0.3rem)] max-w-[28rem] -translate-x-1/2 px-0.5 sm:max-w-[32rem] lg:max-w-[36rem] lg:hidden transition-all duration-200 ${isKeyboardOpen ? "bottom-1" : "bottom-1.5 sm:bottom-2.5"}`}
+				className={`fixed left-1/2 z-[120] w-[calc(100%-0.3rem)] max-w-[28rem] -translate-x-1/2 px-0.5 sm:max-w-[32rem] lg:max-w-[36rem] sm:hidden dock-force-hide transition-all duration-200 ${isKeyboardOpen ? "bottom-1" : "bottom-1.5 sm:bottom-2.5"}`}
 				style={{
 					bottom: `calc(${isKeyboardOpen ? "0.2rem" : "0.3rem"} + env(safe-area-inset-bottom, 0px))`,
 				}}>
 				<div
 					className={`relative flex items-center justify-between rounded-3xl sm:rounded-4xl border border-white/15 dark:border-zinc-800/50 bg-white/60 dark:bg-zinc-950/80 backdrop-blur-xl shadow-[0_20px_60px_-15px rgba(0,0,0,0.4)] transition-all duration-200 ${isKeyboardOpen ? "px-2 py-1.5 gap-0.5" : "px-2.5 py-3.5 gap-0.5 sm:gap-1.5 sm:px-3"}`}>
-					{/* Liquid glass shimmer & ambient glare wrapped to contain overflow */}
-					<div className="absolute inset-0 rounded-3xl sm:rounded-4xl overflow-hidden pointer-events-none z-0">
 
-						{/* Cylindrical edge-light sheen */}
-						<div className="absolute inset-x-0 top-0 h-[1.5px] bg-linear-to-r from-transparent via-white/40 dark:via-white/10 to-transparent z-10" />
-
-						{/* Top light ambient glare */}
-						<div className="absolute inset-x-0 top-0 h-[35%] bg-linear-to-b from-white/25 dark:from-white/3 to-transparent z-10 rounded-t-3xl sm:rounded-t-4xl" />
-					</div>
 
 					{leftItems.map((item, i) => renderDockItem(item, i))}
 
@@ -196,7 +203,7 @@ export default React.memo(function Dock({
 									: "text-white dark:text-black"
 							} transition-transform duration-200`}
 						/>
-						<span className="pointer-events-none absolute -top-11 scale-90 rounded-lg border border-zinc-700/30 bg-zinc-950/90 backdrop-blur-xl px-2.5 py-1 text-[10px] font-semibold text-white opacity-0 blur-sm transition-all duration-150 group-hover:scale-100 group-hover:opacity-100 group-hover:blur-0 whitespace-nowrap shadow-lg z-50">
+						<span className="pointer-events-none absolute -top-11 scale-90 rounded-lg border border-zinc-700/30 bg-zinc-950/90 backdrop-blur-xl px-2.5 py-1 text-[10px] font-semibold text-white opacity-0 transition-all duration-150 group-hover:scale-100 group-hover:opacity-100 whitespace-nowrap shadow-lg z-50">
 							New Post
 						</span>
 					</button>

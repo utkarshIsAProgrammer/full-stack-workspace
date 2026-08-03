@@ -7,6 +7,7 @@ import { validatePost } from "../utils/validation";
 import ValidationMessage from "./ValidationMessage";
 import CharCounter from "./CharCounter";
 import ImageCropModal from "./ImageCropModal";
+import { useAutoGrow } from "../hooks/useAutoGrow";
 
 interface PostModalProps {
 	isOpen: boolean;
@@ -25,6 +26,7 @@ export default function PostModal({
 }: PostModalProps) {
 	const [title, setTitle] = useState("");
 	const [content, setContent] = useState("");
+	const contentRef = useAutoGrow<HTMLTextAreaElement>(content);
 	const [postImageFiles, setPostImageFiles] = useState<File[]>([]);
 	const [postImagePreviews, setPostImagePreviews] = useState<string[]>([]);
 	const [submittingPost, setSubmittingPost] = useState(false);
@@ -167,6 +169,15 @@ export default function PostModal({
 			}
 		}
 
+		// Validate scheduling: must be a future date/time
+		if (showScheduler && scheduledAt) {
+			if (new Date(scheduledAt).getTime() <= Date.now()) {
+				setFieldErrors({ schedule: "Scheduled time must be in the future!" });
+				setSubmittingPost(false);
+				return;
+			}
+		}
+
 		try {
 			const formData = new FormData();
 			formData.append("title", title);
@@ -208,6 +219,9 @@ export default function PostModal({
 				throw new Error(data.message || "Failed to create post");
 			}
 
+			// Parse the response body on success to get the created post data
+			const createdPostData = await res.json();
+
 			// Revoke previous preview URLs to prevent memory leaks
 			postImagePreviews.forEach((url) => URL.revokeObjectURL(url));
 			setTitle("");
@@ -223,18 +237,44 @@ export default function PostModal({
 			setCollabUsername("");
 			setShowCollabInvite(false);
 
-			window.dispatchEvent(
-				new CustomEvent("showToast", {
-					detail: {
-						message: isDraft
-							? "Draft saved!"
-							: showScheduler
-								? "Post scheduled!"
-								: "Post created!",
-						type: "success",
-					},
-				}),
+			const isScheduledPost = !!(
+				createdPostData?.post?.status === "scheduled"
 			);
+			const isDraftPost = !!(createdPostData?.post?.status === "draft");
+
+			// Only published posts are injected into the live feed.
+			// Drafts & scheduled posts live in the user's drafts/scheduled
+			// management area and appear in feeds at publish time.
+			if (createdPostData?.post && !isScheduledPost && !isDraftPost) {
+				window.dispatchEvent(
+					new CustomEvent("newPostCreated", {
+						detail: { post: createdPostData.post },
+					}),
+				);
+			}
+
+			if (isScheduledPost) {
+				window.dispatchEvent(
+					new CustomEvent("showToast", {
+						detail: {
+							message: `Post scheduled for ${new Date(
+								createdPostData.post.scheduledAt,
+							).toLocaleString()}`,
+							type: "success",
+						},
+					}),
+				);
+			} else if (isDraftPost) {
+				window.dispatchEvent(
+					new CustomEvent("showToast", {
+						detail: {
+							message: "Draft saved! You can find it in your profile.",
+							type: "success",
+						},
+					}),
+				);
+			}
+
 			onPostCreated();
 		} catch (err: any) {
 			logger.error(err);
@@ -303,7 +343,7 @@ export default function PostModal({
 					exit={{ opacity: 0, scale: 0.95, y: 20 }}
 					className="relative w-full max-w-lg bg-zinc-950/45 backdrop-blur-xl rounded-2xl shadow-xl overflow-hidden border border-zinc-800/50 max-h-[95vh] overflow-y-auto">
 					<div className="flex items-center justify-between px-3 py-3 border-b border-zinc-100 dark:border-zinc-900 sm:px-4">
-						<h2 className="text-base font-bold text-black dark:text-white">
+						<h2 className="text-label text-lg font-semibold text-black dark:text-white">
 							Create Post
 						</h2>
 						<button
@@ -334,6 +374,7 @@ export default function PostModal({
 							</div>
 							<ValidationMessage message={fieldErrors.title} />
 							<textarea
+								ref={contentRef}
 								rows={4}
 								placeholder="What's on your mind today?"
 								value={content}
@@ -356,8 +397,8 @@ export default function PostModal({
 							{showPollCreator && (
 								<div className="space-y-3 p-3 rounded-xl border border-zinc-800/40 bg-zinc-900/20">
 									<div className="flex items-center justify-between">
-										<h3 className="text-[11px] font-black tracking-widest text-zinc-400 uppercase flex items-center gap-1.5">
-											<ListTodo className="h-3.5 w-3.5" /> POLL
+										<h3 className="text-label-sm font-semibold text-zinc-300 flex items-center gap-1.5">
+											<ListTodo className="h-3.5 w-3.5" /> Poll
 										</h3>
 										<button
 											type="button"
@@ -423,12 +464,15 @@ export default function PostModal({
 							{showScheduler && (
 								<div className="space-y-2 p-3 rounded-xl border border-zinc-800/40 bg-zinc-900/20">
 									<div className="flex items-center justify-between">
-										<h3 className="text-[11px] font-black tracking-widest text-zinc-400 uppercase flex items-center gap-1.5">
-											<Clock className="h-3.5 w-3.5" /> SCHEDULE
+										<h3 className="text-label-sm font-semibold text-zinc-300 flex items-center gap-1.5">
+											<Clock className="h-3.5 w-3.5" /> Schedule
 										</h3>
 										<button
 											type="button"
-											onClick={() => setShowScheduler(false)}
+											onClick={() => {
+												setShowScheduler(false);
+												clearFieldError("schedule");
+											}}
 											className="text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer">
 											<X className="h-3.5 w-3.5" />
 										</button>
@@ -436,11 +480,16 @@ export default function PostModal({
 									<input
 										type="datetime-local"
 										value={scheduledAt}
-										onChange={(e) => setScheduledAt(e.target.value)}
+										onChange={(e) => {
+											setScheduledAt(e.target.value);
+											clearFieldError("schedule");
+										}}
 										className="w-full bg-zinc-900 border border-zinc-700/50 rounded-lg px-3 py-1.5 text-xs text-zinc-300 outline-none focus:border-zinc-500"
 									/>
 								</div>
 							)}
+							{/* Schedule validation error */}
+							<ValidationMessage message={fieldErrors.schedule} />
 
 							{/* Image previews */}
 							{postImagePreviews.length > 0 && (
@@ -477,14 +526,12 @@ export default function PostModal({
 										</div>
 									))}
 								</div>
-							)}
-
-							{/* Collaborator invite */}
-							{showCollabInvite && (
+							)}										{/* Collaborator invite — DISABLED, panel can never open */}
+										{false && showCollabInvite && (
 								<div className="space-y-2 p-3 rounded-xl border border-zinc-800/40 bg-zinc-900/20">
 									<div className="flex items-center justify-between">
-										<h3 className="text-[11px] font-black tracking-widest text-zinc-400 uppercase flex items-center gap-1.5">
-											<UserPlus className="h-3.5 w-3.5" /> COLLABORATOR
+										<h3 className="text-label-sm font-semibold text-zinc-300 flex items-center gap-1.5">
+											<UserPlus className="h-3.5 w-3.5" /> Collaborator
 										</h3>
 										<button
 											type="button"
@@ -587,9 +634,9 @@ export default function PostModal({
 										type="button"
 										onClick={() => setShowPollCreator(!showPollCreator)}
 										className={`flex h-10 w-10 items-center justify-center rounded-full transition-all cursor-pointer ${
-											showPollCreator
-												? "bg-violet-500/20 text-violet-400"
-												: "text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+										showPollCreator
+											? "bg-amber-400/20 text-amber-400"
+											: "text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900"
 										}`}
 										title="Add poll"
 									>
@@ -610,16 +657,13 @@ export default function PostModal({
 										<Calendar className="h-4.5 w-4.5" />
 									</button>
 
-									{/* Collab toggle */}
+									{/* Collab toggle — DISABLED (feature temporarily unavailable) */}
 									<button
 										type="button"
-										onClick={() => setShowCollabInvite(!showCollabInvite)}
-										className={`flex h-10 w-10 items-center justify-center rounded-full transition-all cursor-pointer ${
-											showCollabInvite
-												? "bg-green-500/20 text-green-400"
-												: "text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900"
-										}`}
-										title="Invite collaborator"
+										disabled
+										aria-disabled="true"
+										title="Invite collaborator (coming soon)"
+										className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-600 dark:text-zinc-700 opacity-50 cursor-not-allowed"
 									>
 										<UserPlus className="h-4.5 w-4.5" />
 									</button>

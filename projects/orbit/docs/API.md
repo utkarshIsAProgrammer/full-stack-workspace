@@ -328,28 +328,6 @@ Clear all notifications.
 
 ---
 
-## Audio Rooms
-
-### POST /api/rooms
-Create audio room. `{ "title": "...", "description": "..." }`
-
-### GET /api/rooms
-Get live rooms. `?cursor`, `?limit`
-
-### GET /api/rooms/:roomId
-Get room details.
-
-### POST /api/rooms/:roomId/join
-Join a room.
-
-### POST /api/rooms/:roomId/leave
-Leave a room.
-
-### POST /api/rooms/:roomId/invite/:userId
-Invite user to room.
-
----
-
 ## Moderation & Admin
 
 ### POST /api/reports

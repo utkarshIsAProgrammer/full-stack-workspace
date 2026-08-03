@@ -65,28 +65,28 @@ describe("Comments API", () => {
     app = await createApp();
   });
 
-  describe("POST /api/comments — Create Comment", () => {
+  describe("POST /api/comments/:postId — Create Comment", () => {
     it("should create a comment on a post", async () => {
       const res = await request(app)
-        .post("/api/comments")
+        .post(`/api/comments/${postId}`)
         .set("Cookie", userCookies)
-        .send({ post: postId, text: "Great post!" })
+        .send({ content: "Great post!" })
         .expect(201);
       expect(res.body.success).toBe(true);
     });
 
     it("should reject empty text", async () => {
       await request(app)
-        .post("/api/comments")
+        .post(`/api/comments/${postId}`)
         .set("Cookie", userCookies)
-        .send({ post: postId, text: "" })
+        .send({ content: "" })
         .expect(400);
     });
 
     it("should reject unauthenticated requests", async () => {
       await request(app)
-        .post("/api/comments")
-        .send({ post: postId, text: "Anonymous" })
+        .post(`/api/comments/${postId}`)
+        .send({ content: "Anonymous" })
         .expect(401);
     });
   });

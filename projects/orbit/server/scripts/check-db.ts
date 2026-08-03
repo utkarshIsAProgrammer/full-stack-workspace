@@ -1,0 +1,15 @@
+import mongoose from "mongoose";
+import { config } from "dotenv";
+import { resolve } from "path";
+config({ path: resolve(process.cwd(), ".env") });
+const uri = process.env.MONGO_URI;
+console.log("URI prefix:", uri?.slice(0, 40));
+await mongoose.connect(uri as string);
+const db = mongoose.connection.db;
+console.log("DB name:", db?.databaseName);
+const users = db?.collection("users");
+const all = await users?.find({}, { projection: { username: 1, email: 1 } }).limit(10).toArray();
+console.log("users:", JSON.stringify(all));
+const t = await users?.findOne({ username: "testuser" });
+console.log("testuser found:", !!t);
+await mongoose.disconnect();

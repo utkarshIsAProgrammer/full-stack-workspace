@@ -81,7 +81,7 @@ export const redeemInviteCode = async (
       return next(new BadRequestError("You cannot use your own invite code!"));
     }
 
-    invite.invitedUser = currentUserId;
+    invite.invitedUser = currentUserId as any;
     invite.status = "accepted";
     invite.acceptedAt = new Date();
     await invite.save();

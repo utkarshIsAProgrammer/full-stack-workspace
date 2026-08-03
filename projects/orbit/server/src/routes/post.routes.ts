@@ -33,11 +33,77 @@ import { getDrafts, createDraft, createScheduledPost } from "../controllers/draf
 const router = express.Router();
 
 // Specific routes (must be before /:postId routes to avoid matching as postId)
+
+/**
+ * @openapi
+ * /api/posts/trending/hashtags:
+ *   get:
+ *     tags: [Posts]
+ *     summary: Get trending hashtags
+ *     description: Returns the most-used hashtags across all public posts.
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: List of trending hashtags
+ */
 router.get("/trending/hashtags", optionalAuth, cacheMiddleware({ ttl: 300 }), getTrendingHashtags);
 router.get("/archived", protect, getArchivedPosts);
 router.get("/hashtag/:hashtag", optionalAuth, searchLimiter, cacheMiddleware({ ttl: 300 }), getPostsByHashtag);
 router.get("/slug/:slug", optionalAuth, cacheMiddleware({ ttl: 300 }), getPostBySlug);
+// IMPORTANT: /drafts MUST be declared BEFORE /:postId — otherwise
+// "drafts" is matched as a postId and the endpoint is unreachable.
+router.get("/drafts", protect, getDrafts);
 router.get("/:postId", optionalAuth, cacheMiddleware({ ttl: 300 }), getPost);
+
+/**
+ * @openapi
+ * /api/posts:
+ *   get:
+ *     tags: [Posts]
+ *     summary: Get all posts (paginated feed)
+ *     description: Returns a paginated list of posts. Supports cursor-based pagination.
+ *     security: []
+ *     parameters:
+ *       - in: query
+ *         name: cursor
+ *         schema: { type: string }
+ *         description: Cursor for pagination
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
+ *     responses:
+ *       200:
+ *         description: Paginated list of posts
+ *   post:
+ *     tags: [Posts]
+ *     summary: Create a new post
+ *     description: Creates a post with optional images, video, and poll.
+ *     security:
+ *       - cookieAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title: { type: string, example: "My awesome post" }
+ *               content: { type: string, example: "Check out this cool thing!" }
+ *               images: { type: array, items: { type: string, format: binary } }
+ *               image: { type: string, format: binary }
+ *               video: { type: string, format: binary }
+ *               hashtags: { type: string, example: "tech,design" }
+ *     responses:
+ *       201:
+ *         description: Post created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 post: { $ref: '#/components/schemas/Post' }
+ */
 router.get("/", optionalAuth, cacheMiddleware({ ttl: 60 }), getAllPosts);
 router.post(
   "/",
@@ -82,7 +148,6 @@ router.post("/:postId/publish", protect, interactionLimiter, publishDraft);
 router.post("/:postId/quote-repost", protect, interactionLimiter, quoteRepost);
 
 // Draft & scheduled post management
-router.get("/drafts", protect, getDrafts);
 router.post(
   "/drafts",
   protect,

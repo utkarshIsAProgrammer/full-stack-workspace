@@ -110,7 +110,6 @@ export function buildPushPayload(notification: any): {
     follow_request: { title: senderName, body: "wants to follow you" },
     daily_reward: { title: "Daily Reward", body: "Your daily reward is ready!" },
     streak_reminder: { title: "Streak Reminder", body: "Don't lose your streak!" },
-    room_invite: { title: senderName, body: "invited you to an audio room" },
     invite_accepted: { title: senderName, body: "accepted your invitation" },
   };
 

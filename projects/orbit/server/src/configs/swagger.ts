@@ -16,7 +16,7 @@ const options: { definition: Record<string, any>; apis: string[] } = {
       title: "Orbit API",
       version: "1.0.0",
       description: `
-Orbit is a real-time social platform API with support for posts, comments, chat, communities, stories (glimpses), audio rooms, and more.
+Orbit is a real-time social platform API with support for posts, comments, chat, communities, stories (glimpses), group calls, and more.
 
 ## Features
 - **Auth**: JWT-based authentication with CSRF protection
@@ -25,7 +25,7 @@ Orbit is a real-time social platform API with support for posts, comments, chat,
 - **Social**: Posts, comments, likes, saves, reposts, follows
 - **Content**: Images, video, polls, collab posts, drafts, scheduling
 - **Communities**: Group chats with members and admin controls
-- **Audio**: Live audio rooms with speaker/listener roles
+- **Calls**: 1:1 WebRTC and community group calls via LiveKit
 - **Glimpses**: Ephemeral stories with reactions and replies
 - **Analytics**: Per-user engagement metrics and trends
 `,

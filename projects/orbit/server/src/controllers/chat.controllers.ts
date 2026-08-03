@@ -26,6 +26,8 @@ import {
 	emitMessageEdit,
 	emitMessageDelete,
 	emitMessageDeleteForMe,
+	emitMessagePin,
+	emitMessageUnpin,
 	emitChatNotification,
 	getIO,
 } from "../configs/socket";
@@ -109,6 +111,7 @@ export const getOrCreateConversation = async (
 		let conversation = await Conversation.findOne({
 			participants: { $all: [idA, idB] },
 		});
+		let created = false;
 
 		if (!conversation) {
 			conversation = new Conversation({
@@ -119,6 +122,7 @@ export const getOrCreateConversation = async (
 				},
 			});
 			await conversation.save();
+			created = true;
 		}
 
 		// Populate participants info
@@ -139,7 +143,7 @@ export const getOrCreateConversation = async (
 		const otherParticipantId = recipientId.toString();
 		const presence = await getUserPresenceStatus(otherParticipantId);
 
-		return res.status(200).json({
+		return res.status(created ? 201 : 200).json({
 			success: true,
 			message: "Conversation retrieved successfully!",
 			conversation: { ...populatedConversation, presence },
@@ -916,7 +920,7 @@ export const deleteMessageForMe = async (
 		);
 
 		if (!alreadyDeleted) {
-			message.deletedFor.push(currentUserId);
+			message.deletedFor.push(new mongoose.Types.ObjectId(userIdStr));
 			await message.save();
 		}
 
@@ -1163,117 +1167,6 @@ export const clearConversationMessages = async (
 };
 
 /**
- * Undo send a message within 5 seconds of creation.
- * Hard-deletes the message entirely (only the sender can undo).
- */
-export const undoMessage = async (
-	req: Request<MessageParams>,
-	res: Response,
-	next: NextFunction,
-) => {
-	const { messageId } = req.params;
-	const currentUserId = req.user?._id;
-
-	try {
-		if (!currentUserId) {
-			return next(new UnauthorizedError("Unauthorized!"));
-		}
-
-		if (!mongoose.Types.ObjectId.isValid(messageId)) {
-			return next(new BadRequestError("Invalid message ID!"));
-		}
-
-		const message = await Message.findById(messageId);
-		if (!message) {
-			return next(new NotFoundError("Message not found!"));
-		}
-
-		// Ownership check
-		if (message.sender.toString() !== currentUserId.toString()) {
-			return next(
-				new ForbiddenError("You can only undo your own messages!"),
-			);
-		}
-
-		// 5 seconds check
-		const diffMs = Date.now() - message.createdAt.getTime();
-		const UNDO_TIME_LIMIT = 5 * 1000; // 5 seconds
-		if (diffMs > UNDO_TIME_LIMIT) {
-			return next(
-				new BadRequestError(
-					"Message can only be undone within 5 seconds of sending!",
-				),
-			);
-		}
-
-		// Cloudinary cleanup of attachments asynchronously
-		const oldAttachments = message.attachments || [];
-		const imageDeletions = oldAttachments
-			.map((att) => att.public_id)
-			.filter(Boolean)
-			.map((pubId) => cloudinary.uploader.destroy(pubId));
-
-		Promise.allSettled(imageDeletions).then((results) => {
-			results.forEach((result) => {
-				if (result.status === "rejected") {
-					logger.error(
-						"Cloudinary deletion failed during chat message undo",
-						{
-							error: result.reason,
-						},
-					);
-				}
-			});
-		});
-
-		// Hard-delete the message
-		const messageIdStr = message._id.toString();
-		const conversationIdStr = message.conversation.toString();
-		await Message.findByIdAndDelete(messageId);
-
-		// Update conversation's lastMessage if it was this message
-		const conversation = await Conversation.findById(conversationIdStr);
-		if (conversation) {
-			if (
-				conversation.lastMessage &&
-				conversation.lastMessage.toString() === messageIdStr
-			) {
-				// Find the most recent remaining message
-				const previousMessage = await Message.findOne({
-					conversation: conversationIdStr,
-				})
-					.sort({ createdAt: -1 })
-					.lean();
-				conversation.lastMessage = previousMessage?._id || undefined;
-				await conversation.save();
-			}
-
-			const participants = conversation.participants.map((p: any) =>
-				p.toString(),
-			);
-			await clearChatCache(conversationIdStr, participants);
-
-			// Emit message deletion (same socket event as regular delete)
-			emitMessageDelete(conversationIdStr, messageIdStr, participants);
-		}
-
-		return res.status(200).json({
-			success: true,
-			message: "Message undone!",
-		});
-	} catch (err: any) {
-		logger.error("Error in undoMessage controller", {
-			error: err.message,
-		});
-		return next(
-			err instanceof AppError
-				? err
-				: new AppError("Internal server error!"),
-		);
-	}
-};
-
-/**
  * Fetch direct presence status of a user.
  */
 export const getUserPresence = async (
@@ -1297,6 +1190,236 @@ export const getUserPresence = async (
 		});
 	} catch (err: any) {
 		logger.error("Error in getUserPresence controller", {
+			error: err.message,
+		});
+		return next(
+			err instanceof AppError
+				? err
+				: new AppError("Internal server error!"),
+		);
+	}
+};
+
+// ─── Pin / Unpin Messages ───────────────────────────────────────────────
+
+/**
+ * Pin a message in a 1-on-1 conversation. Each participant can pin up to 5 messages.
+ */
+export const pinMessage = async (
+	req: Request<MessageParams>,
+	res: Response,
+	next: NextFunction,
+) => {
+	const { messageId } = req.params;
+	const currentUserId = req.user?._id;
+
+	try {
+		if (!currentUserId) {
+			return next(new UnauthorizedError("Unauthorized!"));
+		}
+
+		if (!mongoose.Types.ObjectId.isValid(messageId)) {
+			return next(new BadRequestError("Invalid message ID!"));
+		}
+
+		// Find the message to get its conversation
+		const message = await Message.findById(messageId).lean();
+		if (!message) {
+			return next(new NotFoundError("Message not found!"));
+		}
+
+		const conversation = await Conversation.findById(message.conversation);
+		if (!conversation) {
+			return next(new NotFoundError("Conversation not found!"));
+		}
+
+		// Verify the user is a participant
+		const convParticipants = conversation.participants.map((p) => p.toString());
+		if (!convParticipants.includes(currentUserId.toString())) {
+			return next(new ForbiddenError("You are not a participant in this conversation!"));
+		}
+
+		// Check if already pinned
+		const alreadyPinned = (conversation.pinnedMessages || []).some(
+			(p) => p.toString() === messageId,
+		);
+		if (alreadyPinned) {
+			return res.status(200).json({
+				success: true,
+				message: "Message is already pinned!",
+			});
+		}
+
+		// Limit to 5 pinned messages — remove oldest if at limit
+		if (conversation.pinnedMessages && conversation.pinnedMessages.length >= 5) {
+			conversation.pinnedMessages.shift();
+		}
+
+		if (!conversation.pinnedMessages) {
+			conversation.pinnedMessages = [];
+		}
+		conversation.pinnedMessages.push(message._id);
+		await conversation.save();
+
+		// Fetch populated pinned messages
+		const pinnedMessages = await Message.find({
+			_id: { $in: conversation.pinnedMessages },
+		})
+			.populate("sender", "username fullName profilePic")
+			.sort({ createdAt: -1 })
+			.lean();
+
+		// Clear chat cache
+		await clearChatCache(message.conversation.toString(), convParticipants);
+
+		// Emit to conversation room and personal rooms
+		emitMessagePin(
+			message.conversation.toString(),
+			message._id.toString(),
+			convParticipants,
+			pinnedMessages,
+		);
+
+		return res.status(200).json({
+			success: true,
+			message: "Message pinned!",
+			pinnedMessages,
+		});
+	} catch (err: any) {
+		logger.error("Error in pinMessage controller", {
+			error: err.message,
+		});
+		return next(
+			err instanceof AppError
+				? err
+				: new AppError("Internal server error!"),
+		);
+	}
+};
+
+/**
+ * Unpin a message from a 1-on-1 conversation.
+ */
+export const unpinMessage = async (
+	req: Request<MessageParams>,
+	res: Response,
+	next: NextFunction,
+) => {
+	const { messageId } = req.params;
+	const currentUserId = req.user?._id;
+
+	try {
+		if (!currentUserId) {
+			return next(new UnauthorizedError("Unauthorized!"));
+		}
+
+		if (!mongoose.Types.ObjectId.isValid(messageId)) {
+			return next(new BadRequestError("Invalid message ID!"));
+		}
+
+		// Find conversation that has this message pinned
+		const conversation = await Conversation.findOne({
+			pinnedMessages: messageId,
+		});
+		if (!conversation) {
+			return next(new NotFoundError("Message is not pinned in any conversation!"));
+		}
+
+		// Verify the user is a participant
+		const convParticipants = conversation.participants.map((p) => p.toString());
+		if (!convParticipants.includes(currentUserId.toString())) {
+			return next(new ForbiddenError("You are not a participant in this conversation!"));
+		}
+
+		// Remove the message from pinnedMessages
+		conversation.pinnedMessages = (conversation.pinnedMessages || []).filter(
+			(p) => p.toString() !== messageId,
+		);
+		await conversation.save();
+
+		// Fetch remaining pinned messages
+		const pinnedMessages = conversation.pinnedMessages.length > 0
+			? await Message.find({ _id: { $in: conversation.pinnedMessages } })
+				.populate("sender", "username fullName profilePic")
+				.sort({ createdAt: -1 })
+				.lean()
+			: [];
+
+		// Clear chat cache
+		await clearChatCache(conversation._id.toString(), convParticipants);
+
+		// Emit to conversation room and personal rooms
+		emitMessageUnpin(
+			conversation._id.toString(),
+			messageId,
+			convParticipants,
+			pinnedMessages,
+		);
+
+		return res.status(200).json({
+			success: true,
+			message: "Message unpinned!",
+			pinnedMessages,
+		});
+	} catch (err: any) {
+		logger.error("Error in unpinMessage controller", {
+			error: err.message,
+		});
+		return next(
+			err instanceof AppError
+				? err
+				: new AppError("Internal server error!"),
+		);
+	}
+};
+
+/**
+ * Get pinned messages for a conversation.
+ */
+export const getPinnedMessages = async (
+	req: Request<ConversationParams>,
+	res: Response,
+	next: NextFunction,
+) => {
+	const { conversationId } = req.params;
+	const currentUserId = req.user?._id;
+
+	try {
+		if (!currentUserId) {
+			return next(new UnauthorizedError("Unauthorized!"));
+		}
+
+		if (!mongoose.Types.ObjectId.isValid(conversationId)) {
+			return next(new BadRequestError("Invalid conversation ID!"));
+		}
+
+		const conversation = await Conversation.findById(conversationId);
+		if (!conversation) {
+			return next(new NotFoundError("Conversation not found!"));
+		}
+
+		const pinnedMsgIds = conversation.pinnedMessages || [];
+		if (pinnedMsgIds.length === 0) {
+			return res.status(200).json({
+				success: true,
+				message: "No pinned messages!",
+				pinnedMessages: [],
+			});
+		}
+
+		const pinnedMessages = await Message.find({
+			_id: { $in: pinnedMsgIds },
+		})
+			.populate("sender", "username fullName profilePic")
+			.sort({ createdAt: -1 })
+			.lean();
+
+		return res.status(200).json({
+			success: true,
+			pinnedMessages,
+		});
+	} catch (err: any) {
+		logger.error("Error in getPinnedMessages controller", {
 			error: err.message,
 		});
 		return next(

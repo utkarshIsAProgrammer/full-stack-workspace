@@ -55,20 +55,18 @@ describe("Saves API", () => {
     app = await createApp();
   });
 
-  describe("POST /api/saves/toggle — Toggle Save", () => {
+  describe("POST /api/saves/:postId — Toggle Save", () => {
     it("should save a post", async () => {
       const res = await request(app)
-        .post("/api/saves/toggle")
+        .post(`/api/saves/${postId}`)
         .set("Cookie", userCookies)
-        .send({ postId })
-        .expect(200);
+        .expect(201);
       expect(res.body.success).toBe(true);
     });
 
     it("should reject unauthenticated requests", async () => {
       await request(app)
-        .post("/api/saves/toggle")
-        .send({ postId })
+        .post(`/api/saves/${postId}`)
         .expect(401);
     });
   });

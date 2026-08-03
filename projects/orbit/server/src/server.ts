@@ -28,7 +28,6 @@ import { glimpseRoutes } from "./routes/glimpse.routes";
 import { communityRoutes } from "./routes/community.routes";
 import { collectionRoutes } from "./routes/collection.routes";
 import { streakRoutes } from "./routes/streak.routes";
-import { audioRoomRoutes } from "./routes/audioRoom.routes";
 import { inviteRoutes } from "./routes/invite.routes";
 import { reportRoutes } from "./routes/report.routes";
 import { feedRoutes } from "./routes/feed.routes";
@@ -41,7 +40,7 @@ import translationRoutes from "./routes/translation.routes";
 import leaderboardRoutes from "./routes/leaderboard.routes";
 import { adminRoutes } from "./routes/admin.routes";
 
-import { startAffinityScheduler, startNotificationPruner } from "./configs/scheduler";
+import { startAffinityScheduler, startNotificationPruner, startDailyMissionReset, startKeepAlive, startStreakBreakChecker, startScheduledPostPublisher } from "./configs/scheduler";
 import trendRoutes from "./routes/trending.routes";
 import analyticsRoutes from "./routes/analytics.routes";
 import feedForYouRoutes from "./routes/feedForYou.routes";
@@ -51,6 +50,7 @@ import webhookRoutes from "./routes/webhook.routes";
 import apiKeyRoutes from "./routes/apiKey.routes";
 import bulkOpRoutes from "./routes/bulkOperations.routes";
 import groupRoutes from "./routes/group.routes";
+import { oauthRoutes } from "./routes/oauth.routes";
 import { AppError } from "./utilities/errors";
 import { logger } from "./utilities/logger";
 import { cookieOptions } from "./configs/cookie";
@@ -269,20 +269,35 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 	next();
 });
 
-// Request Logging Middleware
+// Minimal Request Logging Middleware — only logs errors (4xx/5xx) and slow requests
 app.use((req: Request, res: Response, next: NextFunction) => {
 	const start = Date.now();
 	res.on("finish", () => {
 		const duration = Date.now() - start;
-		logger.info(`${req.method} ${req.path}`, {
-			requestId: req.requestId,
-			method: req.method,
-			path: req.path,
-			statusCode: res.statusCode,
-			durationMs: duration,
-		});
+		const statusCode = res.statusCode;
+		// Only log on server errors (5xx), client errors (4xx), or requests over 5 seconds
+		if (statusCode >= 400 || duration > 5000) {
+			logger.warn(`${req.method} ${req.path} ${statusCode} ${duration}ms`, {
+				requestId: req.requestId,
+				method: req.method,
+				path: req.path,
+				statusCode,
+				durationMs: duration,
+			});
+		}
 	});
 	next();
+});
+
+// Lightweight liveness probe — intentionally skips DB/Redis checks so it
+// returns 200 instantly regardless of dependency state. Used by the internal
+// keep-alive pinger (and can be wired to external uptime monitors).
+app.get("/api/ping", (_req: Request, res: Response) => {
+	return res.status(200).json({
+		success: true,
+		message: "pong",
+		timestamp: new Date().toISOString(),
+	});
 });
 
 // Enhanced Health Check with detailed system metrics
@@ -357,6 +372,7 @@ app.use(csrfProtection);
 
 // api routes
 app.use("/api/auth", authRoutes);
+app.use("/api/auth", oauthRoutes);
 app.use("/api/password", passwordRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/posts", postRoutes);
@@ -372,7 +388,6 @@ app.use("/api/glimpses", glimpseRoutes);
 app.use("/api/communities", communityRoutes);
 app.use("/api/collections", collectionRoutes);
 app.use("/api/streaks", streakRoutes);
-app.use("/api/rooms", audioRoomRoutes);
 app.use("/api/invites", inviteRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/admin", adminRoutes);
@@ -505,6 +520,18 @@ connectDB().then(async () => {
 
 	// Start daily pruner for read notifications older than 30 days
 	startNotificationPruner();
+
+	// Start daily mission reset (cleans up old records at midnight)
+	startDailyMissionReset();
+
+	// Keep free-tier hosting awake — pings /api/ping every 5 minutes
+	startKeepAlive();
+
+	// Check for broken streaks every hour
+	startStreakBreakChecker();
+
+	// Publish scheduled posts the moment they're due (every minute)
+	startScheduledPostPublisher();
 
 	server.listen(port, () => {
 		logger.info(`Server is running on PORT: ${port}`);

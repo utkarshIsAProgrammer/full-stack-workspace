@@ -410,8 +410,14 @@ export async function getRankedFeed(
     return { posts: [], nextCursor: null, hasMore: false };
   }
 
-  const affinityScores = (user as any).affinityScores as Map<string, number> || new Map();
-  const contentAffinity = (user as any).contentAffinity as Map<string, number> || new Map();
+  // Mongoose `Map` fields come back as plain objects after .lean() —
+  // convert them into real JS Maps so `.get()` / `.size` / iteration work.
+  const affinityScores = new Map<string, number>(
+    Object.entries((user as any).affinityScores || {})
+  );
+  const contentAffinity = new Map<string, number>(
+    Object.entries((user as any).contentAffinity || {})
+  );
   const seenPosts: string[] = (user as any).seenPosts || [];
 
   // Get followed IDs once to reuse in candidate generation and scoring

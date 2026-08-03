@@ -19,6 +19,21 @@ export const createPostSchema = z.object({
     .enum(["public", "closeFriends"])
     .optional()
     .default("public"),
+
+  // Poll (sent as a JSON string from the client's FormData)
+  poll: z.string().optional(),
+
+  // Collaborator's @username (resolved to a userId in the controller)
+  collaborator: z.string().optional(),
+
+  // Post status: draft / scheduled / published (default published)
+  status: z
+    .enum(["draft", "scheduled", "published"])
+    .optional()
+    .default("published"),
+
+  // ISO timestamp for scheduled posts
+  scheduledAt: z.string().optional(),
 });
 
 export const updatePostSchema = z

@@ -178,7 +178,7 @@ export default function ReportButton({
 									placeholder="Additional details (optional)..."
 									maxLength={500}
 									rows={2}
-									className="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl px-3 py-2 text-[11px] text-zinc-300 placeholder-zinc-600 resize-none outline-none focus:border-zinc-600 transition-colors"
+									className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg px-3 py-2 text-[11px] text-zinc-300 placeholder-zinc-600 resize-none outline-none focus:border-zinc-600 transition-colors"
 								/>
 
 								{error && (

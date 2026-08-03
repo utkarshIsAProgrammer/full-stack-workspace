@@ -20,6 +20,11 @@ const userStreakSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // Tracks whether a push notification has already been sent for this streak break
+    streakBreakNotified: {
+      type: Boolean,
+      default: false,
+    },
     // Partner streaks: map of partnerUserId -> { currentStreak, lastActiveDate }
     partnerStreaks: {
       type: Map,

@@ -153,7 +153,7 @@ export default function ImageCropModal({
 					{/* Header */}
 					<div className="flex items-center justify-between border-b border-zinc-800 bg-black p-4 relative z-10">
 						<div className="text-left">
-							<h3 className="font-sans text-base font-black text-black dark:text-white uppercase tracking-wider">
+							<h3 className="text-label text-base font-semibold text-black dark:text-white">
 								{title}
 							</h3>
 							<p className="text-[11px] text-zinc-500 font-bold">

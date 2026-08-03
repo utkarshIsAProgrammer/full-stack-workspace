@@ -10,6 +10,8 @@ import { logger } from "../utilities/logger";
 import { getCache, setCache, deleteCache } from "./cache";
 import { redis } from "./redis";
 import { Conversation } from "../models/conversation.model";
+import { CommunityMessage } from "../models/communityMessage.model";
+import { Community } from "../models/community.model";
 import { Message } from "../models/message.model";
 import Block from "../models/block.model";
 
@@ -24,6 +26,35 @@ let io: SocketIOServer;
 
 // Track online users in-memory for reliable presence broadcasts
 const onlineUsers = new Set<string>();
+
+// Track active community group calls (LiveKit) so other members can be
+// notified to join the same room. Map: communityId -> call info
+// participants is a Set of userIds currently in the call — used to clear
+// the record when the LAST participant leaves (crash-safe, not starter-only).
+const activeCommunityCalls = new Map<
+  string,
+  {
+    roomName: string;
+    type: "audio" | "video";
+    startedBy: string;
+    startedAt: number;
+    participants: Set<string>;
+  }
+>();
+
+// Expire stale group-call records after 10 minutes so a crashed starter's
+// call doesn't leave a phantom "join call" banner forever.
+const CALL_RECORD_TTL_MS = 10 * 60 * 1000;
+
+const pruneStaleCommunityCalls = () => {
+  const now = Date.now();
+  for (const [communityId, call] of activeCommunityCalls) {
+    if (now - call.startedAt > CALL_RECORD_TTL_MS) {
+      activeCommunityCalls.delete(communityId);
+      logger.info("Expired stale community group call record", { communityId });
+    }
+  }
+};
 
 // Module-level references for Redis adapter clients (needed for graceful shutdown)
 let redisPubClient: Redis | null = null;
@@ -382,6 +413,20 @@ export const initSocket = async (server: http.Server) => {
       });
 
       if (s.userId) {
+        // Remove the user from any community group calls they were in, so a
+        // crashed/disconnected participant doesn't leave a phantom call record.
+        for (const [communityId, call] of activeCommunityCalls) {
+          if (call.participants.has(s.userId)) {
+            call.participants.delete(s.userId);
+            if (call.participants.size === 0) {
+              activeCommunityCalls.delete(communityId);
+              io.to(`community:${communityId}`).emit("community:call-ended", {
+                communityId,
+              });
+              logger.info("Community group call ended (participant disconnected)", { communityId });
+            }
+          }
+        }
         // Remove from in-memory tracking
         onlineUsers.delete(s.userId);
 
@@ -472,16 +517,137 @@ export const initSocket = async (server: http.Server) => {
     });
 
     // ── Community Socket Events ──────────────────────────────────────
-    socket.on("community:join", ({ communityId }) => {
+    socket.on("community:join", async ({ communityId }) => {
       if (!s.userId || !communityId) return;
       socket.join(`community:${communityId}`);
       logger.info("Socket joined community", { userId: s.userId, communityId });
+
+      // Send back current online members so the client can show green dots
+      try {
+        const community = await Community.findById(communityId).select("members").lean();
+        if (community) {
+          const memberIds = (community as any).members?.map((m: any) => m.user?.toString()).filter(Boolean) || [];
+          const onlineMemberIds = memberIds.filter((id: string) => id !== s.userId && onlineUsers.has(id));
+          if (onlineMemberIds.length > 0) {
+            io.to(`user:${s.userId}`).emit("community:presence:sync", {
+              communityId,
+              onlineUserIds: onlineMemberIds,
+            });
+          }
+        }
+      } catch (error: any) {
+        logger.error("Error syncing community presence", { error: error.message, communityId, userId: s.userId });
+      }
     });
 
     socket.on("community:leave", ({ communityId }) => {
       if (!s.userId || !communityId) return;
       socket.leave(`community:${communityId}`);
       logger.info("Socket left community", { userId: s.userId, communityId });
+    });
+
+    // ── Community Group Call Signaling (LiveKit) ────────────────────
+    // A member started a group call. Record it and notify the rest of the
+    // community room so they can join the same LiveKit room.
+    // ── Group call membership helpers ────────────────────────────────
+    const isCommunityMember = async (communityId: string, userId: string): Promise<boolean> => {
+      try {
+        const community = await Community.findById(communityId).select("members").lean();
+        if (!community) return false;
+        return (community as any).members?.some(
+          (m: any) => m.user?.toString() === userId
+        ) ?? false;
+      } catch {
+        return false;
+      }
+    };
+
+    // Clears the call record if the caller is (or has become) the last
+    // participant. Broadcasts community:call-ended so all members hide the
+    // join banner. Safe to call for any participant, not just the starter.
+    const clearCommunityCallIfEmpty = (communityId: string, leavingUserId: string) => {
+      const call = activeCommunityCalls.get(communityId);
+      if (!call) return;
+      call.participants.delete(leavingUserId);
+      // Only clear when truly empty (or the record has gone stale)
+      if (call.participants.size === 0) {
+        activeCommunityCalls.delete(communityId);
+        io.to(`community:${communityId}`).emit("community:call-ended", {
+          communityId,
+        });
+        logger.info("Community group call ended (last participant left)", { communityId });
+      }
+    };
+
+    // A member started a NEW group call (first joiner). Creates the record
+    // if none exists; if one already exists (call in progress), the user is
+    // simply added as a participant — ownership is NOT overwritten.
+    socket.on(
+      "community:call-started",
+      async (data: { communityId: string; roomName: string; type: "audio" | "video" }) => {
+        if (!s.userId || !data || !data.communityId || !data.roomName || !data.type) return;
+        if (data.type !== "audio" && data.type !== "video") return;
+
+        pruneStaleCommunityCalls();
+
+        try {
+          if (!(await isCommunityMember(data.communityId, s.userId))) return;
+
+          const existing = activeCommunityCalls.get(data.communityId);
+          const isNewCall = !existing;
+
+          if (isNewCall) {
+            activeCommunityCalls.set(data.communityId, {
+              roomName: data.roomName,
+              type: data.type,
+              startedBy: s.userId,
+              startedAt: Date.now(),
+              participants: new Set([s.userId]),
+            });
+            logger.info("Community group call started", {
+              communityId: data.communityId,
+              roomName: data.roomName,
+              type: data.type,
+              startedBy: s.userId,
+            });
+            // Notify everyone in the community room that a call is live
+            io.to(`community:${data.communityId}`).emit("community:call-started", {
+              communityId: data.communityId,
+              roomName: data.roomName,
+              type: data.type,
+              startedBy: s.userId,
+            });
+          } else {
+            // Existing call — just add this user as a participant.
+            // No broadcast: other members already see the live banner.
+            existing.participants.add(s.userId);
+          }
+        } catch (error: any) {
+          logger.error("Error announcing community group call", { error: error.message, communityId: data.communityId });
+        }
+      }
+    );
+
+    // A member left/ended the group call. Clears the record when the last
+    // participant leaves (works for any participant, not just the starter).
+    socket.on("community:call-ended", (data: { communityId: string }) => {
+      if (!s.userId || !data || !data.communityId) return;
+      clearCommunityCallIfEmpty(data.communityId, s.userId);
+    });
+
+    // A member wants to know if there's an active call they can join
+    socket.on("community:call-status", ({ communityId }) => {
+      if (!s.userId || !communityId) return;
+      pruneStaleCommunityCalls();
+      const call = activeCommunityCalls.get(communityId);
+      if (call) {
+        io.to(`user:${s.userId}`).emit("community:call-started", {
+          communityId,
+          roomName: call.roomName,
+          type: call.type,
+          startedBy: call.startedBy,
+        });
+      }
     });
 
     socket.on("community:typing", ({ communityId, isTyping }) => {
@@ -493,17 +659,35 @@ export const initSocket = async (server: http.Server) => {
       });
     });
 
-    // ── Audio Room Socket Events ──────────────────────────────────────
-    socket.on("room:join", ({ roomId }) => {
-      if (!s.userId || !roomId) return;
-      socket.join(`room:${roomId}`);
-      logger.info("Socket joined audio room", { userId: s.userId, roomId });
+    socket.on("community:seen", async ({ communityId }) => {
+      if (!s.userId || !communityId || !mongoose.Types.ObjectId.isValid(communityId)) return;
+      try {
+        // Mark all community messages as seen by this user
+        await CommunityMessage.updateMany(
+          { community: communityId, isDeleted: { $ne: true } },
+          { $addToSet: { seenBy: s.userId } }
+        );
+      } catch (error: any) {
+        logger.error("Error marking community messages seen", { error: error.message, communityId, userId: s.userId });
+      }
     });
 
-    socket.on("room:leave", ({ roomId }) => {
-      if (!s.userId || !roomId) return;
-      socket.leave(`room:${roomId}`);
-      logger.info("Socket left audio room", { userId: s.userId, roomId });
+    // Request presence sync for community members
+    socket.on("community:request:presence", async ({ communityId }) => {
+      if (!s.userId || !communityId) return;
+      try {
+        const community = await Community.findById(communityId).select("members").lean();
+        if (community) {
+          const memberIds = (community as any).members?.map((m: any) => m.user?.toString()).filter(Boolean) || [];
+          const onlineMemberIds = memberIds.filter((id: string) => id !== s.userId && onlineUsers.has(id));
+          io.to(`user:${s.userId}`).emit("community:presence:sync", {
+            communityId,
+            onlineUserIds: onlineMemberIds,
+          });
+        }
+      } catch (error: any) {
+        logger.error("Error syncing community presence on request", { error: error.message, communityId, userId: s.userId });
+      }
     });
 
     // Handle unauthorized access attempts to protected events
@@ -558,6 +742,7 @@ const IMMEDIATE_EVENTS = new Set([
   "post:created",
   "post:deleted",
   "post:updated",
+  "poll:updated",
   "post:comment",
   "comment:reply",
   "comment:updated",
@@ -702,6 +887,14 @@ export const emitPostUpdated = (post: any) => {
     batchEmit("post:updated", post);
   } catch (error: any) {
     logger.error("Failed to emit post:updated", { error: error.message });
+  }
+};
+
+export const emitPollUpdated = (postId: string, poll: any) => {
+  try {
+    batchEmit("poll:updated", { postId, poll });
+  } catch (error: any) {
+    logger.error("Failed to emit poll:updated", { error: error.message });
   }
 };
 
@@ -956,7 +1149,45 @@ export const emitMessageEdit = (conversationId: string, message: any, participan
   } catch (error: any) {
     logger.error("Failed to emit message:edit", { error: error.message, conversationId });
   }
-};	/**
+};
+
+/**
+ * Emits a message pin event to the conversation room and each participant's personal room.
+ */
+export const emitMessagePin = (conversationId: string, messageId: string, participantIds?: string[], pinnedMessages?: any[]) => {
+  try {
+    const payload = { conversationId, messageId, pinnedMessages };
+    io.to(`conversation:${conversationId}`).emit("message:pin", payload);
+    
+    if (participantIds && participantIds.length > 0) {
+      for (const pId of participantIds) {
+        io.to(`user:${pId}`).emit("message:pin", payload);
+      }
+    }
+  } catch (error: any) {
+    logger.error("Failed to emit message:pin", { error: error.message, conversationId });
+  }
+};
+
+/**
+ * Emits a message unpin event to the conversation room and each participant's personal room.
+ */
+export const emitMessageUnpin = (conversationId: string, messageId: string, participantIds?: string[], pinnedMessages?: any[]) => {
+  try {
+    const payload = { conversationId, messageId, pinnedMessages };
+    io.to(`conversation:${conversationId}`).emit("message:unpin", payload);
+    
+    if (participantIds && participantIds.length > 0) {
+      for (const pId of participantIds) {
+        io.to(`user:${pId}`).emit("message:unpin", payload);
+      }
+    }
+  } catch (error: any) {
+    logger.error("Failed to emit message:unpin", { error: error.message, conversationId });
+  }
+};
+
+/**
  * Emits a message deletion event to the conversation room and each participant's personal room.
  * Broadcasting to personal rooms ensures the conversation list updates even when the user
  * is not actively viewing the conversation.

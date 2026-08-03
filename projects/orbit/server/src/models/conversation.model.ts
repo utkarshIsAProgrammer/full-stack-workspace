@@ -27,6 +27,10 @@ const conversationSchema = new mongoose.Schema(
       of: Number,
       default: {},
     },
+    pinnedMessages: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Message",
+    }],
   },
   { timestamps: true }
 );

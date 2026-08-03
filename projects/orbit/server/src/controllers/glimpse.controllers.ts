@@ -9,6 +9,8 @@ import { Conversation } from "../models/conversation.model";
 import { Message } from "../models/message.model";
 import { createNotification } from "../utilities/notification";
 import Block from "../models/block.model";
+import { awardXP } from "../services/xpService";
+import { progressMission } from "../services/dailyMissionService";
 
 // Get glimpse feed for the current user
 // Returns non-expired glimpses that still have remaining views
@@ -121,6 +123,10 @@ export const createGlimpse = async (req: Request, res: Response) => {
         error: (socketErr as Error).message,
       });
     }
+
+    // Award XP and progress mission (fire-and-forget)
+    awardXP(author.toString(), "CREATE_POST").catch(() => {});
+    progressMission(author.toString(), "story").catch(() => {});
 
     return res.status(201).json({
       success: true,

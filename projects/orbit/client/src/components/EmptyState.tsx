@@ -84,7 +84,7 @@ export default function EmptyState({
         </div>
 
         {/* Title */}
-        <h3 className="text-sm font-bold text-zinc-100">{title}</h3>
+        <h3 className="text-label text-base font-semibold text-zinc-100">{title}</h3>
 
         {/* Description */}
         {description && (

@@ -5,6 +5,7 @@ import {
 	Calendar,
 	Share2,
 	Edit3,
+	MoreHorizontal,
 	Camera,
 	AlertCircle,
 	X,
@@ -14,7 +15,8 @@ import {
 	Repeat2,
 	FileText,
 	Image,
-
+	FilePenLine,
+	Clock,
 } from "lucide-react";
 import { User as UserType, Post } from "../types";
 import GlassCard from "./GlassCard";
@@ -26,8 +28,15 @@ import ConfirmDialog from "./ConfirmDialog";
 import Streaks from "./Streaks";
 import BlockButton from "./BlockButton";
 import ReputationDisplay from "./ReputationDisplay";
+import PollCard from "./PollCard";
 import { apiFetch } from "../utils/api";
+import { getCachedResponse, prependPostToCachedFeeds } from "../utils/apiCache";
+import { useCacheRefresh } from "../hooks/useCacheRefresh";
 import { logger } from "../utils/logger";
+
+// Stable RegExp for matching profile/posts cache refresh events
+// — module-level to prevent React effect re-attachment on every render.
+const MATCHER_PROFILE = /\/api\/users\/(username\/|[a-f0-9]{24}\/posts)/;
 
 interface ProfileProps {
 	user: UserType | null; // Auth User
@@ -71,13 +80,18 @@ export default function Profile({
 	const [listLoading, setListLoading] = useState(false);
 
 	// Profile content tab
-	const [profileTab, setProfileTab] = useState<"posts" | "saved" | "reposts">(
-		"posts",
-	);
+	const [profileTab, setProfileTab] = useState<
+		"posts" | "saved" | "reposts" | "drafts"
+	>("posts");
 	const [savedPosts, setSavedPosts] = useState<Post[]>([]);
 	const [repostedPosts, setRepostedPosts] = useState<Post[]>([]);
 	const [loadingSaved, setLoadingSaved] = useState(false);
 	const [loadingReposts, setLoadingReposts] = useState(false);
+	// Drafts & scheduled posts (self only)
+	const [drafts, setDrafts] = useState<Post[]>([]);
+	const [scheduledPosts, setScheduledPosts] = useState<Post[]>([]);
+	const [loadingDrafts, setLoadingDrafts] = useState(false);
+	const [openMenuPostId, setOpenMenuPostId] = useState<string | null>(null);
 
 	// Pagination states for posts
 	const [postsCursor, setPostsCursor] = useState<string | null>(null);
@@ -117,6 +131,9 @@ export default function Profile({
 
 	const [editPostDrawerOpen, setEditPostDrawerOpen] = useState(false);
 	const [deleteConfirmPostId, setDeleteConfirmPostId] = useState<
+		string | null
+	>(null);
+	const [deleteConfirmDraftId, setDeleteConfirmDraftId] = useState<
 		string | null
 	>(null);
 	const [editPostTitle, setEditPostTitle] = useState("");
@@ -187,11 +204,6 @@ export default function Profile({
 				setEditPostExistingImages([]);
 				setEditPostNewFiles([]);
 				setEditPostNewPreviews([]);
-				window.dispatchEvent(
-					new CustomEvent("showToast", {
-						detail: { message: "Post updated!", type: "success" },
-					}),
-				);
 			}
 		} catch (e) {
 			logger.error(e);
@@ -297,6 +309,47 @@ export default function Profile({
 		}
 	};
 
+	// On mount or targetUsername change, try to display cached profile + posts instantly
+	useEffect(() => {
+		(async () => {
+			try {
+				const cached = await getCachedResponse<{
+					user: UserType;
+					success: boolean;
+				}>(`/api/users/username/${targetUsername}`);
+				if (cached?.user && cached.success) {
+					setProfile(cached.user);
+					setFullName(cached.user.fullName || "");
+					setBio(cached.user.bio || "");
+					setProfilePicPreview(cached.user.profilePic?.url || "");
+					setBannerPicPreview(cached.user.bannerImage?.url || "");
+					setLoading(false);
+
+					// Also try to load cached posts for this user
+					if (cached.user._id) {
+						const postsCache = await getCachedResponse<{
+							posts: Post[];
+							success: boolean;
+							nextCursor: string | null;
+							hasMore: boolean;
+						}>(`/api/users/${cached.user._id}/posts?limit=10`);
+						if (postsCache?.posts?.length && postsCache.success) {
+							setPosts(postsCache.posts);
+							setPostsCursor(postsCache.nextCursor || null);
+							setPostsHasMore(postsCache.hasMore || false);
+						}
+					}
+				}
+			} catch {
+				// Cache read failures are non-critical
+			}
+		})();
+	}, [targetUsername]);
+
+	// When the background cache timer refreshes the user's profile or posts,
+	// re-fetch so the profile page stays up-to-date automatically.
+	useCacheRefresh(MATCHER_PROFILE, () => loadProfile());
+
 	const loadProfile = async () => {
 		setLoading(true);
 		try {
@@ -330,7 +383,9 @@ export default function Profile({
 
 			// 2. Fetch posts + saved/reposted in parallel
 			const promises: Promise<void>[] = [
-				apiFetch(`/api/users/${targetId}/posts?limit=10`).then(
+				apiFetch(`/api/users/${targetId}/posts?limit=10`, {
+					bypassCache: true,
+				}).then(
 					async (postRes) => {
 						const postData = await postRes.json();
 						if (postRes.ok && postData.success) {
@@ -462,6 +517,36 @@ export default function Profile({
 			window.removeEventListener(
 				"postUpdated",
 				handlePostUpdated as EventListener,
+			);
+	}, []);
+
+	// Listen for realtime poll votes — merge aggregate counts into every post
+	// list (own posts / saved / reposted). Broadcast has no per-user data, so
+	// preserve the viewer's own myVote from the existing post state.
+	useEffect(() => {
+		const handlePollUpdated = (
+			e: CustomEvent<{ postId: string; poll: Post["poll"] }>,
+		) => {
+			const { postId, poll } = e.detail;
+			if (!poll) return;
+			const mergePoll = (existing: Post["poll"]) => ({
+				...poll,
+				myVote: existing?.myVote ?? poll.myVote ?? null,
+			});
+			const updateFn = (p: Post) =>
+				p._id === postId ? { ...p, poll: mergePoll(p.poll) } : p;
+			setPosts((prev) => prev.map(updateFn));
+			setSavedPosts((prev) => prev.map(updateFn));
+			setRepostedPosts((prev) => prev.map(updateFn));
+		};
+		window.addEventListener(
+			"postPollUpdated",
+			handlePollUpdated as EventListener,
+		);
+		return () =>
+			window.removeEventListener(
+				"postPollUpdated",
+				handlePollUpdated as EventListener,
 			);
 	}, []);
 
@@ -1103,6 +1188,9 @@ export default function Profile({
 		) {
 			fetchRepostedPosts();
 		}
+		if (profileTab === "drafts" && isSelf !== undefined) {
+			fetchDrafts();
+		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [profileTab]);
 
@@ -1298,6 +1386,105 @@ export default function Profile({
 		}
 	};
 
+	// Fetch the current user's drafts + scheduled posts (self only)
+	const fetchDrafts = async () => {
+		setLoadingDrafts(true);
+		try {
+			const res = await apiFetch("/api/posts/drafts", {
+				bypassCache: true,
+			});
+			const data = await res.json();
+			if (res.ok && data.success) {
+				setDrafts(data.drafts || []);
+				setScheduledPosts(data.scheduled || []);
+			}
+		} catch (e) {
+			logger.error(e);
+		} finally {
+			setLoadingDrafts(false);
+		}
+	};
+
+	// Publish a draft (or an early-published scheduled post)
+	const handlePublishDraft = async (postId: string) => {
+		try {
+			const res = await apiFetch(`/api/posts/${postId}/publish`, {
+				method: "POST",
+			});
+			const data = await res.json();
+			if (!res.ok) throw new Error(data.message || "Failed to publish.");
+			setDrafts((prev) => prev.filter((p) => p._id !== postId));
+			setScheduledPosts((prev) => prev.filter((p) => p._id !== postId));
+			if (data.post) {
+				// Seed the client-side feed cache so the home feed shows the
+				// published post INSTANTLY on next mount (the Feed component is
+				// unmounted while on Profile, so it can't receive the in-memory
+				// newPostCreated event). The background cache refresh then
+				// reconciles with the server without the user waiting.
+				prependPostToCachedFeeds(data.post);
+				window.dispatchEvent(
+					new CustomEvent("newPostCreated", {
+						detail: { post: data.post },
+					}),
+				);
+			}
+			// If the feed is already mounted, force an instant bypass-cache
+			// refresh so the new post appears even without a remount.
+			window.dispatchEvent(new CustomEvent("forceFeedRefresh"));
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: { message: "Post published!", type: "success" },
+				}),
+			);
+		} catch (err: any) {
+			logger.error("Publish draft failed", err);
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: {
+						message: err.message || "Failed to publish.",
+						type: "error",
+					},
+				}),
+			);
+		}
+	};
+
+	// Request deletion confirmation for a draft / scheduled post
+	const handleDeleteDraft = (postId: string) => {
+		setDeleteConfirmDraftId(postId);
+	};
+
+	// Perform the actual deletion after the user confirms
+	const confirmDeleteDraft = async () => {
+		const postId = deleteConfirmDraftId;
+		setDeleteConfirmDraftId(null);
+		if (!postId) return;
+		try {
+			const res = await apiFetch(`/api/posts/${postId}`, {
+				method: "DELETE",
+			});
+			const data = await res.json();
+			if (!res.ok) throw new Error(data.message || "Failed to delete.");
+			setDrafts((prev) => prev.filter((p) => p._id !== postId));
+			setScheduledPosts((prev) => prev.filter((p) => p._id !== postId));
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: { message: "Post deleted.", type: "success" },
+				}),
+			);
+		} catch (err: any) {
+			logger.error("Delete draft failed", err);
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: {
+						message: err.message || "Failed to delete.",
+						type: "error",
+					},
+				}),
+			);
+		}
+	};
+
 	const handleFollowToggle = async () => {
 		if (!profile) return;
 		const amIFollowing =
@@ -1355,14 +1542,6 @@ export default function Profile({
 				// Copy profile landing page URL to system clipboard
 				const url_link = `${window.location.origin}/u/${profile.username}`;
 				navigator.clipboard.writeText(url_link);
-				window.dispatchEvent(
-					new CustomEvent("showToast", {
-						detail: {
-							message: "Profile share link copied to clipboard!",
-							type: "success",
-						},
-					}),
-				);
 			}
 		} catch (e) {
 			logger.error(e);
@@ -1399,14 +1578,6 @@ export default function Profile({
 			if (res.ok && data.success) {
 				setProfile(data.user);
 				onUserUpdate(data.user); // Synchronize active session user
-				window.dispatchEvent(
-					new CustomEvent("showToast", {
-						detail: {
-							message: "Profile settings successfully refreshed.",
-							type: "success",
-						},
-					}),
-				);
 				setTimeout(() => {
 					setEditOpen(false);
 				}, 1500);
@@ -1496,8 +1667,8 @@ export default function Profile({
 							}}
 						/>
 						<div className="relative flex flex-col items-center gap-2">
-							<Image className="h-8 w-8 text-zinc-600" />
-							<span className="text-[11px] text-zinc-600 font-medium uppercase tracking-wider">
+							<Image className="h-8 w-8 text-zinc-400" />
+							<span className="text-[11px] text-zinc-400 font-medium uppercase tracking-wider">
 								No banner
 							</span>
 						</div>
@@ -1575,7 +1746,7 @@ export default function Profile({
 				{/* User details: name, username, bio, join date, stats */}
 				<div className="mt-4 px-1 space-y-3 sm:px-1.5">
 					<div>
-						<h1 className="text-xl font-bold text-white">
+						<h1 className="text-display-sm text-white">
 							{profile.fullName}
 						</h1>
 						<p className="text-sm text-zinc-400">
@@ -1640,7 +1811,7 @@ export default function Profile({
 								label: "Posts",
 								icon: FileText,
 								count: posts.length,
-							},								...(isSelf
+							},									...(isSelf
 								? [			{
 											id: "saved" as const,
 											label: "Saved",
@@ -1652,6 +1823,13 @@ export default function Profile({
 											label: "Reposts",
 											icon: Repeat2,
 											count: repostedPosts.length,
+										},
+										{
+											id: "drafts" as const,
+											label: "Drafts",
+											icon: FilePenLine,
+											count:
+												drafts.length + scheduledPosts.length,
 										},
 									]
 								: []),
@@ -1715,95 +1893,54 @@ export default function Profile({
 													{user?._id ===
 														profile?._id && (
 														<div className="absolute top-4 right-4 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center gap-1.5 z-20">
-															<button
-																onClick={(
-																	e,
-																) => {
-																	e.stopPropagation();
-																	setEditPostTitle(
-																		post.title,
-																	);
-																	setEditPostContent(
-																		post.content,
-																	);
-																	setEditPostId(
-																		post._id,
-																	);
-																	// Store existing images for the edit draw
-																	const existingImgs: {
-																		public_id: string;
-																		url: string;
-																	}[] = [];
-																	if (
-																		post
-																			.image
-																			?.public_id
-																	) {
-																		existingImgs.push(
-																			{
-																				public_id:
-																					post
-																						.image
-																						.public_id,
-																				url: post
-																					.image
-																					.url,
-																			},
-																		);
-																	}
-																	(
-																		post.images ||
-																		[]
-																	).forEach(
-																		(
-																			img: any,
-																		) => {
-																			if (
-																				img.public_id &&
-																				!existingImgs.some(
-																					(
-																						e,
-																					) =>
-																						e.public_id ===
-																						img.public_id,
-																				)
-																			) {
-																				existingImgs.push(
-																					{
-																						public_id:
-																							img.public_id,
-																						url: img.url,
-																					},
-																				);
-																			}
-																		},
-																	);
-																	setEditPostExistingImages(
-																		existingImgs,
-																	);
-																	setEditPostNewFiles(
-																		[],
-																	);
-																	setEditPostNewPreviews(
-																		[],
-																	);
-																	setEditPostDrawerOpen(
-																		true,
-																	);
-																}}
-																className="p-1.5 bg-zinc-800 border border-zinc-800 rounded-full text-zinc-400 hover:text-white shadow-sm cursor-pointer">
-																<Edit3 className="h-3 w-3" />
-															</button>
-															<button
-																onClick={(e) =>
-																	handleDeletePost(
-																		e,
-																		post._id,
-																	)
-																}
-																className="p-1.5 bg-zinc-800 border border-zinc-800 rounded-full text-zinc-400 hover:text-red-500 shadow-sm cursor-pointer">
-																<X className="h-3 w-3" />
-															</button>
+															<div className="relative">
+																																								<button
+																																									onClick={(e) => {
+																																										e.stopPropagation();
+																																										setOpenMenuPostId(openMenuPostId === post._id ? null : post._id);
+																																									}}
+																																									className="p-1.5 bg-zinc-800 border border-zinc-800 rounded-full text-zinc-400 hover:text-white shadow-sm cursor-pointer transition-colors">
+																																									<MoreHorizontal className="h-3.5 w-3.5" />
+																																								</button>
+																																								{openMenuPostId === post._id && (
+																																									<div className="absolute right-0 top-full mt-1 z-[100] w-40 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl overflow-hidden">
+																																										<button
+																																											onClick={() => {
+																																												setOpenMenuPostId(null);
+																																												setEditPostId(post._id);
+																																												setEditPostTitle(post.title || "");
+																																												setEditPostContent(post.content || "");
+																																												const existingImgs: { public_id: string; url: string }[] = [];
+																																												if (post.image?.public_id) {
+																																													existingImgs.push({ public_id: post.image.public_id, url: post.image.url });
+																																												}
+																																												(post.images || []).forEach((img: any) => {
+																																													if (img.public_id && !existingImgs.some((e) => e.public_id === img.public_id)) {
+																																														existingImgs.push({ public_id: img.public_id, url: img.url });
+																																													}
+																																												});
+																																												setEditPostExistingImages(existingImgs);
+																																												setEditPostNewFiles([]);
+																																												setEditPostNewPreviews([]);
+																																												setEditPostDrawerOpen(true);
+																																											}}
+																																											className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left">
+																																											<Edit3 className="h-3.5 w-3.5 text-amber-400" />
+																																											Edit Post
+																																										</button>
+																																										<button
+																																											onClick={(e) => {
+																																												setOpenMenuPostId(null);
+																																												handleDeletePost(e, post._id);
+																																											}}
+																																											className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-red-400 transition-colors text-left">
+																																											<X className="h-3.5 w-3.5" />
+																																											Delete Post
+																																										</button>
+																																									</div>
+																																								)}
+</div>
+
 														</div>
 													)}
 
@@ -1854,25 +1991,40 @@ export default function Profile({
 														</h4>
 														<p className="text-xs md:text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap text-left select-text">
 															{post.content}
-														</p>
-														{post.image && (
-															<div className="mt-3.5 overflow-hidden rounded-3xl border border-zinc-800">
-																<img
-																	loading="lazy"
-																	src={
-																		post
-																			.image
-																			.url
-																	}
-																	alt="attachment"
-																	className="w-full h-auto max-h-120 object-cover"
+														</p>															{post.image && (
+																<div className="mt-3.5 overflow-hidden rounded-3xl border border-zinc-800">
+																	<img
+																		loading="lazy"
+																		src={
+																			post
+																				.image
+																				.url
+																		}
+																		alt="attachment"
+																		className="w-full h-auto max-h-120 object-cover"
+																	/>
+																</div>
+															)}
+															{post.poll && (
+																<PollCard
+																	postId={post._id}
+																	poll={post.poll}
+																	readOnly={false}
+																	onPollUpdated={(pid, poll) => {
+																		setPosts((prev) =>
+																			prev.map((p) =>
+																				p._id === pid
+																					? { ...p, poll }
+																					: p,
+																			),
+																		);
+																	}}
 																/>
+															)}
 															</div>
-														)}
-													</div>
 
-													<div
-														className="mt-4 flex items-center justify-between pt-3 text-sm text-zinc-400 border-t border-zinc-800/50"
+															<div
+																className="mt-4 flex items-center justify-between pt-3 text-sm text-zinc-400 border-t border-zinc-800/50"
 														onClick={(e) =>
 															e.stopPropagation()
 														}>
@@ -1976,7 +2128,7 @@ export default function Profile({
 								</div>
 							) : savedPosts.length === 0 ? (
 								<GlassCard className="flex flex-col items-center justify-center py-12 text-center shadow-sm">
-									<Bookmark className="mx-auto h-8 w-8 text-zinc-600 mb-3" />
+									<Bookmark className="mx-auto h-8 w-8 text-zinc-400 mb-3" />
 									<h4 className="text-sm font-bold text-white">
 										No saved posts
 									</h4>
@@ -2167,7 +2319,7 @@ export default function Profile({
 								</div>
 							) : repostedPosts.length === 0 ? (
 								<GlassCard className="flex flex-col items-center justify-center py-12 text-center shadow-sm">
-									<Repeat2 className="mx-auto h-8 w-8 text-zinc-600 mb-3" />
+									<Repeat2 className="mx-auto h-8 w-8 text-zinc-400 mb-3" />
 									<h4 className="text-sm font-bold text-white">
 										No reposts yet
 									</h4>
@@ -2333,6 +2485,153 @@ export default function Profile({
 							)}
 						</>
 					)}
+
+					{/* Drafts & Scheduled Tab (self only) */}
+					{profileTab === "drafts" && isSelf && (
+						<>
+							{loadingDrafts ? (
+								<div className="grid gap-3.5 sm:grid-cols-2">
+									{[1, 2].map((n) => (
+										<div
+											key={n}
+											className="animate-pulse rounded-3xl border border-zinc-800 bg-zinc-900/40 p-4.5 space-y-3">
+											<div className="h-4 w-3/4 rounded bg-zinc-800" />
+											<div className="space-y-2">
+												<div className="h-3 w-full rounded bg-zinc-800" />
+												<div className="h-3 w-2/3 rounded bg-zinc-800" />
+											</div>
+										</div>
+									))}
+								</div>
+							) : drafts.length === 0 && scheduledPosts.length === 0 ? (
+								<GlassCard className="flex flex-col items-center justify-center py-12 text-center shadow-sm">
+									<FilePenLine className="mx-auto h-8 w-8 text-zinc-400 mb-3" />
+									<h4 className="text-sm font-bold text-white">
+										No drafts or scheduled posts
+									</h4>
+									<p className="mt-1 text-xs text-zinc-500 max-w-xs">
+										Posts you save as drafts or schedule will appear
+										here. Use the composer to save a draft or pick a
+										future time.
+									</p>
+								</GlassCard>
+							) : (
+								<div className="space-y-5 max-w-2xl mx-auto w-full">
+									{scheduledPosts.length > 0 && (
+										<div>
+											<h4 className="mb-3 flex items-center gap-2 text-label-sm font-semibold text-sky-300">
+												<Calendar className="h-3.5 w-3.5" /> Scheduled
+											</h4>
+											<div className="space-y-3">
+												{scheduledPosts.map((post) => (
+													<GlassCard
+														key={post._id}
+														animate={true}
+														className="p-5 rounded-4xl border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all"
+														showMacControls={false}>
+														<div className="flex items-start justify-between gap-3">
+															<div className="min-w-0">
+																<h5 className="truncate font-sans text-base font-bold text-white">
+																	{post.title || "Untitled post"}
+																</h5>
+																<p className="mt-1 text-xs text-zinc-400 line-clamp-2">
+																	{post.content}
+																</p>
+																<p className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-sky-400">
+																	<Clock className="h-3 w-3" />
+																	{post.scheduledAt
+																			? `Scheduled for ${new Date(
+																					post.scheduledAt,
+																					).toLocaleString()}`
+																			: "Scheduled"}
+																</p>
+															</div>
+															<div className="flex shrink-0 items-center gap-2">
+																<button
+																	onClick={() =>
+																		handlePublishDraft(
+																			post._id,
+																		)
+																	}
+																	className="rounded-full bg-sky-500/20 border border-sky-500/40 px-3 py-1.5 text-[10px] font-bold text-sky-300 hover:bg-sky-500/30 transition-all cursor-pointer">
+																	Publish now
+																</button>
+																<button
+																	onClick={() =>
+																		handleDeleteDraft(
+																			post._id,
+																		)
+																	}
+																	className="rounded-full border border-red-500/30 px-3 py-1.5 text-[10px] font-bold text-red-400 hover:bg-red-500/10 transition-all cursor-pointer">
+																	Delete
+																</button>
+															</div>
+														</div>
+													</GlassCard>
+												))}
+											</div>
+										</div>
+									)}
+
+									{drafts.length > 0 && (
+										<div>
+											<h4 className="mb-3 flex items-center gap-2 text-label-sm font-semibold text-amber-300">
+												<FilePenLine className="h-3.5 w-3.5" /> Drafts
+											</h4>
+											<div className="space-y-3">
+												{drafts.map((post) => (
+													<GlassCard
+														key={post._id}
+														animate={true}
+														className="p-5 rounded-4xl border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all"
+														showMacControls={false}>
+														<div className="flex items-start justify-between gap-3">
+															<div className="min-w-0">
+																<h5 className="truncate font-sans text-base font-bold text-white">
+																	{post.title || "Untitled post"}
+																</h5>
+																<p className="mt-1 text-xs text-zinc-400 line-clamp-2">
+																	{post.content}
+																</p>
+																<p className="mt-2 text-[11px] font-semibold text-zinc-500">
+																	Last edited{" "}
+																	{post.updatedAt
+																		? new Date(
+																				post.updatedAt,
+																			).toLocaleString()
+																		: "recently"}
+																</p>
+															</div>
+															<div className="flex shrink-0 items-center gap-2">
+																<button
+																	onClick={() =>
+																		handlePublishDraft(
+																			post._id,
+																		)
+																	}
+																	className="rounded-full bg-green-500/20 border border-green-500/40 px-3 py-1.5 text-[10px] font-bold text-green-300 hover:bg-green-500/30 transition-all cursor-pointer">
+																	Publish
+																</button>
+																<button
+																	onClick={() =>
+																		handleDeleteDraft(
+																			post._id,
+																		)
+																	}
+																	className="rounded-full border border-red-500/30 px-3 py-1.5 text-[10px] font-bold text-red-400 hover:bg-red-500/10 transition-all cursor-pointer">
+																	Delete
+																</button>
+															</div>
+														</div>
+													</GlassCard>
+												))}
+											</div>
+										</div>
+									)}
+								</div>
+							)}
+						</>
+					)}
 				</div>
 
 					{editOpen && (
@@ -2347,7 +2646,7 @@ export default function Profile({
 								className="relative z-[310] w-full max-w-xl rounded-3xl border border-white/10 bg-zinc-950 p-5 md:p-6 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] mb-12">
 								<div className="mb-5 pb-5 flex items-center justify-between border-b border-white/5">
 									<div>
-										<h3 className="text-xl font-semibold text-white">
+										<h3 className="text-display-xs text-white">
 											Edit Profile
 										</h3>
 										<p className="text-sm text-zinc-400 mt-1">
@@ -2554,7 +2853,7 @@ export default function Profile({
 													setBio(e.target.value)
 												}
 												placeholder="Write something about yourself..."
-												className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white focus:outline-none focus:border-zinc-600 focus:bg-zinc-900 transition-all resize-none font-medium"
+												className="w-full rounded-xl border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white focus:outline-none focus:border-zinc-600 focus:bg-zinc-900 transition-all resize-none font-medium"
 												maxLength={150}
 											/>
 										</div>
@@ -2600,7 +2899,7 @@ export default function Profile({
 						>
 							<div className="mb-5 flex items-center justify-between">
 								<div>
-									<h3 className="text-xl font-semibold text-white">Edit Post</h3>
+									<h3 className="text-display-xs text-white">Edit Post</h3>
 								</div>
 								<button
 									onClick={() => {
@@ -2624,14 +2923,14 @@ export default function Profile({
 									value={editPostTitle}
 									onChange={(e) => setEditPostTitle(e.target.value)}
 									placeholder="Post title"
-									className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white outline-none focus:border-zinc-600 transition-all"
+									className="w-full rounded-xl border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white outline-none focus:border-zinc-600 transition-all"
 								/>
 								<textarea
 									value={editPostContent}
 									onChange={(e) => setEditPostContent(e.target.value)}
 									placeholder="Post content"
 									rows={5}
-									className="w-full rounded-xl border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white outline-none focus:border-zinc-600 transition-all resize-none"
+									className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white outline-none focus:border-zinc-600 transition-all resize-none"
 								/>
 
 								{/* Existing images — show with remove button */}
@@ -2758,6 +3057,20 @@ export default function Profile({
 						}
 					}}
 				/>
+
+				{deleteConfirmDraftId !== null && createPortal(
+					<ConfirmDialog
+						isOpen={deleteConfirmDraftId !== null}
+						title="Delete Draft"
+						message="Are you sure you want to delete this draft? This action cannot be undone."
+						confirmLabel="Delete"
+						cancelLabel="Cancel"
+						variant="danger"
+						onConfirm={confirmDeleteDraft}
+						onCancel={() => setDeleteConfirmDraftId(null)}
+					/>,
+					document.body
+				)}
 
 				{deleteConfirmPostId !== null && createPortal(
 					<ConfirmDialog

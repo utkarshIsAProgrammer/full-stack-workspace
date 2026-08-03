@@ -21,6 +21,11 @@ const envSchema = z.object({
   SMTP_PASS: z.string().min(1, "SMTP_PASS is required"),
   CLIENT_URL: z.url("CLIENT_URL must be a valid URL"),
 
+  // Public URL of this API (e.g. https://orbit-backend.onrender.com). When set,
+  // the server pings its own /api/ping every 5 minutes to keep free-tier
+  // hosts (Render free) from sleeping during idle periods.
+  PUBLIC_API_URL: z.string().optional().default(""),
+
   // Web Push VAPID keys for push notifications (optional — push works without them)
   VAPID_PUBLIC_KEY: z.string().optional().default(""),
   VAPID_PRIVATE_KEY: z.string().optional().default(""),
@@ -33,6 +38,26 @@ const envSchema = z.object({
 
   // Sentry Monitoring
   SENTRY_DSN: z.string().optional().default(""),
+
+  // Google OAuth
+  GOOGLE_CLIENT_ID: z.string().optional().default(""),
+  GOOGLE_CLIENT_SECRET: z.string().optional().default(""),
+  GOOGLE_CALLBACK_URL: z.string().optional().default(""),
+
+  // BullMQ Background Jobs
+  REDIS_URL: z.string().optional().default(""),
+
+  // Meilisearch Full-Text Search
+  MEILISEARCH_URL: z.string().optional().default(""),
+  MEILISEARCH_API_KEY: z.string().optional().default(""),
+
+  // LiveKit Group Video Calls
+  LIVEKIT_URL: z.string().optional().default(""),
+  LIVEKIT_API_KEY: z.string().optional().default(""),
+  LIVEKIT_API_SECRET: z.string().optional().default(""),
+
+  // Logtail Cloud Log Management
+  LOGTAIL_SOURCE_TOKEN: z.string().optional().default(""),
 });
 
 export type Env = z.infer<typeof envSchema>;

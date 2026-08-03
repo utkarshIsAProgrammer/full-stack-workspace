@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { AlertTriangle, X } from "lucide-react";
 
@@ -22,10 +23,52 @@ export default function ConfirmDialog({
 	onConfirm,
 	onCancel,
 }: ConfirmDialogProps) {
+	// Focus trap ref + Escape key handler for accessibility
+	const dialogRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!isOpen) return;
+
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				e.stopPropagation();
+				onCancel();
+				return;
+			}
+			// Focus trap: keep Tab cycling within the dialog
+			if (e.key === "Tab" && dialogRef.current) {
+				const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+					'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+				);
+				if (focusable.length === 0) return;
+				const first = focusable[0];
+				const last = focusable[focusable.length - 1];
+				if (e.shiftKey && document.activeElement === first) {
+					e.preventDefault();
+					last.focus();
+				} else if (!e.shiftKey && document.activeElement === last) {
+					e.preventDefault();
+					first.focus();
+				}
+			}
+		};
+
+		// Focus the first focusable element on open
+		requestAnimationFrame(() => {
+			const first = dialogRef.current?.querySelector<HTMLElement>(
+				'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+			);
+			first?.focus();
+		});
+
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [isOpen, onCancel]);
+
 	return (
 		<AnimatePresence>
 			{isOpen && (
-				<div className="fixed inset-0 z-[320] flex items-center justify-center p-4">
+				<div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title" className="fixed inset-0 z-[320] flex items-center justify-center p-4">
 					<motion.div
 						initial={{ opacity: 0 }}
 						animate={{ opacity: 1 }}
@@ -50,7 +93,7 @@ export default function ConfirmDialog({
 								<AlertTriangle className="h-5 w-5" />
 							</div>
 							<div className="flex-1 min-w-0">
-								<h3 className="text-sm font-bold text-white">
+								<h3 id="confirm-dialog-title" className="text-label text-base font-semibold text-white">
 									{title}
 								</h3>
 								<p className="mt-1.5 text-xs text-zinc-400 leading-relaxed">
@@ -59,6 +102,7 @@ export default function ConfirmDialog({
 							</div>
 							<button
 								onClick={onCancel}
+								aria-label="Close dialog"
 								className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full hover:bg-zinc-800 text-zinc-500 hover:text-white transition-colors">
 								<X className="h-3.5 w-3.5" />
 							</button>

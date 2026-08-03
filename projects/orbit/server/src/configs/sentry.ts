@@ -6,6 +6,7 @@
  */
 
 import * as Sentry from "@sentry/node";
+import { nodeProfilingIntegration } from "@sentry/profiling-node";
 import { env } from "./env";
 import { logger } from "../utilities/logger";
 
@@ -31,6 +32,8 @@ export const initSentry = (): void => {
     integrations: [
       // Express error tracking (auto-detected, no app argument needed)
       Sentry.expressErrorHandler(),
+      // Continuous profiling for CPU-intensive operations
+      nodeProfilingIntegration(),
     ],
     tracesSampleRate: isDev ? 0.0 : parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || "0.2"),
     profilesSampleRate: isDev ? 0.0 : parseFloat(process.env.SENTRY_PROFILES_SAMPLE_RATE || "0.1"),
@@ -40,7 +43,7 @@ export const initSentry = (): void => {
     enabled: !isDev,
   });
 
-  logger.info("Sentry initialized for error monitoring", {
+  logger.info("Sentry initialized for error monitoring & profiling", {
     environment: env.NODE_ENV,
     tracesSampleRate: isDev ? 0.0 : 0.2,
   });

@@ -22,8 +22,12 @@ export default function UserAvatar({ src, alt, className = "", ...props }: UserA
         src={src}
         alt={alt || ""}
         loading="lazy"
-        className={finalClass}
+        className={`${finalClass} cursor-pointer`}
         onError={() => setHasError(true)}
+        onClick={(e) => {
+          e.stopPropagation();
+          window.dispatchEvent(new CustomEvent("openImagePreview", { detail: src }));
+        }}
         {...props}
       />
     );

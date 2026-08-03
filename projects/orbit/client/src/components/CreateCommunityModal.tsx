@@ -122,7 +122,7 @@ export default function CreateCommunityModal({
             <div className="flex items-center justify-between p-4 border-b border-zinc-800/50">
               <div className="flex items-center gap-2">
                 <Hash className="h-4 w-4 text-zinc-400" />
-                <h2 className="text-sm font-bold text-white">Create Community</h2>
+                <h2 className="text-label text-lg font-semibold text-white">Create Community</h2>
               </div>
               <button
                 onClick={onClose}
@@ -179,7 +179,7 @@ export default function CreateCommunityModal({
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. Design Lovers"
                   maxLength={50}
-                  className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all"
+                  className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all"
                   autoFocus
                 />
                 <p className="text-[10px] text-zinc-600 mt-1 text-right">{name.length}/50</p>
@@ -195,7 +195,7 @@ export default function CreateCommunityModal({
                   placeholder="What's this community about?"
                   maxLength={500}
                   rows={3}
-                  className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all resize-none"
+                  className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all resize-none"
                 />
                 <p className="text-[10px] text-zinc-600 mt-1 text-right">{description.length}/500</p>
               </div>
@@ -217,7 +217,7 @@ export default function CreateCommunityModal({
                 <button
                   type="submit"
                   disabled={loading || !name.trim()}
-                  className="flex-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-600 py-2.5 text-xs font-bold text-white transition-all cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="flex-1 rounded-xl bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 py-2.5 text-xs font-bold text-black transition-all cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {loading ? (
                     <>

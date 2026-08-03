@@ -17,12 +17,16 @@ import {
 	ExternalLink,
 	Copy,
 	Trash2,
+	BarChart3,
+	Check,
 } from "lucide-react";
 import { Socket } from "socket.io-client";
 import { Notification, User } from "../types";
 import GlassCard from "./GlassCard";
 import UserAvatar from "./UserAvatar";
 import { apiFetch } from "../utils/api";
+import { getCachedResponse } from "../utils/apiCache";
+import { useCacheRefresh } from "../hooks/useCacheRefresh";
 import { logger } from "../utils/logger";
 
 interface NotificationsProps {
@@ -32,6 +36,18 @@ interface NotificationsProps {
 	onUserClick: (username: string) => void;
 	onBadgeReset: () => void;
 }
+
+// ─── Notification type filter categories ────────────────────────
+const FILTER_TABS = [
+	{ key: "all", label: "All", icon: Bell },
+	{ key: "like", label: "Likes", icon: Heart },
+	{ key: "comment", label: "Comments", icon: MessageSquare },
+	{ key: "follow", label: "Follows", icon: UserPlus },
+	{ key: "mention", label: "Mentions", icon: AtSign },
+	{ key: "reaction", label: "Reactions", icon: SmilePlus },
+	{ key: "repost", label: "Reposts", icon: Repeat2 },
+	{ key: "save", label: "Saves", icon: Bookmark },
+] as const;
 
 export default function Notifications({
 	user,
@@ -43,11 +59,37 @@ export default function Notifications({
 	const [notifications, setNotifications] = useState<Notification[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const [activeFilter, setActiveFilter] = useState<string>("all");
 
-	const fetchNotifications = async () => {
+	const filteredNotifications = activeFilter === "all"
+		? notifications
+		: notifications.filter((n) => n.type === activeFilter);
+
+	// On mount, try to display cached notifications instantly (stale-while-revalidate)
+	useEffect(() => {
+		(async () => {
+			try {
+				const cached = await getCachedResponse<{
+					notifications: Notification[];
+					success: boolean;
+				}>("/api/notifications");
+				if (cached?.notifications?.length && cached.success) {
+					setNotifications(cached.notifications);
+					setLoading(false);
+				}
+			} catch {
+				// Cache read failures are non-critical
+			}
+		})();
+	}, []);
+
+	const fetchNotifications = async (bypass: boolean = false) => {
 		setLoading(true);
 		try {
-			const res = await apiFetch("/api/notifications");
+			const res = await apiFetch(
+				"/api/notifications",
+				bypass ? { bypassCache: true } : undefined,
+			);
 			const data = await res.json();
 			if (res.ok && data.success) {
 				setNotifications(data.notifications || []);
@@ -63,8 +105,16 @@ export default function Notifications({
 	};
 
 	useEffect(() => {
-		fetchNotifications();
+		// Bypass the cache on mount — the tab unmounts when the user navigates
+		// away, so notifications that arrived while on another tab were only
+		// reflected in the badge counter, not in this list. A cache-first read
+		// here could serve a stale list missing those new notifications.
+		fetchNotifications(true);
 	}, [user]);
+
+	// When the background cache timer refreshes notifications, re-fetch
+	// so the list stays up-to-date without manual refresh.
+	useCacheRefresh("/api/notifications", () => fetchNotifications());
 
 	// Listen for real-time notifications via socket
 	useEffect(() => {
@@ -157,7 +207,7 @@ export default function Notifications({
 	const [isMobile, setIsMobile] = useState(false);
 	useEffect(() => {
 		if (typeof window === "undefined") return;
-		const mq = window.matchMedia("(max-width: 767px)");
+		const mq = window.matchMedia("(max-width: 613px)");
 		setIsMobile(mq.matches);
 		const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
 		mq.addEventListener("change", handler);
@@ -379,6 +429,24 @@ export default function Notifications({
         color: "text-violet-600 bg-violet-50 dark:bg-violet-950/20 border-violet-200 dark:border-violet-900/30",
         text: "replied to your glance",
       };
+    case "poll_vote":
+      return {
+        icon: BarChart3,
+        color: "text-violet-600 bg-violet-50 dark:bg-violet-950/20 border-violet-200 dark:border-violet-900/30",
+        text: "voted in your poll",
+      };
+    case "collab_invite":
+      return {
+        icon: UserPlus,
+        color: "text-green-600 bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-900/30",
+        text: "invited you to collaborate on their post",
+      };
+    case "invite_accepted":
+      return {
+        icon: Check,
+        color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/30",
+        text: "accepted your collaboration invite",
+      };
     default:
       return {
         icon: Bell,
@@ -418,9 +486,9 @@ export default function Notifications({
 
 	return (
 		<div className="w-full px-2 pt-6">
-			<div className="mb-6 flex items-center justify-between">
-				<div>
-					<h2 className="font-sans text-xl font-extrabold tracking-tight text-slate-900 dark:text-zinc-100 md:text-2xl">
+			<div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+				<div className="min-w-0">
+					<h2 className="text-display-sm text-slate-900 dark:text-zinc-100">
 						Notifications
 					</h2>
 					<p className="text-sm text-slate-500 dark:text-zinc-400">
@@ -444,6 +512,42 @@ export default function Notifications({
 				)}
 			</div>
 
+			{/* Filter tabs — labels + icons when there's room, compact icon pills when not. "All" always shows its label. */}
+			<div className="mb-5 flex items-center gap-1.5 overflow-x-auto scrollbar-none @container @[520px]:flex-wrap @[520px]:overflow-visible">
+				{FILTER_TABS.map((tab) => {
+					const TabIcon = tab.icon;
+					const isActive = activeFilter === tab.key;
+					const count = tab.key === "all"
+						? notifications.length
+						: notifications.filter((n) => n.type === tab.key).length;
+					return (
+						<button
+							key={tab.key}
+							onClick={() => setActiveFilter(tab.key)}
+							title={tab.label}
+							aria-label={tab.label}
+							className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-2 text-[11px] font-bold transition-all cursor-pointer ${
+								isActive
+									? "bg-zinc-900 text-white dark:bg-white dark:text-black shadow-sm"
+									: "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40"
+							}`}
+						>
+							<TabIcon className="h-3.5 w-3.5 shrink-0" />
+							{tab.key === "all" ? (
+								<span>{tab.label}</span>
+							) : (
+								<span className="hidden @[520px]:inline">{tab.label}</span>
+							)}
+							{count > 0 && (
+								<span className={`ml-0.5 text-[10px] ${isActive ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-500"}`}>
+									{count}
+								</span>
+							)}
+						</button>
+					);
+				})}
+			</div>
+
 			{error && (
 				<div className="mb-6 flex items-start gap-2.5 rounded-3xl border border-red-900/30 bg-red-950/25 p-4.5 text-sm text-red-800 dark:text-red-400">
 					<AlertCircle className="h-4.5 w-4.5 shrink-0 text-red-600" />
@@ -451,23 +555,24 @@ export default function Notifications({
 				</div>
 			)}
 
-			{notifications.length === 0 ? (
+			{filteredNotifications.length === 0 ? (
 				<GlassCard className="flex flex-col items-center justify-center py-16 text-center shadow-sm">
 					<div className="flex h-14 w-14 items-center justify-center rounded-full bg-zinc-1 bg-zinc-800 border border-zinc-700 text-black dark:text-white shadow-sm animate-pulse font-sans">
 						<Bell className="h-6 w-6" />
 					</div>
-					<h3 className="mt-4 text-lg font-bold text-slate-800 dark:text-zinc-200">
-						All quiet here
+					<h3 className="mt-4 text-label text-xl font-semibold text-slate-800 dark:text-zinc-200">
+						{activeFilter === "all" ? "All quiet here" : `No ${FILTER_TABS.find((t) => t.key === activeFilter)?.label?.toLowerCase() || activeFilter} notifications`}
 					</h3>
 					<p className="mx-auto mt-2 max-w-sm text-sm text-slate-400 dark:text-zinc-400 leading-relaxed">
-						When someone likes, comments, follows, or mentions you,
-						you'll see it here.
+						{activeFilter === "all"
+							? "When someone likes, comments, follows, or mentions you, you'll see it here."
+							: `You don't have any ${activeFilter} notifications at this time.`}
 					</p>
 				</GlassCard>
 			) : (
 				<div className="space-y-3.5">
 					<AnimatePresence initial={false}>
-						{notifications.map((notif) => {
+						{filteredNotifications.map((notif) => {
 							const details = getNotifDetails(notif.type);
 							const NotifIcon = details.icon;
 
@@ -486,7 +591,7 @@ export default function Notifications({
 									{/* Swipe-to-open-post indicator — ref-based CSS transform */}
 									<div
 										ref={swipeBarRef}
-										className="absolute inset-y-0 left-0 w-1.5 bg-indigo-500/50 rounded-r-full pointer-events-none z-10"
+										className="absolute inset-y-0 left-0 w-1.5 bg-zinc-400/50 rounded-r-full pointer-events-none z-10"
 										style={{
 											transform: "translateX(-6px)",
 											opacity: 0,
@@ -496,9 +601,9 @@ export default function Notifications({
 									/>
 									{showSwipeBadge && (
 										<div className="absolute left-2 top-1/2 -translate-y-1/2 z-10 pointer-events-none">
-											<div className="flex items-center gap-1.5 bg-indigo-500/20 backdrop-blur-sm rounded-full px-2.5 py-1 border border-indigo-400/30">
-												<ExternalLink className="h-3 w-3 text-indigo-300" />
-												<span className="text-[9px] font-bold text-indigo-300 uppercase tracking-wider">
+											<div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-sm rounded-full px-2.5 py-1 border border-white/20">
+												<ExternalLink className="h-3 w-3 text-zinc-300" />
+												<span className="text-[9px] font-bold text-zinc-300 uppercase tracking-wider">
 													Open
 												</span>
 											</div>
@@ -513,7 +618,7 @@ export default function Notifications({
 										className={`group relative flex items-start justify-between gap-4 p-4.5 transition-all cursor-pointer ${
 											notif.isRead
 												? "opacity-85 hover:opacity-100"
-												: "ring-1 ring-zinc-500/10 border-indigo-400/40 dark:border-indigo-800/40"
+												: "ring-1 ring-zinc-500/10 border-white/20 dark:border-white/20"
 										}`}
 										showMacControls={false}>
 										<div className="flex gap-4.5">

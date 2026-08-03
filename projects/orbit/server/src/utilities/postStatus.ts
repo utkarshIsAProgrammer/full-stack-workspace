@@ -40,6 +40,61 @@ export const addUserStatusToPosts = async (posts: any[], userId: string | undefi
       savedByMe: savedSet.has(postId),
       repostedByMe: repostedSet.has(postId),
       pinnedByMe: pinnedSet.has(postId),
+      // Expose the user's own poll vote (option index) and strip the raw
+      // voter-ID arrays so other users' identities are never leaked.
+      myVote: getMyPollVote(post, userId),
+      poll: sanitizePoll(post.poll, userId),
     };
   });
 };
+
+/**
+ * Compute the option index the given user voted on, or null.
+ *
+ * Handles both raw polls (votes = array of user IDs) and already-sanitized
+ * polls (votes = count + optional `votedByMe`) so it is safe to call on
+ * cached responses that were sanitized before being stored.
+ */
+function getMyPollVote(post: any, userId: string | undefined): number | null {
+  if (!userId || !post?.poll?.options) return null;
+  const uid = userId.toString();
+  for (let i = 0; i < post.poll.options.length; i++) {
+    const opt = post.poll.options[i];
+    // Sanitized poll carries an explicit per-option votedByMe flag
+    if (opt && typeof opt.votedByMe === "boolean" && opt.votedByMe) return i;
+    // Raw poll: votes is an array of user ObjectIds
+    if (Array.isArray(opt?.votes) && opt.votes.some((v: any) => v?.toString() === uid)) {
+      return i;
+    }
+  }
+  return null;
+}
+
+/**
+ * Strip raw voter-ID arrays from a poll and replace them with vote counts,
+ * plus a computed `expired` flag. Idempotent — safe to call on already-
+ * sanitized polls. Returns null when there is no poll.
+ */
+export function sanitizePoll(
+  poll: any,
+  userId?: string | undefined,
+): any {
+  if (!poll) return null;
+  const uid = userId?.toString();
+  const myVote = getMyPollVote({ poll }, userId);
+  const options = (poll.options || []).map((opt: any, i: number) => {
+    const rawVotes = Array.isArray(opt?.votes) ? opt.votes : [];
+    return {
+      text: opt.text,
+      votes: rawVotes.length > 0 ? rawVotes.length : (opt.votes || 0),
+      votedByMe: myVote === i && uid !== undefined,
+    };
+  });
+  return {
+    options,
+    totalVotes: poll.totalVotes || 0,
+    expiresAt: poll.expiresAt || null,
+    expired: poll.expiresAt ? new Date(poll.expiresAt) < new Date() : false,
+    myVote: uid ? myVote : null,
+  };
+}

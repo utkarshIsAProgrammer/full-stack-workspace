@@ -17,7 +17,7 @@ const notificationSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ["like", "comment", "follow", "repost", "save", "mention", "reaction", "message_reply", "glimpse_reaction", "glimpse_reply", "poll_vote", "collab_invite", "follow_request", "daily_reward", "streak_reminder", "room_invite", "invite_accepted"],
+      enum: ["like", "comment", "follow", "repost", "save", "mention", "reaction", "message_reply", "community_message", "glimpse_reaction", "glimpse_reply", "poll_vote", "collab_invite", "follow_request", "daily_reward", "streak_reminder", "invite_accepted"],
       required: true,
     },
 
@@ -39,10 +39,22 @@ const notificationSchema = new mongoose.Schema(
       default: null,
     },
 
-    room: {
+    community: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "AudioRoom",
+      ref: "Community",
       default: null,
+    },
+
+    message: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "CommunityMessage",
+      default: null,
+    },
+
+    messageType: {
+      type: String,
+      enum: ["text", "photo", "video", "voice_note", "file", "gif", "sticker"],
+      default: "text",
     },
 
     isRead: {
@@ -57,6 +69,7 @@ notificationSchema.index({ recipient: 1, createdAt: -1 });
 notificationSchema.index({ recipient: 1, isRead: 1, createdAt: -1 });
 notificationSchema.index({ type: 1, createdAt: -1 });
 notificationSchema.index({ recipient: 1, type: 1, createdAt: -1 });
+notificationSchema.index({ type: 1, messageType: 1 });
 
 const Notification = mongoose.model("Notification", notificationSchema);
 export default Notification;

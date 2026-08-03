@@ -3,20 +3,34 @@
 @variant dark (&:where(.dark, .dark *));
 
 @theme {
+	--breakpoint-sm: 614px;
+	--breakpoint-xl: 1200px;
+	/* Body & UI — a premium, highly readable geometric sans that pairs
+	   beautifully with the Cormorant Garamond headings. Manrope keeps
+	   long-form content (posts, comments, chat) crisp at small sizes. */
 	--font-sans:
-		"Space Grotesk", ui-sans-serif, system-ui, -apple-system,
-		BlinkMacSystemFont, sans-serif;
-	--font-logo: "Space Grotesk", ui-sans-serif, sans-serif;
-	--font-ui:
-		"Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-		sans-serif;
-	--font-button: "Manrope", ui-sans-serif, sans-serif;
-	--font-display: "Space Grotesk", ui-sans-serif, sans-serif;
+		"Manrope", "Plus Jakarta Sans", ui-sans-serif, system-ui,
+		-apple-system, "Segoe UI", sans-serif;
+	/* Cursive / elegant serif reserved for headings, labels & the logo. */
+	--font-heading:
+		"Cormorant Garamond", "Playfair Display", "Georgia",
+		ui-serif, serif;
+	--font-display: var(--font-heading);
+	--font-logo: "Great Vibes", "Cormorant Garamond", cursive;
+	--font-cursive: "Cormorant Garamond", "Playfair Display", cursive;
+	--font-ui: var(--font-sans);
+	--font-button: var(--font-sans);
+	/* Data spots (timestamps, counters, admin keys) use a clean readable
+	   mono stack instead of a proportional serif, keeping digits aligned. */
+	--font-mono:
+		ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono",
+		Menlo, Consolas, monospace;
+	--font-mono-feature: tabular-nums;
 }
 
-/* Apply button font to all buttons */
+/* Apply body font to all buttons */
 button {
-	font-family: "Manrope", ui-sans-serif, sans-serif;
+	font-family: var(--font-sans);
 }
 
 @layer utilities {
@@ -24,6 +38,59 @@ button {
 	/* Disable selections in buttons or icons */
 	.select-none {
 		user-select: none;
+	}
+
+	/* ─── Cursive heading scale (fluid — scales smoothly between phones
+	   and large desktops instead of jumping at breakpoints). ───────── */
+	.text-display {
+		font-family: var(--font-cursive);
+		font-size: clamp(1.75rem, 4.5vw + 0.5rem, 2.75rem);
+		line-height: 1.05;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+	}
+	.text-display-sm {
+		font-family: var(--font-cursive);
+		font-size: clamp(1.4rem, 2.6vw + 0.7rem, 2rem);
+		line-height: 1.1;
+		font-weight: 600;
+	}
+	.text-display-xs {
+		font-family: var(--font-cursive);
+		font-size: clamp(1.15rem, 1.8vw + 0.6rem, 1.5rem);
+		line-height: 1.15;
+		font-weight: 600;
+	}
+
+	/* Elegant small cursive label — used for section eyebrows / modal titles */
+	.text-label {
+		font-family: var(--font-cursive);
+		font-size: clamp(0.8rem, 1.1vw + 0.4rem, 1rem);
+		line-height: 1.2;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+	}
+	.text-label-sm {
+		font-family: var(--font-cursive);
+		font-size: 0.85rem;
+		line-height: 1.2;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+	}
+
+	/* Italic cursive accent — premium flourish for emphasized words */
+	.font-display-italic {
+		font-family: var(--font-cursive);
+		font-style: italic;
+		font-weight: 500;
+	}
+
+	/* Great Vibes script used for the wordmark/logo accents */
+	.text-logo {
+		font-family: var(--font-logo);
+		font-size: clamp(1.6rem, 3vw + 0.8rem, 2.4rem);
+		line-height: 1;
+		font-weight: 400;
 	}
 }
 
@@ -75,40 +142,13 @@ button {
 	}
 }
 
-/* ─── Custom scrollbars ────────────────────────────────────────── */
-
-/* Thin, dark-theme scrollbar that appears only while scrolling */
+/* ─── Hide scrollbars globally ────────────────────────────────── */
+/* Scrollbars hidden everywhere while keeping scroll functionality */
 *::-webkit-scrollbar {
-	width: 4px;
-	height: 4px;
-}
-
-*::-webkit-scrollbar-track {
-	background: transparent;
-}
-
-*::-webkit-scrollbar-thumb {
-	background: rgba(113, 113, 122, 0.25);
-	border-radius: 9999px;
-	transition: background var(--transition-base);
-}
-
-*::-webkit-scrollbar-thumb:hover {
-	background: rgba(113, 113, 122, 0.45);
-}
-
-/* Firefox thin scrollbar */
-* {
-	scrollbar-width: thin;
-	scrollbar-color: rgba(113, 113, 122, 0.25) transparent;
-}
-
-/* Hide scrollbar only on elements with .scrollbar-none */
-.scrollbar-none::-webkit-scrollbar {
 	display: none;
 }
 
-.scrollbar-none {
+* {
 	scrollbar-width: none;
 }
 
@@ -120,6 +160,32 @@ html {
 	transition: color 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+html.dark {
+	background-color: #09090b;
+	color: #ffffff;
+}
+
+body {
+	text-rendering: optimizeLegibility;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	background-color: #09090b;
+	min-height: var(--app-height);
+	overflow-x: hidden;
+	overscroll-behavior: none;
+	/* Manrope has a comfortable x-height at 400 — keep body text light and
+	   airy while headings carry the weight. A whisper of tracking keeps it
+	   premium without hurting readability. */
+	font-weight: 400;
+	letter-spacing: 0;
+	/* Keep digits aligned in counters/timestamps even with a
+	   proportional face (no jitter while counts tick up). */
+	font-variant-numeric: tabular-nums;
+}
+
+/* Manrope has a comfortable x-height (like the original Inter body), so we
+   restore the app's original base sizes — the enlarged sizes that were
+   needed for Cormorant's low x-height are no longer necessary. */
 @media (max-width: 1023px) {
 	html {
 		font-size: 14px;
@@ -130,20 +196,6 @@ html {
 	html {
 		font-size: 13.5px;
 	}
-}
-
-html.dark {
-	background-color: #09090b;
-	color: #ffffff;
-}
-
-body {
-	text-rendering: optimizeLegibility;
-	-webkit-font-smoothing: antialiased;
-	background-color: #09090b;
-	min-height: var(--app-height);
-	overflow-x: hidden;
-	overscroll-behavior: none;
 }
 
 /* ─── Default input styling ────────────────────────────────────── */
@@ -383,10 +435,15 @@ a,
 	transition: all var(--transition-base);
 }
 
-/* Focus states for accessibility — neutral focus ring */
+/* Focus states for accessibility — high-visibility focus ring for keyboard users */
 *:focus-visible {
-	outline: 2px solid rgba(113, 113, 122, 0.4);
+	outline: 3px solid rgba(96, 165, 250, 0.7);
 	outline-offset: 2px;
+}
+
+/* Improved focus ring inside dark backgrounds */
+.dark *:focus-visible {
+	outline-color: rgba(147, 197, 253, 0.8);
 }
 
 /* Smooth scrolling for better UX */
@@ -646,4 +703,190 @@ select {
 		-webkit-user-select: text !important;
 		user-select: text !important;
 	}
+}
+
+/* ─── Sidebar visibility at custom 614px breakpoint ────────────── */
+/* This is a plain CSS override that ensures the left sidebar is visible
+   from 614px+ regardless of Tailwind's breakpoint system.
+   Below 614px the dock (mobile nav) is shown instead. */
+@media (min-width: 614px) {
+	.sidebar-force-show {
+		display: block !important;
+	}
+	.dock-force-hide {
+		display: none !important;
+	}
+}
+
+/* ─── Sonner Toasts — sleek glass design ─────────────────────────── */
+[data-sonner-toaster] {
+	--width: min(372px, calc(100vw - 28px));
+	--gap: 12px;
+	--border-radius: 18px;
+	--toast-icon-margin-start: 0px;
+	--toast-icon-margin-end: 8px;
+	font-family: var(--font-sans);
+}
+
+/* Dark theme palette — translucent liquid-glass surfaces (monochrome) */
+[data-sonner-toaster][data-sonner-theme="dark"] {
+	--normal-bg: rgba(20, 20, 24, 0.82);
+	--normal-border: rgba(255, 255, 255, 0.1);
+	--normal-text: #fafafa;
+	--success-bg: rgba(20, 20, 24, 0.82);
+	--success-border: rgba(255, 255, 255, 0.16);
+	--success-text: #fafafa;
+	--error-bg: rgba(20, 20, 24, 0.82);
+	--error-border: rgba(255, 255, 255, 0.16);
+	--error-text: #fafafa;
+	--warning-bg: rgba(20, 20, 24, 0.82);
+	--warning-border: rgba(255, 255, 255, 0.16);
+	--warning-text: #fafafa;
+	--info-bg: rgba(20, 20, 24, 0.82);
+	--info-border: rgba(255, 255, 255, 0.16);
+	--info-text: #fafafa;
+}
+
+/* Toast card — glass surface with soft depth */
+[data-sonner-toaster] .orbit-toast[data-styled="true"] {
+	border-radius: var(--border-radius);
+	padding: 8px 14px;
+	gap: 8px;
+	backdrop-filter: blur(22px) saturate(150%);
+	-webkit-backdrop-filter: blur(22px) saturate(150%);
+	box-shadow:
+		0 16px 40px -16px rgba(0, 0, 0, 0.65),
+		inset 0 1px 0 rgba(255, 255, 255, 0.06);
+	transition:
+		transform 280ms cubic-bezier(0.21, 1.02, 0.73, 1),
+		opacity 180ms ease,
+		height 200ms ease,
+		box-shadow 180ms ease;
+	will-change: transform, opacity;
+}
+
+/* Perf: drop the expensive blur on small screens — the translucent
+   surface still reads as glass over the dark app background. */
+@media (max-width: 767px) {
+	[data-sonner-toaster] .orbit-toast[data-styled="true"] {
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+	}
+}
+
+/* Liquid-glass accent bar on the left edge — pure monochrome */
+[data-sonner-toaster] .orbit-toast[data-styled="true"]::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 7px;
+	bottom: 7px;
+	width: 3px;
+	border-radius: 9999px;
+	background: linear-gradient(180deg, rgba(255, 255, 255, 0.65), rgba(255, 255, 255, 0.18));
+	transition: opacity 250ms ease;
+}
+
+/* Type depth — soft neutral glass glow (monochrome, no color tint) */
+[data-sonner-toaster] .orbit-toast[data-styled="true"][data-type="success"],
+[data-sonner-toaster] .orbit-toast[data-styled="true"][data-type="error"],
+[data-sonner-toaster] .orbit-toast[data-styled="true"][data-type="warning"],
+[data-sonner-toaster] .orbit-toast[data-styled="true"][data-type="info"] {
+	box-shadow:
+		0 16px 40px -16px rgba(0, 0, 0, 0.65),
+		0 0 30px -12px rgba(255, 255, 255, 0.28),
+		inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Icon chip — monochrome glass tile (same look for every toast type) */
+[data-sonner-toaster] .orbit-toast[data-styled="true"] [data-icon] {
+	width: 24px;
+	height: 24px;
+	min-width: 24px;
+	border-radius: 8px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	background: rgba(255, 255, 255, 0.09);
+	color: #fafafa;
+	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+/* Title + description typography */
+[data-sonner-toaster] .orbit-toast[data-styled="true"] [data-title] {
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	line-height: 1.3;
+}
+[data-sonner-toaster] .orbit-toast[data-styled="true"] [data-description] {
+	font-size: 11.5px;
+	line-height: 1.4;
+	color: #a1a1aa;
+}
+
+/* Close button — subtle ghost circle, fades in on hover */
+[data-sonner-toaster] .orbit-toast [data-close-button] {
+	width: 20px;
+	height: 20px;
+	border-radius: 9999px;
+	background: transparent !important;
+	border: 1px solid rgba(255, 255, 255, 0.14);
+	color: rgba(255, 255, 255, 0.55);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	opacity: 0;
+	transition:
+		opacity 200ms ease,
+		background 200ms ease,
+		color 200ms ease,
+		transform 200ms ease;
+}
+[data-sonner-toaster] .orbit-toast:hover [data-close-button],
+[data-sonner-toaster] .orbit-toast [data-close-button]:focus-visible {
+	opacity: 1;
+}
+[data-sonner-toaster] .orbit-toast [data-close-button]:hover {
+	background: rgba(255, 255, 255, 0.12) !important;
+	color: #fff;
+	transform: scale(1.1);
+}
+
+/* Touch devices have no hover — keep the dismiss button visible */
+@media (hover: none) {
+	[data-sonner-toaster] .orbit-toast [data-close-button] {
+		opacity: 1;
+	}
+}
+
+/* Action / cancel buttons */
+[data-sonner-toaster] .orbit-toast [data-button] {
+	border-radius: 9999px;
+	padding: 5px 14px;
+	font-size: 12px;
+	font-weight: 600;
+	background: #fafafa;
+	color: #09090b;
+	box-shadow: 0 2px 10px -2px rgba(0, 0, 0, 0.4);
+}
+[data-sonner-toaster] .orbit-toast [data-button]:hover {
+	background: #fff;
+}
+[data-sonner-toaster] .orbit-toast [data-cancel] {
+	border-radius: 9999px;
+	padding: 5px 14px;
+	font-size: 12px;
+	font-weight: 500;
+	background: rgba(255, 255, 255, 0.08);
+	color: #e4e4e7;
+}
+
+/* Loading spinner bars — use the accent-neutral light tone */
+[data-sonner-toaster] .orbit-toast .sonner-loading-bar {
+	background: #a1a1aa;
+}
+[data-sonner-toaster] .orbit-toast[data-promise="true"] .sonner-loading-bar {
+	background: #71717a;
 }

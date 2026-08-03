@@ -55,20 +55,18 @@ describe("Likes API", () => {
     app = await createApp();
   });
 
-  describe("POST /api/likes/toggle — Toggle Like", () => {
+  describe("POST /api/likes/post/:postId — Toggle Like", () => {
     it("should like a post", async () => {
       const res = await request(app)
-        .post("/api/likes/toggle")
+        .post(`/api/likes/post/${postId}`)
         .set("Cookie", userCookies)
-        .send({ postId })
-        .expect(200);
+        .expect(201);
       expect(res.body.success).toBe(true);
     });
 
     it("should reject unauthenticated requests", async () => {
       await request(app)
-        .post("/api/likes/toggle")
-        .send({ postId })
+        .post(`/api/likes/post/${postId}`)
         .expect(401);
     });
   });

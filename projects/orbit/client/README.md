@@ -53,6 +53,13 @@ npm install
 
 ```bash
 VITE_API_URL=http://localhost:5000
+# WebRTC calls — production-grade TURN relay (recommended for reliable
+# calls behind NAT/cellular networks). Falls back to free public relays.
+VITE_TURN_URL=turn:your-turn-server.example.com:3478
+VITE_TURN_USERNAME=your-turn-username
+VITE_TURN_CREDENTIAL=your-turn-password
+# OR provide a full JSON array of RTCIceServer objects
+VITE_ICE_SERVERS=[{"urls":"turn:your-turn-server.example.com:3478","username":"u","credential":"p"}]
 ```
 
 ### Development

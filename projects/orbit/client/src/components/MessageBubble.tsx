@@ -3,6 +3,21 @@ import { CornerDownLeft, Play, Pause, AlertCircle, FileText, Volume2, VolumeX } 
 import UserAvatar from "./UserAvatar";
 import type { Message } from "../types";
 
+// Helper to get a human-readable label for an attachment type
+const getAttachmentLabel = (attachments: any[]): string => {
+  if (!attachments || attachments.length === 0) return "📎 Attachment";
+  const first = attachments[0];
+  switch (first.type) {
+    case "image": return "📷 Image";
+    case "gif": return "🎬 GIF";
+    case "video": return "🎬 Video";
+    case "voice_note": return "🎵 Voice note";
+    case "file": return "📁 File";
+    case "sticker": return "🏷️ Sticker";
+    default: return "📎 Attachment";
+  }
+};
+
 const CustomCheck = ({ className }: { className?: string }) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -164,6 +179,10 @@ const MessageBubble = React.memo(function MessageBubble({
       swipeBarRef.current.style.opacity = '0';
     }
 
+    // Deleted messages (for everyone or for me) have no actions — never start
+    // the long-press menu timer or the swipe-to-reply gesture.
+    if (msg.isDeleted || deletedForMe) return;
+
     touchTimerRef.current = setTimeout(() => {
       if (!isSwipingRef.current && touch) {
         const msgEl = document.getElementById(`msg-${msg._id}`);
@@ -179,6 +198,7 @@ const MessageBubble = React.memo(function MessageBubble({
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    if (msg.isDeleted || deletedForMe) return;
     const touch = e.touches[0];
     if (!touch) return;
     const deltaX = touch.clientX - touchStartXRef.current;
@@ -220,7 +240,7 @@ const MessageBubble = React.memo(function MessageBubble({
       touchTimerRef.current = null;
     }
 
-    if (isSwipingRef.current && swipeOffsetRef.current > 60 && onSwipeToReply) {
+    if (isSwipingRef.current && swipeOffsetRef.current > 60 && onSwipeToReply && !(msg.isDeleted || deletedForMe)) {
       onSwipeToReply(msg);
     }
 
@@ -266,7 +286,15 @@ const MessageBubble = React.memo(function MessageBubble({
         className={`relative flex gap-3 max-w-[85%] group/bubble ${
           isMe ? "ml-auto flex-row-reverse" : "mr-auto"
         } ${isFirstInGroup ? "mt-2.5" : "mt-0.5"}`}
-        onContextMenu={(e) => handleContextMenu(e, msg)}
+        onContextMenu={(e) => {
+          // Deleted messages have no actions — suppress both our custom menu
+          // and the native browser context menu.
+          if (msg.isDeleted || deletedForMe) {
+            e.preventDefault();
+            return;
+          }
+          handleContextMenu(e, msg);
+        }}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
         onTouchMove={handleTouchMove}
@@ -308,9 +336,7 @@ const MessageBubble = React.memo(function MessageBubble({
           )}
 
           <div
-            className={`rounded-2xl text-[12px] border relative select-text ${bubbleRoundClass} ${
-              hasOnlyAttachments ? "p-1 pb-1" : "px-3 py-1.5"
-            } ${
+            className={`rounded-2xl text-[12px] border relative select-text ${bubbleRoundClass} $                ${hasOnlyAttachments ? "p-1 pb-1 pt-3" : "px-3 py-1.5"} ${
               isMe
                 ? "bg-indigo-950/70 text-white border-indigo-800/40"
                 : "bg-zinc-900/80 text-zinc-100 border-zinc-800"
@@ -333,23 +359,23 @@ const MessageBubble = React.memo(function MessageBubble({
                 )}
                 {msg.replyTo && (
                   <div
-                    className="flex items-start gap-2 mb-2 pb-2 border-l-2 border-blue-500/40 pl-2.5 cursor-pointer hover:bg-zinc-800/30 rounded-r-lg -ml-0.5"
+                    className="flex items-start gap-2 mb-2 pb-2 border-l-2 border-zinc-500/40 pl-2.5 cursor-pointer hover:bg-zinc-800/30 rounded-r-lg -ml-0.5"
                     onClick={(e) => {
                       e.stopPropagation();
                       const el = document.getElementById(`msg-${msg.replyTo?._id}`);
                       if (el) {
                         el.scrollIntoView({ behavior: "smooth", block: "center" });
-                        el.classList.add("ring-1", "ring-blue-500/30", "rounded-2xl");
-                        setTimeout(() => el.classList.remove("ring-1", "ring-blue-500/30", "rounded-2xl"), 2000);
+                        el.classList.add("ring-1", "ring-zinc-500/30", "rounded-2xl");
+                        setTimeout(() => el.classList.remove("ring-1", "ring-zinc-500/30", "rounded-2xl"), 2000);
                       }
                     }}
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="text-[10px] font-black text-blue-400 uppercase tracking-wider leading-tight">
+                      <p className="text-[10px] font-black text-zinc-300 uppercase tracking-wider leading-tight">
                         {msg.replyTo.sender.fullName}
                       </p>
                       <p className="text-[12px] md:text-sm text-zinc-400 truncate leading-relaxed mt-0.5">
-                        {msg.replyTo.text || (msg.replyTo.attachments && msg.replyTo.attachments.length > 0 ? "📎 Attachment" : "")}
+                        {msg.replyTo.text || (msg.replyTo.attachments && msg.replyTo.attachments.length > 0 ? getAttachmentLabel(msg.replyTo.attachments) : "")}
                       </p>
                     </div>
                     <CornerDownLeft className="h-3 w-3 text-zinc-500 shrink-0 mt-1" />
@@ -494,7 +520,17 @@ const MessageBubble = React.memo(function MessageBubble({
             <div className="flex items-center gap-1 px-1 text-[9px] font-bold text-zinc-550 select-none">
               <span>{formatMessageTime(msg.createdAt)}</span>
               {isMe && (
-                <span title={(msg as any)._pending ? 'Sending...' : msg.seen ? 'Seen' : 'Sent'}>
+                <span
+                  title={
+                    (msg as any)._pending
+                      ? 'Sending...'
+                      : msg.seen && msg.seenAt
+                        ? `Seen at ${new Date(msg.seenAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                        : msg.seen
+                          ? 'Seen'
+                          : 'Sent'
+                  }
+                >
                   {(msg as any)._pending ? (
                     null
                   ) : msg.seen ? (

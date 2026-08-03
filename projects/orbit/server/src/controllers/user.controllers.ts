@@ -36,6 +36,7 @@ import {
 	ForbiddenError,
 } from "../utilities/errors";
 import { emitUserView, emitUserShare, emitUserUpdated, emitAccountDeleted, emitPostPin, emitPostUnpin } from "../configs/socket";
+import { progressMission } from "../services/dailyMissionService";
 import { addUserStatusToPosts } from "../utilities/postStatus";
 import { createNotification } from "../utilities/notification";
 
@@ -553,16 +554,19 @@ export const viewsCount = async (req: Request<Params>, res: Response) => {
 				$inc: { viewsCount: 1 },
 			},
 			{ returnDocument: 'after' },
-		);
+		);    // Progress profile_view mission (fire-and-forget)
+    if (currentUser) {
+      progressMission(currentUser.toString(), "profile_view").catch(() => {});
+    }
 
-		// emit real-time view update
-		if (updatedProfile?.viewsCount) {
-			emitUserView(userId, updatedProfile.viewsCount);
-		}
+    // emit real-time view update
+    if (updatedProfile?.viewsCount) {
+      emitUserView(userId, updatedProfile.viewsCount);
+    }
 
-		return res.status(200).json({
-			success: true,
-			message: "View counted successfully!",
+    return res.status(200).json({
+      success: true,
+      message: "View counted successfully!",
 			views: updatedProfile?.viewsCount,
 		});
 	} catch (err: any) {
@@ -771,7 +775,7 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
 			.lean();
 
 		const followingIds = following.map((f) => f.following);
-		followingIds.push(currentUserId); // exclude self
+		followingIds.push(currentUserId as any); // exclude self
 
 		// 1. Find users followed by people the current user follows (mutual network)
 		const mutualFollows = await Follow.find({

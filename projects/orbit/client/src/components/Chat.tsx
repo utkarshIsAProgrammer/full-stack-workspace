@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { useKeyboardOpen } from "../hooks/useKeyboardOpen";
 import { motion, AnimatePresence } from "motion/react";
@@ -7,7 +7,6 @@ import {
 	Send,
 	Image as ImageIcon,
 	Search,
-	Smile,
 	Trash2,
 	Edit2,
 	X,
@@ -24,7 +23,6 @@ import {
 	Phone,
 	Video,
 	ChevronDown,
-	RotateCcw,
 } from "lucide-react";
 import ImageCropModal from "./ImageCropModal";
 import { Socket } from "socket.io-client";
@@ -94,6 +92,16 @@ export default function Chat({
 	const [searching, setSearching] = useState(false);
 	const [showSearchDropdown, setShowSearchDropdown] = useState(false);
 
+	// Message search within conversation state
+	const [showMessageSearch, setShowMessageSearch] = useState(false);
+	const [messageSearchQuery, setMessageSearchQuery] = useState("");
+	const [messageSearchResults, setMessageSearchResults] = useState<Message[]>([]);
+	const [searchingMessages, setSearchingMessages] = useState(false);
+	const messageSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	// Drag-and-drop state
+	const [isDragActive, setIsDragActive] = useState(false);
+
 	// Media attachments upload
 	const [attachments, setAttachments] = useState<File[]>([]);
 	const [attachmentPreviews, setAttachmentPreviews] = useState<string[]>([]);
@@ -117,19 +125,6 @@ export default function Chat({
 	const [editingMessage, setEditingMessage] = useState<Message | null>(null);
 	const [editText, setEditText] = useState("");
 
-	// Undo send state
-	const [undoMessageId, setUndoMessageId] = useState<string | null>(null);
-	const undoTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	// Cleanup undo timeout on unmount
-	useEffect(() => {
-		return () => {
-			if (undoTimeoutRef.current) {
-				clearTimeout(undoTimeoutRef.current);
-			}
-		};
-	}, []);
-
 	// Voice note recording state
 	const [isRecording, setIsRecording] = useState(false);
 	const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
@@ -149,10 +144,7 @@ export default function Chat({
 	const recordingDurationRef = useRef(0);
 	const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
 
-	const [isListeningText, setIsListeningText] = useState(false);
-	const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
-	const isLongPressActiveRef = useRef(false);
-	const recognitionRef = useRef<any>(null);
+
 
 	// Reply state
 	const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
@@ -169,6 +161,9 @@ export default function Chat({
 		x: number;
 		y: number;
 	} | null>(null);
+
+	// Ref for measuring context menu dimensions (viewport clamping)
+	const contextMenuRef = useRef<HTMLDivElement>(null);
 
 	// Emoji picker state
 	const [showEmojiPicker, setShowEmojiPicker] = useState<string | null>(null);
@@ -219,11 +214,11 @@ export default function Chat({
 	};
 
 	// Mobile detection state
-	const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+	const [isMobile, setIsMobile] = useState(window.innerWidth < 614);
 
 	useEffect(() => {
 		const handleResize = () => {
-			setIsMobile(window.innerWidth < 768);
+			setIsMobile(window.innerWidth < 614);
 		};
 		window.addEventListener("resize", handleResize);
 		return () => window.removeEventListener("resize", handleResize);
@@ -237,6 +232,14 @@ export default function Chat({
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+
+	// Ref for handleFileChange (avoids temporal dead zone issues in drag handlers)
+	const handleFileChangeRef = useRef<((e: React.ChangeEvent<HTMLInputElement>) => void) | null>(null);
+
+	// Sync ref with latest handleFileChange (avoids TDZ issues in drag handlers)
+	useEffect(() => {
+		handleFileChangeRef.current = handleFileChange;
+	});
 
 	// Refs for socket listener closures — prevents listener re-registration on conversation/user change
 	const selectedConvRef = useRef(selectedConv);
@@ -265,12 +268,15 @@ export default function Chat({
 		const fetchMessages = async () => {
 			setLoadingMsgs(true);
 			setMessagesCursor(null);
-			setMessagesHasMore(false);
-			try {
-				const res = await apiFetch(
-					`/api/chats/conversations/${selectedConv._id}/messages?limit=20`,
-				);
-				const data = await res.json();
+			setMessagesHasMore(false);				try {
+					// Bypass cache when opening a conversation — messages from other
+					// users only update state while the conversation is open, so a
+					// cache-first read could miss messages sent while it was closed.
+					const res = await apiFetch(
+						`/api/chats/conversations/${selectedConv._id}/messages?limit=20`,
+						{ bypassCache: true },
+					);
+					const data = await res.json();
 				if (res.ok && data.success) {
 					setMessages(data.messages || []);
 					setMessagesCursor(data.nextCursor || null);
@@ -312,14 +318,53 @@ export default function Chat({
 				socket.emit("chat:leave", { conversationId: selectedConv._id });
 			}
 		};
-	}, [selectedConv, socket]);
+	}, [selectedConv, socket]);	// Timestamp ref to prevent synthetic click events on mobile from closing the
+	// context menu immediately after a long-press (browsers fire click after touchend).
+	const contextMenuOpenedAtRef = useRef(0);
 
-	// Close context menu when clicking outside
+	// Close context menu when clicking outside.
+	// Uses a timestamp guard to ignore synthetic click events that mobile browsers
+	// fire after touchend — these race with the long-press handler (500ms in MessageBubble)
+	// and cause the menu to open and immediately close. Clicks more than 300ms after the
+	// menu opened are real user clicks (e.g. tapping outside) and should close the menu.
+	// The backdrop overlay also handles tap-to-close on mobile.
 	useEffect(() => {
-		const handleClick = () => setContextMenu(null);
+		const handleClick = () => {
+			if (Date.now() - contextMenuOpenedAtRef.current > 300) {
+				setContextMenu(null);
+			}
+		};
 		window.addEventListener("click", handleClick);
 		return () => window.removeEventListener("click", handleClick);
 	}, []);
+
+	// ─── Context Menu Viewport Clamping ────────────────────────────
+	// After the context menu renders, measure its actual dimensions and
+	// adjust position if it overflows the viewport (prevents off-screen cuts).
+	useLayoutEffect(() => {
+		const menu = contextMenuRef.current;
+		if (!menu || !contextMenu) return;
+		const rect = menu.getBoundingClientRect();
+		const margin = 12;
+		let correctedX = parseInt(menu.style.left, 10);
+		let correctedY = parseInt(menu.style.top, 10);
+		if (isNaN(correctedX)) correctedX = contextMenu.x;
+		if (isNaN(correctedY)) correctedY = contextMenu.y;
+		if (rect.right + margin > window.innerWidth) {
+			correctedX = window.innerWidth - rect.width - margin;
+		}
+		if (rect.bottom + margin > window.innerHeight) {
+			correctedY = window.innerHeight - rect.height - margin;
+		}
+		if (rect.left < margin) {
+			correctedX = margin;
+		}
+		if (rect.top < margin) {
+			correctedY = margin;
+		}
+		menu.style.left = correctedX + "px";
+		menu.style.top = correctedY + "px";
+	}, [contextMenu]);
 
 	// Handle Socket Events — reads from refs to avoid re-registering listeners on conv/user change
 	useEffect(() => {
@@ -1089,108 +1134,8 @@ export default function Chat({
 		}
 	};
 
-	const startSpeechToText = () => {
-		const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-		if (!SpeechRecognition) {
-			window.dispatchEvent(
-				new CustomEvent("showToast", {
-					detail: {
-						message: "Speech recognition not supported in this browser.",
-						type: "error",
-					},
-				}),
-			);
-			return;
-		}
-
-		try {
-			const recognition = new SpeechRecognition();
-			recognition.continuous = true;
-			recognition.interimResults = true;
-			recognition.lang = "en-US";
-
-			recognition.onresult = (event: any) => {
-				let finalTranscript = "";
-				for (let i = event.resultIndex; i < event.results.length; ++i) {
-					if (event.results[i].isFinal) {
-						finalTranscript += event.results[i][0].transcript;
-					}
-				}
-				if (finalTranscript) {
-					setInputText((prev) => {
-						const trimmed = prev.trim();
-						return trimmed ? `${trimmed} ${finalTranscript.trim()}` : finalTranscript.trim();
-					});
-				}
-			};
-
-			recognition.onerror = (event: any) => {
-				logger.error("Speech recognition error", event.error);
-			};
-
-			recognition.onend = () => {
-				setIsListeningText(false);
-			};
-
-			recognitionRef.current = recognition;
-			recognition.start();
-			setIsListeningText(true);
-			
-			if (navigator.vibrate) {
-				navigator.vibrate(50);
-			}
-		} catch (err) {
-			logger.error("Failed to start speech recognition", err);
-		}
-	};
-
-	const stopSpeechToText = () => {
-		if (recognitionRef.current) {
-			recognitionRef.current.stop();
-			recognitionRef.current = null;
-		}
-		setIsListeningText(false);
-	};
-
-	const handleMicMouseDown = (_e: React.MouseEvent | React.TouchEvent) => {
-		isLongPressActiveRef.current = false;
-		if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-
-		longPressTimerRef.current = setTimeout(() => {
-			isLongPressActiveRef.current = true;
-			startSpeechToText();
-		}, 600);
-	};
-
-	const handleMicMouseUp = () => {
-		if (longPressTimerRef.current) {
-			clearTimeout(longPressTimerRef.current);
-			longPressTimerRef.current = null;
-		}
-
-		if (isLongPressActiveRef.current) {
-			stopSpeechToText();
-			setTimeout(() => {
-				isLongPressActiveRef.current = false;
-			}, 50);
-		}
-	};
-
 	const handleMicClick = (_e: React.MouseEvent) => {
-		if (!isLongPressActiveRef.current) {
-			handleMicToggle();
-		}
-	};
-
-	const handleMicMouseLeave = () => {
-		if (longPressTimerRef.current) {
-			clearTimeout(longPressTimerRef.current);
-			longPressTimerRef.current = null;
-		}
-		if (isLongPressActiveRef.current) {
-			stopSpeechToText();
-			isLongPressActiveRef.current = false;
-		}
+		handleMicToggle();
 	};
 
 	const handleSendVoiceNote = async (overrideBlob?: Blob, overrideDuration?: number) => {
@@ -1312,13 +1257,6 @@ export default function Chat({
 				delete activeUploadsRef.current[pendingId];
 				delete unsentPayloadsRef.current[pendingId];
 
-				// Show undo toast for 5 seconds
-				const sentMsgId = data.sentMessage._id;
-				setUndoMessageId(sentMsgId);
-				if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
-				undoTimeoutRef.current = setTimeout(() => {
-					setUndoMessageId(null);
-				}, 5000);
 				scrollToBottom();
 			} else {
 				// Set failed state on failure
@@ -1492,13 +1430,6 @@ export default function Chat({
 				delete activeUploadsRef.current[pendingId];
 				delete unsentPayloadsRef.current[pendingId];
 
-				// Show undo toast for 5 seconds
-				const sentMsgId = data.sentMessage._id;
-				setUndoMessageId(sentMsgId);
-				if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
-				undoTimeoutRef.current = setTimeout(() => {
-					setUndoMessageId(null);
-				}, 5000);
 				scrollToBottom();
 			} else {
 				setPendingMessageIds((prev) => {
@@ -2185,14 +2116,6 @@ export default function Chat({
 				}),
 			);
 
-			window.dispatchEvent(
-				new CustomEvent("showToast", {
-					detail: {
-						message: `Message forwarded to ${selectedForwardConvIds.length} conversations.`,
-						type: "success",
-					},
-				}),
-			);
 			setForwardModal(null);
 			setSelectedForwardConvIds([]);
 		} catch (err) {
@@ -2226,8 +2149,65 @@ export default function Chat({
 		const y = e.clientY;
 		const safeX = Math.min(Math.max(10, x), window.innerWidth - 10);
 		const safeY = Math.min(Math.max(10, y), window.innerHeight - 10);
+		// Record timestamp so the click-to-close handler can ignore synthetic
+		// click events that mobile browsers fire immediately after touchend
+		contextMenuOpenedAtRef.current = Date.now();
 		setContextMenu({ message, x: safeX, y: safeY });
 	};
+
+	// Attachments handlers
+	// Message search within conversation
+	const handleMessageSearch = useCallback(async (query: string) => {
+		if (!query.trim() || !selectedConv) {
+			setMessageSearchResults([]);
+			return;
+		}
+		setSearchingMessages(true);
+		try {
+			const res = await apiFetch(`/api/chats/conversations/${selectedConv._id}/search?q=${encodeURIComponent(query)}`);
+			const data = await res.json();
+			if (res.ok && data.success) {
+				setMessageSearchResults(data.messages || []);
+			} else {
+				setMessageSearchResults([]);
+			}
+		} catch (_e) {
+			logger.error(_e);
+			setMessageSearchResults([]);
+		} finally {
+			setSearchingMessages(false);
+		}
+	}, [selectedConv]);
+
+	// Drag-and-drop file handlers
+	const handleDragOver = useCallback((e: React.DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		setIsDragActive(true);
+	}, []);
+
+	const handleDragLeave = useCallback((e: React.DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		setIsDragActive(false);
+	}, []);
+
+	const handleDrop = useCallback((e: React.DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		setIsDragActive(false);
+		const droppedFiles = Array.from(e.dataTransfer.files) as File[];
+		if (droppedFiles.length === 0) return;
+		// Create a synthetic change event for handleFileChange
+		const input = document.createElement("input");
+		input.type = "file";
+		const dt = new DataTransfer();
+		droppedFiles.forEach((f) => dt.items.add(f));
+		input.files = dt.files;
+		const changeEvent = new Event("change", { bubbles: true });
+		Object.defineProperty(changeEvent, "target", { value: input });
+		handleFileChangeRef.current?.(changeEvent as unknown as React.ChangeEvent<HTMLInputElement>);
+	}, []);
 
 	// Attachments handlers
 	const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2347,10 +2327,10 @@ export default function Chat({
 	const isKeyboardOpen = useKeyboardOpen();
 
 	return (
-		<div className="w-full h-full px-0 pt-0 md:pt-3 pb-0 relative select-text chat-container">
+		<div className="w-full h-full px-0 pt-0 pb-0 relative select-text chat-container">
 			<GlassCard
 				animate={true}
-				className="w-full h-full p-0 flex rounded-3xl border md:rounded-4xl border-white/5 bg-zinc-950/20 backdrop-blur-xl">
+				className="w-full h-full p-0 flex sm:border sm:rounded-4xl sm:border-white/5 bg-zinc-950/20 backdrop-blur-xl">
 				<AnimatePresence mode="wait" initial={false}>
 					{!selectedConv ? (
 						<motion.div
@@ -2361,7 +2341,7 @@ export default function Chat({
 							transition={{ duration: 0 }}
 							className="w-full h-full flex flex-col">
 							<div className="p-3 pb-0 flex items-center gap-3 shrink-0 sm:p-4">
-								<h3 className="font-sans text-xs font-black text-white uppercase tracking-widest">
+								<h3 className="text-label-sm font-semibold text-white">
 									Messages
 								</h3>
 							</div>
@@ -2466,7 +2446,7 @@ export default function Chat({
 								) : conversations.length === 0 ? (
 									<div className="text-center py-20 px-4">
 										<MessageSquare className="mx-auto h-8 w-8 text-zinc-600 mb-2" />
-										<h4 className="text-[12px] font-extrabold text-zinc-400 uppercase tracking-widest leading-relaxed">
+										<h4 className="text-label-sm font-semibold text-zinc-300 leading-relaxed">
 											No conversations yet
 										</h4>
 										<p className="text-[11px] text-zinc-550 mt-1 font-mono uppercase">
@@ -2495,7 +2475,7 @@ export default function Chat({
 							exit={{ opacity: 0 }}
 							transition={{ duration: 0 }}
 							className="w-full h-full flex flex-col min-h-0">
-							<div className="px-1.5 py-2 border-b border-zinc-800/30 flex items-center justify-between gap-1.5 shrink-0 bg-zinc-950/20 backdrop-blur-md relative z-10 md:px-3.5 md:py-2.5">
+							<div className="px-1.5 py-2 border-b border-zinc-800/30 flex items-center justify-between gap-1.5 shrink-0 bg-zinc-950/20 backdrop-blur-md relative z-10 sm:px-3.5 sm:py-2.5">
 								<div className="flex items-center gap-3">
 									<button
 										onClick={() => setSelectedConv(null)}
@@ -2559,7 +2539,13 @@ export default function Chat({
 										onClick={() => handleStartCall("video")}
 										className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200/10 hover:border-sky-500/20 bg-white/5 hover:bg-sky-500/10 text-zinc-400 hover:text-sky-400 transition-all cursor-pointer shadow-sm"
 										title="Video Call">
-										<Video className="h-3.5 w-3.5" />
+									<Video className="h-3.5 w-3.5" />
+									</button>
+									<button
+										onClick={() => setShowMessageSearch((prev) => !prev)}
+										className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200/10 hover:border-blue-500/20 bg-white/5 hover:bg-blue-500/10 text-zinc-400 hover:text-blue-400 transition-all cursor-pointer shadow-sm"
+										title="Search messages">
+										<Search className="h-3.5 w-3.5" />
 									</button>
 									<button
 										onClick={(e) => handleClearChat(e)}
@@ -2569,6 +2555,60 @@ export default function Chat({
 									</button>
 								</div>
 							</div>
+
+							{/* Message search bar */}
+							{showMessageSearch && (
+								<div className="px-3 py-2 border-b border-zinc-800/30 shrink-0">
+									<div className="relative">
+										<input
+											type="text"
+											placeholder="Search messages..."
+											value={messageSearchQuery}
+											onChange={(e) => {
+												setMessageSearchQuery(e.target.value);
+												if (messageSearchTimerRef.current) clearTimeout(messageSearchTimerRef.current);
+												messageSearchTimerRef.current = setTimeout(() => {
+													handleMessageSearch(e.target.value);
+												}, 300);
+											}}
+											onKeyDown={(e) => {
+												if (e.key === "Escape") {
+													setShowMessageSearch(false);
+													setMessageSearchQuery("");
+													setMessageSearchResults([]);
+												}
+											}}
+											className="w-full rounded-full border border-zinc-800 bg-zinc-950/40 text-xs placeholder:text-xs text-slate-100 placeholder-zinc-500 outline-none focus:border-blue-500 focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-blue-500/50 px-3 py-2"
+											autoFocus
+										/>
+										{searchingMessages && (
+											<span className="absolute right-3 top-1/2 -translate-y-1/2">
+												<Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />
+											</span>
+										)}
+									</div>
+									{messageSearchResults.length > 0 && (
+										<div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
+											{messageSearchResults.slice(0, 10).map((msg) => (
+												<button
+													key={msg._id}
+													onClick={() => {
+														setShowMessageSearch(false);
+														setMessageSearchQuery("");
+														setMessageSearchResults([]);
+														document.getElementById(`msg-${msg._id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+													}}
+													className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800/60 rounded-lg transition-colors truncate">
+													{msg.text || (msg.attachments?.[0]?.type === "voice_note" ? "🎤 Voice note" : msg.attachments?.[0]?.type === "image" ? "📷 Photo" : msg.attachments?.[0]?.type === "video" ? "🎬 Video" : "📎 File")}
+												</button>
+											))}
+										</div>
+									)}
+									{messageSearchQuery && !searchingMessages && messageSearchResults.length === 0 && (
+										<p className="mt-2 text-[10px] text-zinc-500 text-center">No messages found</p>
+									)}
+								</div>
+							)}
 
 							<div
 								ref={messagesContainerRef}
@@ -2584,7 +2624,7 @@ export default function Chat({
 								) : messages.length === 0 ? (
 									<div className="flex flex-col items-center justify-center h-full text-center px-4">
 										<MessageSquare className="h-7 w-7 text-zinc-700 animate-bounce mb-2" />
-										<h4 className="text-[11px] font-extrabold text-zinc-400 uppercase tracking-widest">
+										<h4 className="text-label-sm font-semibold text-zinc-300">
 											Say hello!
 										</h4>
 										<p className="text-[11px] text-zinc-550 mt-1 font-mono uppercase max-w-xs leading-relaxed">
@@ -2767,7 +2807,7 @@ export default function Chat({
 								className={`border-t border-zinc-800/30 shrink-0 bg-zinc-950/20 backdrop-blur-md relative z-10 chat-input-area transition-all duration-200 ${
 									isKeyboardOpen
 										? "px-2.5 py-2"
-										: "pl-0.5 pr-1.5 pt-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom,0px))] md:pl-1.5 md:pr-2.5 md:pt-3 md:pb-3"
+										: "pl-0.5 pr-1.5 pt-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom,0px))] sm:pl-1.5 sm:pr-2.5 sm:pt-3 sm:pb-3"
 								}`}>
 								{replyToMessage &&
 									!replyToMessage.isDeleted && (
@@ -2925,7 +2965,18 @@ export default function Chat({
 								) : (
 									<form
 										onSubmit={handleSendMessage}
-										className="flex gap-2 items-center w-full">
+										onDragOver={handleDragOver}
+										onDragLeave={handleDragLeave}
+										onDrop={handleDrop}
+										className="flex gap-2 items-center w-full relative">
+									{isDragActive && (
+										<div className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-sky-500/10 border-2 border-dashed border-sky-500/40 backdrop-blur-sm">
+											<div className="text-center">
+												<ImageIcon className="h-8 w-8 text-sky-400 mx-auto mb-2" />
+												<p className="text-xs font-semibold text-sky-300">Drop files here</p>
+											</div>
+										</div>
+									)}
 										<div className="grow relative flex items-center">
 											{/* Media Send Icon inside left corner */}												<div className="absolute left-1.5 z-20 flex items-center gap-1">
 												<div className="w-8 h-8 flex items-center justify-center relative">
@@ -2952,7 +3003,7 @@ export default function Chat({
 
 											<input
 												type="text"
-												placeholder={isListeningText ? "Listening..." : "Type a message..."}
+												placeholder="Type a message..."
 												value={inputText}
 												onChange={(e) => {
 													setInputText(
@@ -2962,10 +3013,6 @@ export default function Chat({
 													handleTyping();
 												}}
 												className={`w-full rounded-full border border-zinc-800 bg-zinc-950/40 text-[12px] md:text-sm placeholder:text-[12px] md:placeholder:text-sm text-slate-100 placeholder-zinc-500 outline-none focus:border-white focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-zinc-700 pl-10.5 ${
-													isListeningText
-														? "border-purple-500/50 bg-purple-950/20 text-purple-200"
-														: ""
-												} ${
 													isKeyboardOpen
 														? "py-2 pr-3"
 														: "py-2.5 pr-10"
@@ -3007,29 +3054,16 @@ export default function Chat({
 											</div>
 										) : null}
 
-										{(!(inputText.trim() || attachments.length > 0) || isListeningText) && (
+										{!(inputText.trim() || attachments.length > 0) && (
 											<button
 												type="button"
-												onMouseDown={handleMicMouseDown}
-												onMouseUp={handleMicMouseUp}
-												onMouseLeave={handleMicMouseLeave}
-												onTouchStart={handleMicMouseDown}
-												onTouchEnd={handleMicMouseUp}
-												onTouchCancel={handleMicMouseLeave}
 												onClick={handleMicClick}
 												className={`flex shrink-0 items-center justify-center rounded-full transition-all duration-200 cursor-pointer ${
-													isListeningText
-														? "h-9 w-9 bg-purple-500 text-white animate-pulse"
-														: isRecording
-															? "h-9 w-9 bg-red-500 text-white hover:bg-red-600"
-															: "h-9 w-9 bg-zinc-800/60 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-700"
+													isRecording
+														? "h-9 w-9 bg-red-500 text-white hover:bg-red-600"
+														: "h-9 w-9 bg-zinc-800/60 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-700"
 												}`}>
-												{isListeningText ? (
-													<span className="relative flex h-2.5 w-2.5">
-														<span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
-														<span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
-													</span>
-												) : isRecording ? (
+												{isRecording ? (
 													<Square className="h-4 w-4" />
 												) : (
 													<Mic className="h-4.5 w-4.5" />
@@ -3084,343 +3118,120 @@ export default function Chat({
 
 			{contextMenu && (
 				<>
-					{isMobile ? (
-						<>
-							{/* Mobile Backdrop */}
-							<div
-								className="fixed inset-0 bg-black/70 z-[300] pointer-events-auto"
-								onClick={() => setContextMenu(null)}
-							/>
-							{/* Mobile Bottom Sheet Menu */}
-							<motion.div
-								initial={{ y: "100%" }}
-								animate={{ y: 0 }}
-								exit={{ y: "100%" }}
-								transition={{
-									type: "spring",
-									damping: 25,
-									stiffness: 250,
-								}}
-								className="fixed bottom-0 inset-x-0 bg-zinc-900/95 backdrop-blur-xl border-t border-zinc-800 rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-[310] overflow-hidden pb-8 max-w-md mx-auto pointer-events-auto">
-								{/* Drag Handle */}
-								<div className="w-12 h-1 bg-zinc-700 rounded-full mx-auto my-3" />
-
-								{/* Emoji reactions row */}
-								{!contextMenu.message.isDeleted && (
-									<div className="flex justify-between px-6 py-2 border-b border-zinc-800/60 overflow-x-auto gap-2 scrollbar-none">
-										{["👍", "❤️", "😂", "😮", "😢", "😠"].map(
-											(emoji) => (
-												<button
-													key={emoji}
-													onClick={() => {
-														handleReaction(
-															contextMenu.message,
-															emoji,
-														);
-														setContextMenu(null);
-													}}
-													className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl hover:bg-zinc-800 active:scale-90 transition-all shrink-0 cursor-pointer">
-													{emoji}
-												</button>
-											),
-										)}
-										<button
-											onClick={() => {
-												setShowEmojiPicker(
-													contextMenu.message._id,
-												);
-												setContextMenu(null);
-											}}
-											className="w-10 h-10 rounded-2xl flex items-center justify-center text-lg hover:bg-zinc-800 active:scale-90 transition-all shrink-0 bg-zinc-800/40 border border-zinc-700/30 cursor-pointer">
-											<Smile className="h-4.5 w-4.5 text-zinc-300" />
-										</button>
-									</div>
-								)}
-
-								{/* Actions list */}
-								<div className="p-4 space-y-1">
-									<div className="px-4 py-1.5 mb-2 text-center border-b border-zinc-800/40 select-none">
-										<span className="text-[11px] font-bold text-zinc-400">
-											{new Date(contextMenu.message.createdAt).toLocaleString("en-US", {
-												dateStyle: "medium",
-												timeStyle: "short",
-											})}
-										</span>
-									</div>
-									{!contextMenu.message.isDeleted && (
-										<>
-											<button
-												onClick={() => {
-													handleReplyMessage(
-														contextMenu.message,
-													);
-												}}
-												className="w-full px-4 py-3 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-3 cursor-pointer">
-												<CornerDownLeft className="h-4 w-4 text-zinc-400" />
-												Reply
-											</button>
-											<button
-												onClick={() => {
-													handleCopyMessage(
-														contextMenu.message,
-													);
-													setContextMenu(null);
-												}}
-												className="w-full px-4 py-3 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-3 cursor-pointer">
-												<Copy className="h-4 w-4 text-zinc-400" />
-												Copy Message
-											</button>
-											<button
-												onClick={() => {
-													setForwardModal({
-														message:
-															contextMenu.message,
-														x:
-															window.innerWidth /
-															2,
-														y:
-															window.innerHeight /
-															2,
-													});
-													setContextMenu(null);
-												}}
-												className="w-full px-4 py-3 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-3 cursor-pointer">
-												<Share2 className="h-4 w-4 text-zinc-400" />
-												Forward Message
-											</button>
-											{contextMenu.message.sender._id ===
-												user._id && (
-												<>
-													{isEditable(
-														contextMenu.message
-															.createdAt,
-													) && (
-														<button
-															onClick={() => {
-																setEditingMessage(
-																	contextMenu.message,
-																);
-																setEditText(
-																	contextMenu
-																		.message
-																		.text,
-																);
-																setContextMenu(
-																	null,
-																);
-															}}
-															className="w-full px-4 py-3 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-850 rounded-xl flex items-center gap-3 cursor-pointer">
-															<Edit2 className="h-4 w-4 text-zinc-400" />
-															Edit Message
-														</button>
-													)}
-													<button
-														onClick={() => {
-															handleDeleteForMe(
-																contextMenu
-																	.message
-																	._id,
-															);
-															setContextMenu(
-																null,
-															);
-														}}
-														className="w-full px-4 py-3 text-left text-xs font-bold text-zinc-300 hover:bg-zinc-850 rounded-xl flex items-center gap-3 cursor-pointer">
-														<Trash2 className="h-4 w-4 text-zinc-400" />
-														Delete for me
-													</button>
-													{isEditable(
-														contextMenu.message
-															.createdAt,
-													) && (
-														<button
-															onClick={() => {
-																handleDeleteMessage(
-																	contextMenu
-																		.message
-																		._id,
-																);
-																setContextMenu(
-																	null,
-																);
-															}}
-															className="w-full px-4 py-3 text-left text-xs font-bold text-red-400 hover:bg-red-500/10 rounded-xl flex items-center gap-3 cursor-pointer">
-															<Trash2 className="h-4 w-4 text-red-400" />
-															Delete for everyone
-														</button>
-													)}
-												</>
-											)}
-										</>
-									)}
-									<button
-										onClick={() => setContextMenu(null)}
-										className="w-full px-4 py-3 text-left text-xs font-bold text-zinc-400 hover:bg-zinc-850 rounded-xl flex items-center gap-3 border border-zinc-800/50 mt-2 cursor-pointer">
-										<X className="h-4 w-4 text-zinc-400" />
-										Cancel
-									</button>
-								</div>
-							</motion.div>
-						</>
-					) : (
-						/* Desktop Context Menu with Bounded Position to prevent off-screen cuts */
+					/* Desktop Context Menu with backdrop + viewport clamping */
+					<>
 						<motion.div
-							initial={{ opacity: 0, scale: 0.9 }}
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1 }}
+							exit={{ opacity: 0 }}
+							className="fixed inset-0 z-[300]"
+							onClick={() => setContextMenu(null)}
+						/>
+						<motion.div
+							ref={contextMenuRef}
+							initial={{ opacity: 0, scale: 0.95 }}
 							animate={{ opacity: 1, scale: 1 }}
-							style={{
-								position: "fixed",
-								left: Math.min(
-									Math.max(20, contextMenu.x),
-									window.innerWidth - 340,
-								),
-								top: Math.min(
-									Math.max(20, contextMenu.y - 120),
-									window.innerHeight - 260,
-								),
-								zIndex: 1000,
-							}}
-							className="bg-zinc-900/95 backdrop-blur-xl border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden pointer-events-auto">
-							<div className="flex flex-wrap gap-1 p-2 border-b border-zinc-800">
-								{["👍", "❤️", "😂", "😮", "😢", "😠"].map(
-									(emoji) => (
+							exit={{ opacity: 0, scale: 0.95 }}
+							className="fixed z-[310] bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden py-1 min-w-[180px]"
+							style={{ left: contextMenu.x, top: contextMenu.y }}
+						>
+							{/* Reactions row */}
+							{!contextMenu.message.isDeleted && (
+								<div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/50 gap-0.5">
+									{["👍", "❤️", "😂", "😮", "😢", "😠"].map((emoji) => (
 										<button
 											key={emoji}
 											onClick={() => {
-												handleReaction(
-													contextMenu.message,
-													emoji,
-												);
+												handleReaction(contextMenu.message, emoji);
 												setContextMenu(null);
 											}}
-											className="w-10 h-10 rounded-xl flex items-center justify-center text-xl hover:bg-zinc-800 transition-all cursor-pointer">
+											className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-zinc-800 text-sm transition-all cursor-pointer hover:scale-110 active:scale-95"
+										>
 											{emoji}
 										</button>
-									),
-								)}
+									))}
+								</div>
+							)}
+							<button
+								onClick={() => {
+									handleReplyMessage(contextMenu.message);
+									setContextMenu(null);
+								}}
+								className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+							>
+								<CornerDownLeft className="h-3.5 w-3.5" />
+								Reply
+							</button>
+							<button
+								onClick={() => {
+									handleCopyMessage(contextMenu.message);
+									setContextMenu(null);
+								}}
+								className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+							>
+								<Copy className="h-3.5 w-3.5" />
+								Copy Message
+							</button>
+							<button
+								onClick={() => {
+									setForwardModal({
+										message: contextMenu.message,
+										x: contextMenu.x,
+										y: contextMenu.y,
+									});
+									setContextMenu(null);
+								}}
+								className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+							>
+								<Share2 className="h-3.5 w-3.5" />
+								Forward Message
+							</button>
+							{/* Delete for me — available for ALL messages, not just own */}
+							{!contextMenu.message.isDeleted && (
 								<button
 									onClick={() => {
-										setShowEmojiPicker(
-											contextMenu.message._id,
-										);
+										handleDeleteForMe(contextMenu.message._id);
 										setContextMenu(null);
 									}}
-									className="w-10 h-10 rounded-xl flex items-center justify-center text-xl hover:bg-zinc-800 transition-all cursor-pointer">
-									<Smile className="h-4 w-4" />
+									className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-400 hover:bg-zinc-800 transition-colors cursor-pointer"
+								>
+									<X className="h-3.5 w-3.5" />
+									Delete for me
 								</button>
-							</div>
-
-							<div className="p-1">
-								{!contextMenu.message.isDeleted && (
-									<>
-										<button
-											onClick={() =>
-												handleReplyMessage(
-													contextMenu.message,
-												)
-											}
-											className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
-											<CornerDownLeft className="h-3.5 w-3.5" />
-											Reply
-										</button>
-										<button
-											onClick={() =>
-												handleCopyMessage(
-													contextMenu.message,
-												)
-											}
-											className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
-											<Copy className="h-3.5 w-3.5" />
-											Copy Message
-										</button>
+							)}
+							{contextMenu.message.sender._id === user._id && (
+								<>
+									{isEditable(contextMenu.message.createdAt) && (
 										<button
 											onClick={() => {
-												setForwardModal({
-													message:
-														contextMenu.message,
-													x: contextMenu.x,
-													y: contextMenu.y,
-												});
+												setEditingMessage(contextMenu.message);
+												setEditText(contextMenu.message.text);
 												setContextMenu(null);
 											}}
-											className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
-											<Share2 className="h-3.5 w-3.5" />
-											Forward Message
+											className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+										>
+											<Edit2 className="h-3.5 w-3.5" />
+											Edit
 										</button>
-										{contextMenu.message.sender._id ===
-											user._id && (
-											<>
-												{isEditable(
-													contextMenu.message
-														.createdAt,
-												) && (
-													<button
-														onClick={() => {
-															setEditingMessage(
-																contextMenu.message,
-															);
-															setEditText(
-																contextMenu
-																	.message
-																	.text,
-															);
-															setContextMenu(
-																null,
-															);
-														}}
-														className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-200 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
-														<Edit2 className="h-3.5 w-3.5" />
-														Edit Message
-													</button>
-												)}
-												<button
-													onClick={() => {
-														handleDeleteForMe(
-															contextMenu.message
-																._id,
-														);
-														setContextMenu(null);
-													}}
-													className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-300 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
-													<Trash2 className="h-3.5 w-3.5" />
-													Delete for me
-												</button>
-												{isEditable(
-													contextMenu.message
-														.createdAt,
-												) && (
-													<button
-														onClick={() => {
-															handleDeleteMessage(
-																contextMenu
-																	.message
-																	._id,
-															);
-															setContextMenu(
-																null,
-															);
-														}}
-														className="w-full px-3 py-2.5 text-left text-xs font-bold text-red-400 hover:bg-red-500/10 rounded-xl flex items-center gap-2 cursor-pointer">
-														<Trash2 className="h-3.5 w-3.5" />
-														Delete for everyone
-													</button>
-												)}
-											</>
-										)}
-									</>
-								)}
-								<button
-									onClick={() => setContextMenu(null)}
-									className="w-full px-3 py-2.5 text-left text-xs font-bold text-zinc-400 hover:bg-zinc-800/60 rounded-xl flex items-center gap-2 cursor-pointer">
-									<X className="h-3.5 w-3.5" />
-									Cancel
-								</button>
-							</div>
+									)}
+									{isEditable(contextMenu.message.createdAt) && (
+										<button
+											onClick={() => {
+												handleDeleteMessage(contextMenu.message._id);
+												setContextMenu(null);
+											}}
+											className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-red-400 hover:bg-zinc-800 transition-colors cursor-pointer"
+										>
+											<Trash2 className="h-3.5 w-3.5" />
+											Delete for everyone
+										</button>
+									)}
+								</>
+							)}
 						</motion.div>
-					)}
+					</>
 				</>
-			)}
-
-			{/* Native Emoji Picker (opens device emoji keyboard) */}
+			)}			{/* Native Emoji Picker (opens device emoji keyboard) */}
 			<AnimatePresence>
 				{showEmojiPicker && (
 					<motion.div
@@ -3439,7 +3250,7 @@ export default function Chat({
 							onClick={(e) => e.stopPropagation()}
 							className="bg-zinc-900/95 backdrop-blur-xl border border-zinc-800 rounded-2xl p-3 w-full max-w-xs shadow-2xl">
 							<div className="flex items-center justify-between mb-2">
-								<h4 className="text-[11px] font-bold text-zinc-200 uppercase tracking-widest">
+								<h4 className="text-label-sm font-semibold text-zinc-200">
 									Pick an Emoji
 								</h4>
 								<button
@@ -3535,168 +3346,247 @@ export default function Chat({
 			</AnimatePresence>
 
 			{/* Forward Message Modal */}
-			{forwardModal && createPortal(
+						{forwardModal && createPortal(
 				<AnimatePresence>
-					<motion.div
-						initial={{ opacity: 0 }}
-						animate={{ opacity: 1 }}
-						exit={{ opacity: 0 }}
-						className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-4"
-						onClick={() => {
-							setForwardModal(null);
-							setSelectedForwardConvIds([]);
-						}}>
-						<motion.div
-							initial={{ scale: 0.9, y: 20 }}
-							animate={{ scale: 1, y: 0 }}
-							exit={{ scale: 0.9, y: 20 }}
-							onClick={(e) => e.stopPropagation()}
-							className="bg-zinc-900/95 backdrop-blur-xl border border-zinc-800 rounded-2xl p-4 w-full max-w-xs shadow-2xl max-h-[85vh] flex flex-col">
-							<div className="flex items-center justify-between mb-3">
-								<h4 className="text-[11px] font-bold text-zinc-200 uppercase tracking-widest">
-									Forward Message
-								</h4>
-								<button onClick={() => {
+					{isMobile ? (
+						<>
+							{/* Mobile Backdrop */}
+							<motion.div
+								initial={{ opacity: 0 }}
+								animate={{ opacity: 1 }}
+								exit={{ opacity: 0 }}
+								className="fixed inset-0 bg-black/70 z-[300]"
+								onClick={() => {
+									setForwardModal(null);
+									setSelectedForwardConvIds([]);
+								}}
+							/>
+							{/* Mobile Bottom Sheet */}
+							<motion.div
+								initial={{ y: "100%" }}
+								animate={{ y: 0 }}
+								exit={{ y: "100%" }}
+								transition={{ type: "spring", damping: 25, stiffness: 250 }}
+								className="fixed bottom-0 inset-x-0 bg-zinc-900/95 backdrop-blur-xl border-t border-zinc-800 rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-[310] overflow-hidden pb-8 max-w-md mx-auto pointer-events-auto max-h-[85vh] flex flex-col"
+								onClick={(e) => e.stopPropagation()}
+							>
+								{/* Drag Handle */}
+								<div className="w-12 h-1 bg-zinc-700 rounded-full mx-auto my-3" />
+								{/* Forward content */}
+								<div className="flex items-center justify-between px-6 mb-3">
+									<h4 className="text-label-sm font-semibold text-zinc-200">
+										Forward Message
+									</h4>
+									<button onClick={() => {
+										setForwardModal(null);
+										setSelectedForwardConvIds([]);
+									}}>
+										<X className="h-3 w-3 text-zinc-500 hover:text-white" />
+									</button>
+								</div>
+
+								<div className="mx-6 mb-3 p-2.5 rounded-xl bg-zinc-800/50 border border-zinc-700 max-h-24 overflow-y-auto">
+									<p className="text-[10px] text-zinc-300 leading-relaxed break-words">
+										{forwardModal.message.text || (forwardModal.message.attachments && forwardModal.message.attachments.length > 0 ? "📎 Attachment" : "")}
+									</p>
+								</div>
+
+								<div className="flex-1 overflow-y-auto space-y-1 pr-0.5 px-6">
+									{conversations.length === 0 ? (
+										<p className="text-center text-[9px] text-zinc-500 font-mono uppercase py-3">
+											No conversations yet
+										</p>
+									) : (
+										conversations.map((conv) => {
+											const partner = getPartner(conv);
+											const isSelected = selectedForwardConvIds.includes(conv._id);
+											return (
+												<button
+													key={conv._id}
+													onClick={() =>
+														handleToggleForwardSelection(
+															conv._id,
+														)
+													}
+													className={`w-full flex items-center gap-2.5 p-2 rounded-xl transition-all border ${
+														isSelected
+															? "bg-indigo-500/10 border-indigo-500/30"
+															: "hover:bg-zinc-800/60 border-transparent"
+													} text-left`}>
+													<UserAvatar
+														src={
+															partner.profilePic?.url
+														}
+														alt={partner.fullName}
+														className="h-7 w-7 rounded-full object-cover border border-zinc-800 shrink-0"
+													/>
+													<div className="min-w-0 flex-1">
+														<p className="text-[11px] font-bold text-zinc-200 truncate">
+															{partner.fullName}
+														</p>
+														<p className="text-[8px] text-zinc-500 font-bold truncate">
+															@{partner.username}
+														</p>
+													</div>
+													<div className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ml-auto transition-all ${
+														isSelected
+															? "bg-indigo-500 border-transparent text-white"
+															: "border-zinc-700 text-transparent"
+													}`}>
+														{isSelected && (
+															<svg className="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+																<path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+															</svg>
+														)}
+													</div>
+												</button>
+											);
+										})
+									)}
+								</div>
+								<button
+									onClick={handleExecuteForward}
+									disabled={selectedForwardConvIds.length === 0}
+									className="w-full mt-3 py-2.5 bg-indigo-500 hover:bg-indigo-650 text-[10px] font-black uppercase tracking-wider text-white rounded-xl disabled:opacity-40 disabled:hover:bg-indigo-500 transition-all cursor-pointer shadow-md shrink-0">
+									Send ({selectedForwardConvIds.length}/5)
+								</button>
+
+								<div className="mt-3 pt-2.5 border-t border-zinc-800">
+									<div className="text-[8px] font-mono text-zinc-500 uppercase mb-1.5">
+										Or
+									</div>
+									<button
+										onClick={() => {
+											setForwardModal(null);
+											setSelectedConv(null);
+											setSelectedForwardConvIds([]);
+										}}
+										className="w-full text-left flex items-center gap-2 px-2.5 py-2 rounded-xl hover:bg-zinc-800/60">
+										<User className="h-3 w-3 text-zinc-400" />
+										<span className="text-[11px] font-bold text-zinc-200">
+											Start a new conversation
+										</span>
+									</button>
+								</div>
+							</motion.div>
+						</>
+					) : (
+						<>
+							<motion.div
+								initial={{ opacity: 0 }}
+								animate={{ opacity: 1 }}
+								exit={{ opacity: 0 }}
+								className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-4"
+								onClick={() => {
 									setForwardModal(null);
 									setSelectedForwardConvIds([]);
 								}}>
-									<X className="h-3 w-3 text-zinc-500 hover:text-white" />
-								</button>
-							</div>
+								<motion.div
+									initial={{ scale: 0.9, y: 20 }}
+									animate={{ scale: 1, y: 0 }}
+									exit={{ scale: 0.9, y: 20 }}
+									onClick={(e) => e.stopPropagation()}
+									className="bg-zinc-900/95 backdrop-blur-xl border border-zinc-800 rounded-2xl p-4 w-full max-w-xs shadow-2xl max-h-[85vh] flex flex-col">
+									<div className="flex items-center justify-between mb-3">
+										<h4 className="text-label-sm font-semibold text-zinc-200">
+											Forward Message
+										</h4>
+										<button onClick={() => {
+											setForwardModal(null);
+											setSelectedForwardConvIds([]);
+										}}>
+											<X className="h-3 w-3 text-zinc-500 hover:text-white" />
+										</button>
+									</div>
 
-							<div className="mb-3 p-2.5 rounded-xl bg-zinc-800/50 border border-zinc-700 max-h-24 overflow-y-auto">
-								<p className="text-[10px] text-zinc-300 leading-relaxed break-words">
-									{forwardModal.message.text || (forwardModal.message.attachments && forwardModal.message.attachments.length > 0 ? "📎 Attachment" : "")}
-								</p>
-							</div>
+									<div className="mb-3 p-2.5 rounded-xl bg-zinc-800/50 border border-zinc-700 max-h-24 overflow-y-auto">
+										<p className="text-[10px] text-zinc-300 leading-relaxed break-words">
+											{forwardModal.message.text || (forwardModal.message.attachments && forwardModal.message.attachments.length > 0 ? "📎 Attachment" : "")}
+										</p>
+									</div>
 
-							<div className="flex-1 overflow-y-auto space-y-1 pr-0.5">
-								{conversations.length === 0 ? (
-									<p className="text-center text-[9px] text-zinc-500 font-mono uppercase py-3">
-										No conversations yet
-									</p>
-								) : (
-									conversations.map((conv) => {
-										const partner = getPartner(conv);
-										const isSelected = selectedForwardConvIds.includes(conv._id);
-										return (
-											<button
-												key={conv._id}
-												onClick={() =>
-													handleToggleForwardSelection(
-														conv._id,
-													)
-												}
-												className={`w-full flex items-center gap-2.5 p-2 rounded-xl transition-all border ${
-													isSelected
-														? "bg-indigo-500/10 border-indigo-500/30"
-														: "hover:bg-zinc-800/60 border-transparent"
-												} text-left`}>
-												<UserAvatar
-													src={
-														partner.profilePic?.url
-													}
-													alt={partner.fullName}
-													className="h-7 w-7 rounded-full object-cover border border-zinc-800 shrink-0"
-												/>
-												<div className="min-w-0 flex-1">
-													<p className="text-[11px] font-bold text-zinc-200 truncate">
-														{partner.fullName}
-													</p>
-													<p className="text-[8px] text-zinc-500 font-bold truncate">
-														@{partner.username}
-													</p>
-												</div>
-												<div className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ml-auto transition-all ${
-													isSelected
-														? "bg-indigo-500 border-transparent text-white"
-														: "border-zinc-700 text-transparent"
-												}`}>
-													{isSelected && (
-														<svg className="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
-															<path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-														</svg>
-													)}
-												</div>
-											</button>
-										);
-									})
-								)}
-							</div>
-							<button
-								onClick={handleExecuteForward}
-								disabled={selectedForwardConvIds.length === 0}
-								className="w-full mt-3 py-2.5 bg-indigo-500 hover:bg-indigo-650 text-[10px] font-black uppercase tracking-wider text-white rounded-xl disabled:opacity-40 disabled:hover:bg-indigo-500 transition-all cursor-pointer shadow-md shrink-0">
-								Send ({selectedForwardConvIds.length}/5)
-							</button>
+									<div className="flex-1 overflow-y-auto space-y-1 pr-0.5">
+										{conversations.length === 0 ? (
+											<p className="text-center text-[9px] text-zinc-500 font-mono uppercase py-3">
+												No conversations yet
+											</p>
+										) : (
+											conversations.map((conv) => {
+												const partner = getPartner(conv);
+												const isSelected = selectedForwardConvIds.includes(conv._id);
+												return (
+													<button
+														key={conv._id}
+														onClick={() =>
+															handleToggleForwardSelection(
+																conv._id,
+															)
+														}
+														className={`w-full flex items-center gap-2.5 p-2 rounded-xl transition-all border ${
+															isSelected
+																? "bg-indigo-500/10 border-indigo-500/30"
+																: "hover:bg-zinc-800/60 border-transparent"
+														} text-left`}>
+														<UserAvatar
+															src={
+																partner.profilePic?.url
+															}
+															alt={partner.fullName}
+															className="h-7 w-7 rounded-full object-cover border border-zinc-800 shrink-0"
+														/>
+														<div className="min-w-0 flex-1">
+															<p className="text-[11px] font-bold text-zinc-200 truncate">
+																{partner.fullName}
+															</p>
+															<p className="text-[8px] text-zinc-500 font-bold truncate">
+																@{partner.username}
+															</p>
+														</div>
+														<div className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ml-auto transition-all ${
+															isSelected
+																? "bg-indigo-500 border-transparent text-white"
+																: "border-zinc-700 text-transparent"
+														}`}>
+															{isSelected && (
+																<svg className="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+																	<path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+																</svg>
+															)}
+														</div>
+													</button>
+												);
+											})
+										)}
+									</div>
+									<button
+										onClick={handleExecuteForward}
+										disabled={selectedForwardConvIds.length === 0}
+										className="w-full mt-3 py-2.5 bg-indigo-500 hover:bg-indigo-650 text-[10px] font-black uppercase tracking-wider text-white rounded-xl disabled:opacity-40 disabled:hover:bg-indigo-500 transition-all cursor-pointer shadow-md shrink-0">
+										Send ({selectedForwardConvIds.length}/5)
+									</button>
 
-							<div className="mt-3 pt-2.5 border-t border-zinc-800">
-								<div className="text-[8px] font-mono text-zinc-500 uppercase mb-1.5">
-									Or
-								</div>
-								<button
-									onClick={() => {
-										setForwardModal(null);
-										setSelectedConv(null);
-										setSelectedForwardConvIds([]);
-									}}
-									className="w-full text-left flex items-center gap-2 px-2.5 py-2 rounded-xl hover:bg-zinc-800/60">
-									<User className="h-3 w-3 text-zinc-400" />
-									<span className="text-[11px] font-bold text-zinc-200">
-										Start a new conversation
-									</span>
-								</button>
-							</div>
-						</motion.div>
-					</motion.div>
+									<div className="mt-3 pt-2.5 border-t border-zinc-800">
+										<div className="text-[8px] font-mono text-zinc-500 uppercase mb-1.5">
+											Or
+										</div>
+										<button
+											onClick={() => {
+												setForwardModal(null);
+												setSelectedConv(null);
+												setSelectedForwardConvIds([]);
+											}}
+											className="w-full text-left flex items-center gap-2 px-2.5 py-2 rounded-xl hover:bg-zinc-800/60">
+											<User className="h-3 w-3 text-zinc-400" />
+											<span className="text-[11px] font-bold text-zinc-200">
+												Start a new conversation
+											</span>
+										</button>
+									</div>
+								</motion.div>
+							</motion.div>
+						</>
+					)}
 				</AnimatePresence>,
-				document.body
-			)}
-
-			{/* Undo Send Toast */}
-			{undoMessageId && createPortal(
-				<motion.div
-					initial={{ opacity: 0, y: 50 }}
-					animate={{ opacity: 1, y: 0 }}
-					exit={{ opacity: 0, y: 50 }}
-					className="fixed bottom-28 left-1/2 -translate-x-1/2 z-[9999]"
-				>
-					<div className="flex items-center gap-3 rounded-full bg-zinc-900 border border-zinc-700/50 px-4 py-2.5 shadow-2xl backdrop-blur-xl">
-						<span className="text-[12px] text-zinc-300 font-medium">
-							Message sent
-						</span>
-						<button
-							type="button"
-							onClick={async () => {
-								const msgId = undoMessageId;
-								setUndoMessageId(null);
-								if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
-								try {
-									await apiFetch(`/api/chats/messages/${msgId}/undo`, {
-										method: "DELETE",
-									});
-									setMessages((prev) => prev.filter((m) => m._id !== msgId));
-									window.dispatchEvent(
-										new CustomEvent("showToast", {
-											detail: { message: "Message undone!", type: "success" },
-										}),
-									);
-								} catch (err) {
-									logger.error("Failed to undo message", err);
-									window.dispatchEvent(
-										new CustomEvent("showToast", {
-											detail: { message: "Could not undo message", type: "error" },
-										}),
-									);
-								}
-							}}
-							className="rounded-full bg-white/10 hover:bg-white/20 px-3 py-1 text-[11px] font-bold text-white transition-all cursor-pointer flex items-center gap-1"
-						>
-							<RotateCcw className="h-3 w-3" />
-							Undo
-						</button>
-					</div>
-				</motion.div>,
 				document.body
 			)}
 

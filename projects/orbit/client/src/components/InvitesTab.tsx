@@ -101,7 +101,7 @@ export default function InvitesTab() {
 			<GlassCard className="p-6">
 				<div className="flex items-center gap-2 mb-4">
 					<Gift className="h-4 w-4 text-emerald-400" />
-					<h3 className="text-sm font-bold text-white uppercase tracking-wider">
+					<h3 className="text-label text-base font-semibold text-white">
 						Invite Friends
 					</h3>
 				</div>

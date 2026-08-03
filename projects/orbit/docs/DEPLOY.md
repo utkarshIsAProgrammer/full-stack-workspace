@@ -30,6 +30,7 @@ Required — set these in Render dashboard → Environment:
 | `MONGO_URI` | MongoDB Atlas → Connect → Drivers → Copy connection string |
 | `JWT_SECRET` | Run: `openssl rand -hex 32` |
 | `CLIENT_URL` | Your frontend URL (e.g. `https://orbit.app`) |
+| `PUBLIC_API_URL` | **Your backend URL (e.g. `https://orbit-backend.onrender.com`)** — the server pings its own `/api/ping` every 5 min so the free tier never sleeps |
 | `CLOUDINARY_NAME` | Cloudinary dashboard → Account Details |
 | `CLOUDINARY_API_KEY` | Cloudinary dashboard |
 | `CLOUDINARY_API_SECRET` | Cloudinary dashboard |
@@ -109,6 +110,16 @@ curl -X POST https://your-app.onrender.com/api/auth/login \
 - 1 worker (cluster disabled)
 - Bandwidth: 100GB/month
 - Sleeps after 15 min of inactivity (wakes on first request — ~30s delay)
+
+**Keep-Alive (recommended for free tier):** set `PUBLIC_API_URL` to your
+Render backend URL (e.g. `https://orbit-backend.onrender.com`). The server
+will ping its own `/api/ping` every 5 minutes, preventing the 15-minute idle
+sleep so users never hit a 30s cold start. Verify it's live with:
+
+```bash
+curl https://your-app.onrender.com/api/ping
+# { "success": true, "message": "pong", ... }
+```
 
 ### 6. Troubleshooting
 

@@ -7,7 +7,9 @@ import { clearFeedCache, clearUserPostsCache } from "../configs/cache";
 import { logger } from "../utilities/logger";
 
 /**
- * GET /api/posts/drafts — List all draft posts for the current user.
+ * GET /api/posts/drafts — List all draft AND scheduled posts for the
+ * current user (both are "unpublished" content the author manages).
+ * Returns them as separate `drafts` and `scheduled` arrays.
  */
 export const getDrafts = async (req: Request, res: Response) => {
   const currentUserId = req.user?._id;
@@ -15,12 +17,20 @@ export const getDrafts = async (req: Request, res: Response) => {
   try {
     if (!currentUserId) throw new UnauthorizedError("Unauthorized!");
 
-    const drafts = await Post.find({ author: currentUserId, status: "draft" })
-      .select("title content images createdAt updatedAt")
+    const posts = await Post.find({
+      author: currentUserId,
+      status: { $in: ["draft", "scheduled"] },
+    })
+      .select(
+        "title content images image poll status scheduledAt hashtags createdAt updatedAt",
+      )
       .sort({ updatedAt: -1 })
       .lean();
 
-    return res.status(200).json({ success: true, drafts });
+    const drafts = posts.filter((p) => p.status === "draft");
+    const scheduled = posts.filter((p) => p.status === "scheduled");
+
+    return res.status(200).json({ success: true, drafts, scheduled });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
     logger.error("Error in getDrafts", { error: err.message });

@@ -25,7 +25,7 @@ export const protectViews = async (
     const user = await User.findById(decoded.userId).select("-password");
 
     if (user) {
-      req.user = user;
+      req.user = user as any;
     }
 
     next();

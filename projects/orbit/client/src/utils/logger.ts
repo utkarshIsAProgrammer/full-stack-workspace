@@ -1,29 +1,19 @@
 /**
- * Dev-only logger — suppresses console output in production
- * to avoid leaking internal state and stack traces to end users.
+ * Silent logger — suppresses all browser console output.
+ * All methods are no-ops to keep the browser console clean.
  */
 
-const isDev = process.env.NODE_ENV === "development";
-
 export const logger = {
-  error: (...args: unknown[]) => {
-    if (isDev) {
-      console.error(...args);
-    }
+  error: (..._args: unknown[]) => {
+    // Silenced
   },
-  warn: (...args: unknown[]) => {
-    if (isDev) {
-      console.warn(...args);
-    }
+  warn: (..._args: unknown[]) => {
+    // Silenced
   },
-  log: (...args: unknown[]) => {
-    if (isDev) {
-      console.log(...args);
-    }
+  log: (..._args: unknown[]) => {
+    // Silenced
   },
-  info: (...args: unknown[]) => {
-    if (isDev) {
-      console.info(...args);
-    }
+  info: (..._args: unknown[]) => {
+    // Silenced
   },
 };

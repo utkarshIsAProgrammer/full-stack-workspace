@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { Plus, Loader2 } from "lucide-react";
 import type { Glance, User } from "../types";
 import { apiFetch } from "../utils/api";
+import { evictCachedResponse } from "../utils/apiCache";
 import { logger } from "../utils/logger";
 import GlanceViewer from "./GlanceViewer";
 
@@ -35,7 +36,14 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
   };
 
   useEffect(() => {
-    fetchGlances();
+    // Clear cache for the feed endpoint on mount to ensure
+    // fresh data is fetched from the network (not stale cached data).
+    // The periodic refresh timer will keep the cache warm after that.
+    // Evict cache first, then fetch — prevents race where apiFetch
+    // reads stale cache before the eviction completes.
+    evictCachedResponse("/api/glimpses/feed").catch(() => {}).then(() => {
+      fetchGlances();
+    });
   }, []);
 
   // Listen for real-time glance events
@@ -120,11 +128,6 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
           if (prev.some((g) => g._id === data.glimpse._id)) return prev;
           return [data.glimpse, ...prev];
         });
-        window.dispatchEvent(
-          new CustomEvent("showToast", {
-            detail: { message: "Glance created!", type: "success" },
-          })
-        );
         // Instantly re-fetch glances to ensure absolute consistency
         fetchGlances();
       } else {
@@ -211,7 +214,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
       <div className="flex items-center gap-3 py-3 overflow-x-auto scrollbar-none">
         {[1, 2, 3].map((n) => (
           <div key={n} className="flex flex-col items-center gap-1 shrink-0">
-            <div className="h-16 w-16 rounded-full bg-zinc-900 animate-pulse border border-zinc-800" />
+            <div className="h-16 w-16 rounded-2xl bg-zinc-900 animate-pulse ring-1 ring-zinc-800 sm:h-20 sm:w-20" />
             <div className="h-2 w-10 bg-zinc-900 animate-pulse rounded" />
           </div>
         ))}
@@ -224,7 +227,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
       <div className="relative w-full">
         <div
           ref={scrollRef}
-          className="flex items-center gap-3 px-1 py-3 overflow-x-auto scrollbar-thin scroll-smooth"
+          className="flex items-center gap-3 px-1 py-2.5 overflow-x-auto scrollbar-thin scroll-smooth sm:py-3"
           style={{ scrollbarWidth: "thin" }}
         >
           {/* Create glance button (only for authenticated users) */}
@@ -233,7 +236,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isCreating}
-                className="relative flex h-16 w-16 items-center justify-center rounded-full border-2 border-dashed border-zinc-600 hover:border-white/50 bg-zinc-900/50 hover:bg-zinc-800/50 transition-all cursor-pointer disabled:opacity-50"
+                className="relative flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-dashed border-zinc-600 hover:border-white/50 bg-zinc-900/50 hover:bg-zinc-800/50 transition-all cursor-pointer disabled:opacity-50 sm:h-20 sm:w-20"
                 title="Add a glance"
               >
                 {isCreating ? (
@@ -259,7 +262,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
             <>
               {/* Divider line */}
               {user && (
-                <div className="h-12 w-px bg-zinc-800 shrink-0" />
+                <div className="h-12 w-px bg-zinc-800 shrink-0 sm:h-16" />
               )}
 
                   {/* Story Highlights Header */}
@@ -274,13 +277,13 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
                       );
                       if (idx >= 0) handleOpenViewer(idx);
                     }}
-                    className="relative h-16 w-16 rounded-full p-[2.5px] transition-all bg-gradient-to-br from-amber-400 via-yellow-300 to-orange-400 hover:scale-105 active:scale-95"
+                    className="relative h-16 w-16 rounded-2xl transition-all bg-gradient-to-br from-amber-400 via-yellow-300 to-orange-400 hover:scale-105 active:scale-95 sm:h-20 sm:w-20"
                   >
-                    <div className="relative h-full w-full rounded-full border-2 border-zinc-950 bg-zinc-900 flex items-center justify-center">
+                    <div className="relative h-full w-full rounded-2xl border-2 border-zinc-950 bg-zinc-900 flex items-center justify-center">
                       <span className="text-lg">⭐</span>
                     </div>
                   </div>
-                  <span className="text-[9px] font-bold text-amber-400 truncate max-w-16 text-center">
+                  <span className="text-[9px] font-bold text-amber-400 truncate max-w-20 text-center">
                     Highlights
                   </span>
                 </div>
@@ -288,7 +291,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
 
               {/* Divider line */}
               {(hasHighlights || (user && hasGlances)) && (
-                <div className="h-12 w-px bg-zinc-800 shrink-0" />
+                <div className="h-12 w-px bg-zinc-800 shrink-0 sm:h-16" />
               )}
 
               {/* Author rings */}
@@ -317,20 +320,22 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
                       className="flex flex-col items-center gap-1 shrink-0 group cursor-pointer"
                     >
                       <div
-                        className={`relative h-16 w-16 rounded-full p-[2.5px] transition-all ${
+                        className={`relative h-16 w-16 rounded-2xl p-[2.5px] transition-all sm:h-20 sm:w-20 ${
                           allViewed
                             ? "bg-zinc-700"
                             : "bg-gradient-to-br from-violet-400 via-fuchsia-300 to-sky-400"
                         }`}
                       >
+                        <div className="relative h-full w-full rounded-2xl overflow-hidden bg-zinc-900">
                         <img
                           src={author.profilePic?.url || ""}
                           alt={author.fullName}
-                          className="relative h-full w-full rounded-full object-cover border-2 border-zinc-950 aspect-square"
+                          className="relative h-full w-full object-cover"
                         />
+                        </div>
                       </div>
                       <span
-                        className={`text-[9px] font-bold truncate max-w-16 text-center ${
+                        className={`text-[9px] font-bold truncate max-w-20 text-center ${
                           allViewed ? "text-zinc-500" : "text-zinc-300"
                         }`}
                       >

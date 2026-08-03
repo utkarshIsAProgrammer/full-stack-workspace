@@ -47,11 +47,6 @@ export default function BlockedUsersList() {
       const data = await res.json();
       if (res.ok && data.success) {
         setBlockedUsers((prev) => prev.filter((u) => u._id !== userId));
-        window.dispatchEvent(
-          new CustomEvent("showToast", {
-            detail: { message: "User unblocked", type: "success" },
-          }),
-        );
       } else {
         throw new Error(data.message || "Failed to unblock");
       }

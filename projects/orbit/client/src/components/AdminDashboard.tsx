@@ -11,7 +11,12 @@ import {
 	Search,
 } from "lucide-react";
 import { apiFetch } from "../utils/api";
+import { useCacheRefresh } from "../hooks/useCacheRefresh";
 import { logger } from "../utils/logger";
+
+// Stable RegExp for matching admin reports cache refresh events
+// — module-level to prevent React effect re-attachment on every render.
+const MATCHER_REPORTS = /\/api\/reports/;
 import GlassCard from "./GlassCard";
 import UserAvatar from "./UserAvatar";
 
@@ -78,6 +83,13 @@ export default function AdminDashboard() {
 		}
 	}, []);
 
+	// When the background cache timer refreshes reports or flags data,
+	// re-fetch so the admin dashboard stays up-to-date automatically.
+	// Note: these calls must come AFTER the callback definitions above
+	// to avoid Temporal Dead Zone (TDZ) issues with the const declarations.
+	useCacheRefresh(MATCHER_REPORTS, () => fetchReports());
+	useCacheRefresh("/api/admin/flags", () => fetchFlags());
+
 	useEffect(() => {
 		if (activeTab === "reports") fetchReports();
 		if (activeTab === "flags") fetchFlags();
@@ -134,11 +146,11 @@ export default function AdminDashboard() {
 	];
 
 	return (
-		<div className="w-full px-1.5 pb-24 mt-2 sm:px-4 sm:pb-28 sm:mt-4">
+		<div className="w-full px-0 pb-24 mt-2 sm:px-4 sm:pb-28 sm:mt-4">
 			<div className="mb-6">
 				<div className="flex items-center gap-2 mb-1">
 					<Shield className="h-5 w-5 text-amber-400" />
-					<h2 className="text-xl font-bold text-zinc-100">Admin Dashboard</h2>
+					<h2 className="text-display-sm text-zinc-100">Admin Dashboard</h2>
 				</div>
 				<p className="text-xs text-zinc-500">Moderate content, manage users, and control feature flags.</p>
 			</div>
@@ -165,7 +177,7 @@ export default function AdminDashboard() {
 			{activeTab === "reports" && (
 				<div className="space-y-3 max-w-2xl">
 					<div className="flex items-center justify-between">
-						<h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+						<h3 className="text-label-sm font-semibold text-zinc-300">
 							Pending Reports ({reports.length})
 						</h3>
 						<button

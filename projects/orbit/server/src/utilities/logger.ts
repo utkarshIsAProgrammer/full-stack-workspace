@@ -29,9 +29,24 @@ if (env === "production" && logDir) {
   }
 }
 
+// ─── Logtail / Better Stack (Cloud Log Management) ────────────────
+// Sends JSON logs to Better Stack's HTTPS endpoint for production debugging.
+// Only active when LOGTAIL_SOURCE_TOKEN is set in the environment.
+const LOGTAIL_TOKEN = process.env.LOGTAIL_SOURCE_TOKEN || "";
+
 // ─── Transports ────────────────────────────────────────────────────
 
 const transports: winston.transport[] = [
+  // Logtail cloud transport — logs sent via HTTPS to Better Stack's ingest endpoint
+  ...(env === "production" && LOGTAIL_TOKEN
+    ? [new winston.transports.Http({
+        host: "in.logtail.com",
+        path: `/${LOGTAIL_TOKEN}`,
+        ssl: true,
+        format: winston.format.json(),
+      })]
+    : []),
+
   // Console transport — always active for container/PM2 logging
   new winston.transports.Console({
     level: logLevel,

@@ -396,11 +396,6 @@ export default function GlanceViewer({
 			});
 			onDeleteGlance?.(currentGlance._id);
 			handleClose();
-			window.dispatchEvent(
-				new CustomEvent("showToast", {
-					detail: { message: "Glance deleted.", type: "success" },
-				})
-			);
 		} catch (err) {
 			logger.error("Failed to delete glance", err);
 			window.dispatchEvent(
@@ -419,11 +414,6 @@ export default function GlanceViewer({
 			navigator.share({ url }).catch(() => {});
 		} else {
 			navigator.clipboard?.writeText(url).catch(() => {});
-			window.dispatchEvent(
-				new CustomEvent("showToast", {
-					detail: { message: "Link copied!", type: "success" },
-				})
-			);
 		}
 	}, [currentGlance]);
 
@@ -437,11 +427,6 @@ export default function GlanceViewer({
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ text: replyText.trim() }),
 			});
-			window.dispatchEvent(
-				new CustomEvent("showToast", {
-					detail: { message: "Reply sent! Check your messages.", type: "success" },
-				})
-			);
 			setShowReplyInput(false);
 			setReplyText("");
 			handleClose();
@@ -531,7 +516,10 @@ export default function GlanceViewer({
 			if (e.key === "ArrowLeft") {
 				if (currentIndex > 0) setCurrentIndex((prev) => prev - 1);
 			}
+			// Skip space/toggle if user is typing in an input or textarea
 			if (e.key === " ") {
+				const tag = (e.target as HTMLElement)?.tagName;
+				if (tag === "INPUT" || tag === "TEXTAREA") return;
 				e.preventDefault();
 				if (currentGlance?.mediaType === "video") {
 					if (videoRef.current) {

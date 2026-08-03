@@ -120,7 +120,7 @@ export const reviewReport = async (
 
     if (status) report.status = status;
     if (action) report.action = action;
-    report.reviewedBy = currentUserId;
+    report.reviewedBy = currentUserId as any;
     report.reviewedAt = new Date();
 
     await report.save();

@@ -1543,48 +1543,7 @@ Comment/Like/Save → Chat → Create Community → Share Glimpses → Track Str
 
 ---
 
-## 19. AUDIO ROOMS
-
-### Workflow
-```
-1. Browse live rooms (GET /rooms/live)
-2. Create room (POST /rooms)
-3. Join room (POST /rooms/:roomId/join)
-4. Leave room (POST /rooms/:roomId/leave)
-```
-
-### Endpoints
-
-#### GET /api/rooms/live
-**Description:** Get all live audio rooms
-
-#### GET /api/rooms/:roomId
-**Description:** Get room details
-
-#### POST /api/rooms
-**Description:** Create an audio room
-
-**Request Body:**
-```json
-{
-  "title": "Tech Talk",
-  "description": "Discussing latest tech trends",
-  "isPrivate": false
-}
-```
-
-#### POST /api/rooms/:roomId/join
-**Description:** Join an audio room
-
-#### POST /api/rooms/:roomId/leave
-**Description:** Leave an audio room
-
-#### POST /api/rooms/:roomId/invite/:userId
-**Description:** Invite a user to the room
-
----
-
-## 20. BLOCK & MUTE
+## 19. BLOCK & MUTE
 
 ### Endpoints
 
@@ -1608,7 +1567,7 @@ Comment/Like/Save → Chat → Create Community → Share Glimpses → Track Str
 
 ---
 
-## 21. CLOSE FRIENDS
+## 20. CLOSE FRIENDS
 
 ### Endpoints
 
@@ -1626,7 +1585,7 @@ Comment/Like/Save → Chat → Create Community → Share Glimpses → Track Str
 
 ---
 
-## 22. INVITE SYSTEM
+## 21. INVITE SYSTEM
 
 ### Workflow
 ```
@@ -1652,7 +1611,7 @@ Comment/Like/Save → Chat → Create Community → Share Glimpses → Track Str
 
 ---
 
-## 23. REPORTS & MODERATION
+## 22. REPORTS & MODERATION
 
 ### Workflow
 ```
@@ -1702,7 +1661,7 @@ Comment/Like/Save → Chat → Create Community → Share Glimpses → Track Str
 
 ---
 
-## 24. ADMIN DASHBOARD
+## 23. ADMIN DASHBOARD
 
 ### Endpoints
 
@@ -1745,7 +1704,7 @@ Comment/Like/Save → Chat → Create Community → Share Glimpses → Track Str
 
 ---
 
-## 25. ARCHIVE
+## 24. ARCHIVE
 
 ### Endpoints
 
@@ -1760,7 +1719,7 @@ Comment/Like/Save → Chat → Create Community → Share Glimpses → Track Str
 
 ---
 
-## 26. LINK PREVIEW
+## 25. LINK PREVIEW
 
 ### Endpoints
 
@@ -1786,7 +1745,7 @@ Comment/Like/Save → Chat → Create Community → Share Glimpses → Track Str
 
 ---
 
-## 27. PUSH NOTIFICATIONS
+## 26. PUSH NOTIFICATIONS
 
 ### Endpoints
 
@@ -1812,7 +1771,7 @@ Comment/Like/Save → Chat → Create Community → Share Glimpses → Track Str
 
 ---
 
-## 28. TRANSLATION
+## 27. TRANSLATION
 
 ### Endpoints
 
@@ -1839,7 +1798,7 @@ Comment/Like/Save → Chat → Create Community → Share Glimpses → Track Str
 
 ---
 
-## 29. FOLLOW REQUESTS (Private Accounts)
+## 28. FOLLOW REQUESTS (Private Accounts)
 
 ### Workflow
 ```

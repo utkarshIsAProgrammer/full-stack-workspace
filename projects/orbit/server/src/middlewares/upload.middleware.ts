@@ -146,14 +146,22 @@ const uploadPostImages = multer({
   },
 });
 
+// Blocked file extensions for security — executable/script formats that
+// browsers can't render and that pose malware risks if downloaded by users.
+const BLOCKED_EXTENSIONS = new RegExp(
+  "\\.(exe|sh|bat|cmd|jar|msi|scr|vbs|ps1|com|dll|bin|applescript|hta|py[co]?|pl)",
+  "i",
+);
+
 const chatFileFilter = (req: any, file: any, cb: any) => {
-  const allowedPrefixes = ["image/", "audio/", "video/", "application/pdf", "text/plain"];
-  const isAllowed = allowedPrefixes.some((prefix) => file.mimetype.startsWith(prefix));
-
-  if (!isAllowed) {
-    return cb(new Error("File type not allowed in chat! Only images, audio, video, PDF, and text documents are permitted."), false);
+  // Block high-risk executable/script file extensions
+  if (BLOCKED_EXTENSIONS.test(file.originalname)) {
+    return cb(
+      new Error("Executable and script files are not allowed for security reasons."),
+      false,
+    );
   }
-
+  // Accept all other file types
   cb(null, true);
 };
 
@@ -161,8 +169,8 @@ const uploadChatMedia = multer({
   storage: multer.memoryStorage(),
   fileFilter: chatFileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
-    files: 5, // max 5 files
+    fileSize: 50 * 1024 * 1024, // 50MB limit for all file types
+    files: 10, // max 10 files
   },
 });
 

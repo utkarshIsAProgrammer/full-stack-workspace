@@ -46,6 +46,25 @@ const communitySchema = new mongoose.Schema(
         ref: "CommunityMessage",
       },
     ],
+    // Admin features
+    admins: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+    messagingEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    audioCallEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    videoCallEnabled: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );

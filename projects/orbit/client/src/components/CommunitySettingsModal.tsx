@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Hash, Loader2, Camera, Settings, Trash2 } from "lucide-react";
+import { X, Hash, Loader2, Camera, Settings, Trash2, MessageSquare, Phone, Video } from "lucide-react";
 import ImageCropModal from "./ImageCropModal";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
@@ -172,7 +172,7 @@ export default function CommunitySettingsModal({
             <div className="flex items-center justify-between p-4 border-b border-zinc-800/50">
               <div className="flex items-center gap-2">
                 <Settings className="h-4 w-4 text-zinc-400" />
-                <h2 className="text-sm font-bold text-white">Community Settings</h2>
+                <h2 className="text-label text-lg font-semibold text-white">Community Settings</h2>
               </div>
               <button
                 onClick={onClose}
@@ -183,6 +183,159 @@ export default function CommunitySettingsModal({
             </div>
 
             <form onSubmit={handleSubmit} className="p-4 space-y-4">
+              {/* Admin controls — shown at top for the creator */}
+              {community.creator?._id && (
+                <div className="space-y-3 pb-4 border-b border-zinc-800/50">
+                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                    Admin Controls
+                  </p>
+
+                  {/* Messaging toggle */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <MessageSquare className="h-4 w-4 text-zinc-400" />
+                      <div>
+                        <p className="text-xs font-semibold text-zinc-200">Messaging</p>
+                        <p className="text-[10px] text-zinc-500">
+                          {community.messagingEnabled !== false
+                            ? "Members can send messages"
+                            : "Messaging is disabled"}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const res = await apiFetch(
+                            `/api/communities/${community._id}/toggle-messaging`,
+                            { method: "POST" }
+                          );
+                          const data = await res.json();
+                          if (res.ok && data.success) {
+                            onUpdated({
+                              ...community,
+                              messagingEnabled: data.messagingEnabled,
+                            } as Community);
+                          }
+                        } catch (err: any) {
+                          logger.error("Failed to toggle messaging", err);
+                        }
+                      }}
+                      className={`relative h-6 w-11 rounded-full transition-all cursor-pointer ${
+                        community.messagingEnabled !== false
+                          ? "bg-green-500"
+                          : "bg-zinc-700"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                          community.messagingEnabled !== false
+                            ? "left-[22px]"
+                            : "left-0.5"
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Audio calls toggle */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <Phone className="h-4 w-4 text-zinc-400" />
+                      <div>
+                        <p className="text-xs font-semibold text-zinc-200">Audio Calls</p>
+                        <p className="text-[10px] text-zinc-500">
+                          {community.audioCallEnabled
+                            ? "Members can start audio calls"
+                            : "Audio calls disabled"}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const res = await apiFetch(
+                            `/api/communities/${community._id}/toggle-audio-calls`,
+                            { method: "POST" }
+                          );
+                          const data = await res.json();
+                          if (res.ok && data.success) {
+                            onUpdated({
+                              ...community,
+                              audioCallEnabled: data.audioCallEnabled,
+                            } as Community);
+                          }
+                        } catch (err: any) {
+                          logger.error("Failed to toggle audio calls", err);
+                        }
+                      }}
+                      className={`relative h-6 w-11 rounded-full transition-all cursor-pointer ${
+                        community.audioCallEnabled
+                          ? "bg-green-500"
+                          : "bg-zinc-700"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                          community.audioCallEnabled
+                            ? "left-[22px]"
+                            : "left-0.5"
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Video calls toggle */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <Video className="h-4 w-4 text-zinc-400" />
+                      <div>
+                        <p className="text-xs font-semibold text-zinc-200">Video Calls</p>
+                        <p className="text-[10px] text-zinc-500">
+                          {community.videoCallEnabled
+                            ? "Members can start video calls"
+                            : "Video calls disabled"}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const res = await apiFetch(
+                            `/api/communities/${community._id}/toggle-video-calls`,
+                            { method: "POST" }
+                          );
+                          const data = await res.json();
+                          if (res.ok && data.success) {
+                            onUpdated({
+                              ...community,
+                              videoCallEnabled: data.videoCallEnabled,
+                            } as Community);
+                          }
+                        } catch (err: any) {
+                          logger.error("Failed to toggle video calls", err);
+                        }
+                      }}
+                      className={`relative h-6 w-11 rounded-full transition-all cursor-pointer ${
+                        community.videoCallEnabled
+                          ? "bg-green-500"
+                          : "bg-zinc-700"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                          community.videoCallEnabled
+                            ? "left-[22px]"
+                            : "left-0.5"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Image picker */}
               <div className="flex justify-center">
                 <div className="relative group">
@@ -233,7 +386,7 @@ export default function CommunitySettingsModal({
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. Design Lovers"
                   maxLength={50}
-                  className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all"
+                  className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all"
                   autoFocus
                 />
                 <p className="text-[10px] text-zinc-600 mt-1 text-right">
@@ -251,7 +404,7 @@ export default function CommunitySettingsModal({
                   placeholder="What's this community about?"
                   maxLength={500}
                   rows={3}
-                  className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all resize-none"
+                  className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all resize-none"
                 />
                 <p className="text-[10px] text-zinc-600 mt-1 text-right">
                   {description.length}/500
@@ -275,7 +428,7 @@ export default function CommunitySettingsModal({
                 <button
                   type="submit"
                   disabled={loading || !name.trim()}
-                  className="flex-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-600 py-2.5 text-xs font-bold text-white transition-all cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="flex-1 rounded-xl bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 py-2.5 text-xs font-bold text-black transition-all cursor-pointer disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {loading ? (
                     <>

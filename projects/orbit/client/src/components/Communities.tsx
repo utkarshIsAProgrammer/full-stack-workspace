@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Hash,
   Users,
   Plus,
   ArrowLeft,
+  ArrowRight,
   Send,
   Image,
   CornerDownLeft,
@@ -16,15 +18,36 @@ import {
   AlertCircle,
   Pin,
   PinOff,
-  Settings,
+  Search,
+  Copy,
+  Share2,
+  Mic,
+  Play,
+  Pause,
+  ChevronDown,
+  Phone,
+  Video,
 } from "lucide-react";
-import type { Community, CommunityMessage } from "../types";
+import type { Community, CommunityMessage, Conversation } from "../types";
 import { apiFetch } from "../utils/api";
+import { getCachedResponse, evictCachedResponse } from "../utils/apiCache";
+import { useCacheRefresh } from "../hooks/useCacheRefresh";
 import { logger } from "../utils/logger";
+
+// Stable RegExp for matching community cache refresh events
+// — module-level to prevent React effect re-attachment on every render.
+const MATCHER_COMMUNITIES = /\/api\/communities/;
 import MessageBubble from "./MessageBubble";
+import GlassCard from "./GlassCard";
+import ChatGallery from "./ChatGallery";
 import CreateCommunityModal from "./CreateCommunityModal";
-import CommunitySettingsModal from "./CommunitySettingsModal";
+import CommunitySettingsPage from "./CommunitySettingsPage";
+import CommunityProfileOverlay from "./CommunityProfileOverlay";
 import ConfirmDialog from "./ConfirmDialog";
+import ImageCropModal from "./ImageCropModal";
+import GroupCallFloor from "./GroupCallFloor";
+
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB — matches uploadChatMedia backend limit
 
 interface CommunitiesProps {
   user: {
@@ -34,11 +57,13 @@ interface CommunitiesProps {
     profilePic?: { url: string; public_id?: string };
   };
   socket: any;
+  onUserSelected?: (username: string) => void;
+  onCommunityChatChange?: (isOpen: boolean) => void;
 }
 
-export default function Communities({ user, socket }: CommunitiesProps) {
+export default function Communities({ user, socket, onUserSelected, onCommunityChatChange }: CommunitiesProps) {
   const userId = user._id;
-  const [view, setView] = useState<"list" | "chat">("list");
+  const [view, setView] = useState<"list" | "chat" | "profile" | "settings">("list");
   const [selectedCommunity, setSelectedCommunity] = useState<Community | null>(null);
   const [myCommunities, setMyCommunities] = useState<Community[]>([]);
   const [allCommunities, setAllCommunities] = useState<Community[]>([]);
@@ -65,20 +90,90 @@ export default function Communities({ user, socket }: CommunitiesProps) {
   } | null>(null);
   const [sendingError, setSendingError] = useState<string | null>(null);
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
+  const [confirmClearForMeOpen, setConfirmClearForMeOpen] = useState(false);
+
+  // Voice note retry infrastructure (matching personal Chat.tsx)
+  const activeUploadsRef = useRef<Record<string, AbortController>>({});
+  const unsentPayloadsRef = useRef<Record<
+    string,
+    { type: "voice_note"; blob: Blob; url: string; duration: number; replyToId?: string }
+  >>({});
+
+  // Voice note recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [isPlayingPreview, setIsPlayingPreview] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const shouldSendAfterRecordRef = useRef(false);
+  const recordingDurationRef = useRef(0);
+  const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
   const [leavingCommunity, setLeavingCommunity] = useState(false);
   const [joiningCommunities, setJoiningCommunities] = useState<Set<string>>(new Set());
   const [pinnedMessages, setPinnedMessages] = useState<CommunityMessage[]>([]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [showMembers, setShowMembers] = useState(false);
-  const [memberList, setMemberList] = useState<
-    { user: { _id: string; username: string; fullName: string; profilePic?: { url: string; public_id?: string } }; joinedAt: string }[]
-  >([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showMessageSearch, setShowMessageSearch] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<CommunityMessage[]>([]);
+  const [searchingMessages, setSearchingMessages] = useState(false);
+
+
+  // Group call state (LiveKit)
+  const [showGroupCall, setShowGroupCall] = useState(false);
+  const [groupCallToken, setGroupCallToken] = useState<string | null>(null);
+  const [groupCallRoomName, setGroupCallRoomName] = useState<string>("");
+  const [groupCallUrl, setGroupCallUrl] = useState<string>("");
+  const [groupCallType, setGroupCallType] = useState<"audio" | "video">("video");
+  const [startingCall, setStartingCall] = useState(false);
+  // Active call announced by another member of the currently-open community
+  const [activeCommunityCall, setActiveCommunityCall] = useState<{
+    roomName: string;
+    type: "audio" | "video";
+    startedBy: string;
+  } | null>(null);
+
+  // Forward modal state
+  const [forwardModal, setForwardModal] = useState<{
+    message: CommunityMessage;
+  } | null>(null);
+  const [selectedForwardConvIds, setSelectedForwardConvIds] = useState<string[]>([]);
+  const [forwardConversations, setForwardConversations] = useState<Conversation[]>([]);
+  const [loadingForwardConvs, setLoadingForwardConvs] = useState(false);
+  const [, setOnlineUsers] = useState<Set<string>>(new Set());
+  const onlineUsersRef = useRef<Set<string>>(new Set());
+
+
+
+  // Camera capture state
+  const [showCamera, setShowCamera] = useState(false);
+  const cameraVideoRef = useRef<HTMLVideoElement>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+
+  // Image crop state
+	// Drag-and-drop state
+	const [isDragActive, setIsDragActive] = useState(false);
+
+  const [cropModalOpen, setCropModalOpen] = useState(false);
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
+  const [cropQueueFiles, setCropQueueFiles] = useState<{ file: File; preview: string }[]>([]);
+  const cropPendingQueueRef = useRef<{ file: File; preview: string }[]>([]);
+
+  // Scroll to bottom
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 614);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const messageSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ─── Fetch communities ─────────────────────────────────────────
   const fetchMyCommunities = useCallback(async () => {
@@ -105,6 +200,29 @@ export default function Communities({ user, socket }: CommunitiesProps) {
     }
   }, []);
 
+  // Cache-first: display cached community list instantly
+  useEffect(() => {
+    (async () => {
+      try {
+        const [cachedMine, cachedAll] = await Promise.all([
+          getCachedResponse<{ communities: Community[] }>("/api/communities/mine"),
+          getCachedResponse<{ communities: Community[] }>("/api/communities?limit=50"),
+        ]);
+        if (cachedMine?.communities?.length || cachedAll?.communities?.length) {
+          if (cachedMine?.communities?.length) {
+            setMyCommunities(cachedMine.communities);
+          }
+          if (cachedAll?.communities?.length) {
+            setAllCommunities(cachedAll.communities);
+          }
+          setLoading(false);
+        }
+      } catch {
+        // Cache miss or error — fall through to network fetch
+      }
+    })();
+  }, []);
+
   useEffect(() => {
     setLoading(true);
     Promise.all([fetchMyCommunities(), fetchAllCommunities()]).finally(() =>
@@ -112,17 +230,13 @@ export default function Communities({ user, socket }: CommunitiesProps) {
     );
   }, [fetchMyCommunities, fetchAllCommunities]);
 
-  // ─── Fetch community members ─────────────────────────────────
-  const fetchMembers = useCallback(async (communityId: string) => {
-    try {
-      const res = await apiFetch(`/api/communities/${communityId}/members`);
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setMemberList(data.members || []);
-      }
-    } catch (err) {
-      logger.error("Failed to fetch community members", err);
-    }
+  // ─── Mobile detection ────────────────────────────────────────
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 614);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   // ─── Fetch pinned messages ────────────────────────────────────
@@ -141,6 +255,13 @@ export default function Communities({ user, socket }: CommunitiesProps) {
   }, []);
 
   // ─── Fetch messages for selected community ─────────────────────
+  // When the background cache timer refreshes community data, re-fetch
+  // so the list stays up-to-date without manual refresh.
+  useCacheRefresh(MATCHER_COMMUNITIES, () => {
+    fetchMyCommunities();
+    fetchAllCommunities();
+  });
+
   const fetchMessages = useCallback(
     async (communityId: string, cursorVal?: string | null) => {
       setLoadingMessages(true);
@@ -178,14 +299,36 @@ export default function Communities({ user, socket }: CommunitiesProps) {
       setReplyTo(null);
       setEditingMessage(null);
       setPinnedMessages([]);
-      setShowMembers(false);
-      setMemberList([]);
+      setShowMessageSearch(false);
+      setMessageSearchQuery("");
+      setSearchResults([]);
+      // Cache-first: display cached messages instantly
+      (async () => {
+        try {
+          const cached = await getCachedResponse<{ messages: CommunityMessage[]; hasMore: boolean; nextCursor: string | null }>(
+            `/api/communities/${community._id}/messages?limit=30`
+          );
+          if (cached?.messages?.length) {
+            setMessages(cached.messages);
+            setHasMore(cached.hasMore);
+            setCursor(cached.nextCursor);
+            setLoadingMessages(false);
+          }
+        } catch {
+          // Cache miss — fall through to network fetch
+        }
+      })();
       fetchMessages(community._id);
       fetchPinnedMessages(community._id);
-      fetchMembers(community._id);
     },
-    [fetchMessages, fetchPinnedMessages, fetchMembers]
+    [fetchMessages, fetchPinnedMessages]
   );
+
+  // ─── Notify parent when a community chat is opened/closed ─────
+  useEffect(() => {
+    onCommunityChatChange?.(selectedCommunity !== null);
+    return () => onCommunityChatChange?.(false);
+  }, [selectedCommunity, onCommunityChatChange]);
 
   // ─── Socket events ─────────────────────────────────────────────
   useEffect(() => {
@@ -195,10 +338,36 @@ export default function Communities({ user, socket }: CommunitiesProps) {
 
     // Join the community room
     socket.emit("community:join", { communityId });
+    // Mark messages as seen when opening the chat
+    socket.emit("community:seen", { communityId });
+
+    // Listen for seen updates (other members reading messages)
+    const handleSeenUpdate = (data: {
+      communityId: string;
+      messageIds: string[];
+      seenByUserId: string;
+    }) => {
+      if (data.communityId === communityId) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            data.messageIds.includes(m._id)
+              ? {
+                  ...m,
+                  seenBy: [...(m.seenBy || []), data.seenByUserId as any],
+                }
+              : m
+          )
+        );
+      }
+    };
 
     const handleNewMessage = (message: CommunityMessage) => {
       if (message.community === communityId) {
-        setMessages((prev) => [...prev, message]);
+        // Dedup: don't add messages that already exist (prevents voice note optimistic dupes)
+        setMessages((prev) => {
+          if (prev.some((m) => m._id === message._id)) return prev;
+          return [...prev, message];
+        });
         setTimeout(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
         }, 50);
@@ -220,6 +389,31 @@ export default function Communities({ user, socket }: CommunitiesProps) {
         prev.map((m) =>
           m._id === messageId
             ? { ...m, isDeleted: true, text: "This message was deleted", attachments: [] }
+            : m
+        )
+      );
+    };
+
+    // Realtime delete-for-me: only the deleting user renders the placeholder;
+    // other members keep seeing the original message.
+    const handleDeleteForMeSocket = ({
+      messageId,
+      deletedByUserId,
+    }: {
+      messageId: string;
+      deletedByUserId: string;
+    }) => {
+      if (deletedByUserId !== userId) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m._id === messageId
+            ? {
+                ...m,
+                isDeleted: true,
+                text: "This message was deleted",
+                attachments: [],
+                deletedFor: [...(m.deletedFor || []), deletedByUserId],
+              }
             : m
         )
       );
@@ -268,20 +462,76 @@ export default function Communities({ user, socket }: CommunitiesProps) {
     socket.on("community:message:new", handleNewMessage);
     socket.on("community:message:edit", handleEditMessage);
     socket.on("community:message:delete", handleDeleteMessage);
+    socket.on("community:message:delete-for-me", handleDeleteForMeSocket);
     socket.on("community:message:reaction", handleReaction);
     socket.on("community:message:pinned", handlePinUpdate);
     socket.on("community:message:unpinned", handlePinUpdate);
     socket.on("community:typing", handleTyping);
+    socket.on("community:seen-update", handleSeenUpdate);
+
+    // Handle presence sync for community members (green dots)
+    const handlePresenceSync = (data: { communityId: string; onlineUserIds: string[] }) => {
+      if (data.communityId === communityId) {
+        const newSet = new Set(data.onlineUserIds);
+        onlineUsersRef.current = newSet;
+        setOnlineUsers(newSet);
+      }
+    };
+    socket.on("community:presence:sync", handlePresenceSync);
+
+    // Handle group call announcements from other members
+    const handleCallStarted = (data: {
+      communityId: string;
+      roomName: string;
+      type: "audio" | "video";
+      startedBy: string;
+    }) => {
+      if (data.communityId !== communityId) return;
+      if (data.startedBy === userId) return; // own call already tracked
+      setActiveCommunityCall({
+        roomName: data.roomName,
+        type: data.type,
+        startedBy: data.startedBy,
+      });
+      window.dispatchEvent(
+        new CustomEvent("showToast", {
+          detail: {
+            message:
+              data.type === "video"
+                ? "A member started a group video call — tap to join!"
+                : "A member started a group audio call — tap to join!",
+            type: "success",
+          },
+        }),
+      );
+    };
+    const handleCallEnded = (data: { communityId: string }) => {
+      if (data.communityId !== communityId) return;
+      setActiveCommunityCall(null);
+    };
+    socket.on("community:call-started", handleCallStarted);
+    socket.on("community:call-ended", handleCallEnded);
+
+    // Ask the server whether a call is already live (e.g. page reload mid-call)
+    socket.emit("community:call-status", { communityId });
 
     return () => {
       socket.emit("community:leave", { communityId });
       socket.off("community:message:new", handleNewMessage);
       socket.off("community:message:edit", handleEditMessage);
       socket.off("community:message:delete", handleDeleteMessage);
+      socket.off("community:message:delete-for-me", handleDeleteForMeSocket);
       socket.off("community:message:reaction", handleReaction);
       socket.off("community:message:pinned", handlePinUpdate);
       socket.off("community:message:unpinned", handlePinUpdate);
       socket.off("community:typing", handleTyping);
+      socket.off("community:seen-update", handleSeenUpdate);
+      socket.off("community:presence:sync", handlePresenceSync);
+      socket.off("community:call-started", handleCallStarted);
+      socket.off("community:call-ended", handleCallEnded);
+      // Reset the active-call banner when leaving/switching communities so
+      // community A's call banner doesn't linger while browsing community B.
+      setActiveCommunityCall(null);
     };
   }, [socket, selectedCommunity, userId]);
 
@@ -339,11 +589,66 @@ export default function Communities({ user, socket }: CommunitiesProps) {
     socket.on("community:updated", handleCommunityUpdate);
     socket.on("community:deleted", handleCommunityDeletedEvent);
 
+    // Listen for messaging/calls toggle events
+    socket.on("community:messaging-toggled", (data: { communityId: string; messagingEnabled: boolean }) => {
+      setSelectedCommunity((prev) =>
+        prev?._id === data.communityId
+          ? { ...prev, messagingEnabled: data.messagingEnabled }
+          : prev
+      );
+      setMyCommunities((prev) =>
+        prev.map((c) =>
+          c._id === data.communityId ? { ...c, messagingEnabled: data.messagingEnabled } : c
+        )
+      );
+      setAllCommunities((prev) =>
+        prev.map((c) =>
+          c._id === data.communityId ? { ...c, messagingEnabled: data.messagingEnabled } : c
+        )
+      );
+    });
+
+    socket.on("community:calls-toggled", (data: { communityId: string; audioCallEnabled?: boolean; videoCallEnabled?: boolean }) => {
+      setSelectedCommunity((prev) =>
+        prev?._id === data.communityId
+          ? { ...prev, audioCallEnabled: data.audioCallEnabled ?? prev?.audioCallEnabled, videoCallEnabled: data.videoCallEnabled ?? prev?.videoCallEnabled }
+          : prev
+      );
+      setMyCommunities((prev) =>
+        prev.map((c) =>
+          c._id === data.communityId ? { ...c, audioCallEnabled: data.audioCallEnabled ?? c.audioCallEnabled, videoCallEnabled: data.videoCallEnabled ?? c.videoCallEnabled } : c
+        )
+      );
+      setAllCommunities((prev) =>
+        prev.map((c) =>
+          c._id === data.communityId ? { ...c, audioCallEnabled: data.audioCallEnabled ?? c.audioCallEnabled, videoCallEnabled: data.videoCallEnabled ?? c.videoCallEnabled } : c
+        )
+      );
+    });
+
+    // ─── Track online users via presence events ─────
+    const handlePresence = ({
+      userId: presenceUserId,
+      status,
+    }: {
+      userId: string;
+      status: "online" | "offline";
+    }) => {
+      if (status === "online") {
+        onlineUsersRef.current.add(presenceUserId);
+      } else {
+        onlineUsersRef.current.delete(presenceUserId);
+      }
+      setOnlineUsers(new Set(onlineUsersRef.current));
+    };
+    socket.on("user:presence", handlePresence);
+
     return () => {
       socket.off("community:member-joined", handleMemberUpdate);
       socket.off("community:member-left", handleMemberUpdate);
       socket.off("community:updated", handleCommunityUpdate);
       socket.off("community:deleted", handleCommunityDeletedEvent);
+      socket.off("user:presence", handlePresence);
     };
   }, [socket]);
 
@@ -360,13 +665,31 @@ export default function Communities({ user, socket }: CommunitiesProps) {
     };
   }, [socket, myCommunities]);
 
+  // Inject waveform animation keyframes
+  useEffect(() => {
+    const styleId = "community-waveform-style";
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement("style");
+      style.id = styleId;
+      style.textContent = `
+        @keyframes waveform {
+          0% { transform: scaleY(0.4); }
+          100% { transform: scaleY(1); }
+        }
+        .waveform-bar {
+          transform-origin: center bottom;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+  }, []);
+
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     if (view === "chat") {
       messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
     }
   }, [view]);
-
   // ─── Typing indicator ──────────────────────────────────────────
   const emitTyping = useCallback(
     (isTyping: boolean) => {
@@ -394,14 +717,344 @@ export default function Communities({ user, socket }: CommunitiesProps) {
     }
   };
 
+  // ─── Voice Note Recording ─────────────────────────────────────────
+  const getAudioMimeType = (): { mimeType: string; extension: string } => {
+    const candidates = [
+      { mimeType: "audio/webm;codecs=opus", extension: "webm" },
+      { mimeType: "audio/webm", extension: "webm" },
+      { mimeType: "audio/mp4;codecs=mp4a.40.2", extension: "mp4" },
+      { mimeType: "audio/mp4", extension: "mp4" },
+      { mimeType: "audio/aac", extension: "aac" },
+      { mimeType: "audio/ogg;codecs=opus", extension: "ogg" },
+      { mimeType: "audio/wav", extension: "wav" },
+    ];
+    for (const c of candidates) {
+      if (MediaRecorder.isTypeSupported(c.mimeType)) {
+        return c;
+      }
+    }
+    return { mimeType: "", extension: "webm" };
+  };
+
+  const handlePauseRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.pause();
+      setIsPaused(true);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    }
+  };
+
+  const handleResumeRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "paused") {
+      mediaRecorderRef.current.resume();
+      setIsPaused(false);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => {
+          const next = prev + 1;
+          recordingDurationRef.current = next;
+          return next;
+        });
+      }, 1000);
+    }
+  };
+
+  const handleMicToggle = async () => {
+    if (isRecording) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      setIsRecording(false);
+      setIsPaused(false);
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            sampleRate: 48000,
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        recordingStreamRef.current = stream;
+        audioChunksRef.current = [];
+        setRecordingDuration(0);
+
+        const { mimeType } = getAudioMimeType();
+        const recorderOptions: any = { audioBitsPerSecond: 128000 };
+        if (mimeType) {
+          recorderOptions.mimeType = mimeType;
+        }
+
+        const recorder = new MediaRecorder(stream, recorderOptions);
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            audioChunksRef.current.push(e.data);
+          }
+        };
+
+        recorder.onstop = () => {
+          const actualMimeType = mimeType || recorder.mimeType || "audio/webm";
+          const blob = new Blob(audioChunksRef.current, { type: actualMimeType });
+          stream.getTracks().forEach((track) => track.stop());
+
+          if (shouldSendAfterRecordRef.current) {
+            shouldSendAfterRecordRef.current = false;
+            handleSendVoiceNote(blob, recordingDurationRef.current);
+          } else {
+            setRecordedBlob(blob);
+            setRecordedUrl(URL.createObjectURL(blob));
+          }
+        };
+
+        mediaRecorderRef.current = recorder;
+        recorder.start();
+        setIsRecording(true);
+        setIsPaused(false);
+
+        recordingDurationRef.current = 0;
+        recordingTimerRef.current = setInterval(() => {
+          setRecordingDuration((prev) => {
+            const next = prev + 1;
+            recordingDurationRef.current = next;
+            return next;
+          });
+        }, 1000);
+      } catch (err) {
+        logger.error("Failed to start recording", err);
+        window.dispatchEvent(
+          new CustomEvent("showToast", {
+            detail: {
+              message: "Microphone access denied. Please allow microphone permissions.",
+              type: "error",
+            },
+          })
+        );
+      }
+    }
+  };
+
+  const handleMicClick = (_e: React.MouseEvent) => {
+    handleMicToggle();
+  };
+
+  const handleSendVoiceNote = async (overrideBlob?: Blob, overrideDuration?: number) => {
+    const targetBlob = overrideBlob || recordedBlob;
+    const targetUrl = overrideBlob ? URL.createObjectURL(overrideBlob) : recordedUrl;
+    const targetDuration = overrideDuration !== undefined ? overrideDuration : recordingDuration;
+
+    if (!selectedCommunity || !targetBlob || !targetUrl) return;
+
+    const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Snapshot replyTo BEFORE clearing state
+    const replyToSnapshot = replyTo ? { ...replyTo } : null;
+
+    const optimisticMessage: any = {
+      _id: pendingId,
+      _pending: true,
+      community: selectedCommunity._id,
+      sender: {
+        _id: user._id,
+        username: user.username,
+        fullName: user.fullName,
+        profilePic: user.profilePic,
+      },
+      text: "",
+      replyTo: replyToSnapshot
+        ? {
+            _id: replyToSnapshot._id,
+            sender: replyToSnapshot.sender,
+            text: replyToSnapshot.text,
+            attachments: replyToSnapshot.attachments,
+            createdAt: replyToSnapshot.createdAt,
+          }
+        : null,
+      attachments: [
+        {
+          url: targetUrl,
+          type: "voice_note",
+          duration: targetDuration,
+        },
+      ],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Save payload for retry before clearing UI
+    unsentPayloadsRef.current[pendingId] = {
+      type: "voice_note",
+      blob: targetBlob,
+      url: targetUrl,
+      duration: targetDuration,
+      replyToId: replyToSnapshot?._id,
+    };
+
+    const controller = new AbortController();
+    activeUploadsRef.current[pendingId] = controller;
+
+    setMessages((prev) => [...prev, optimisticMessage]);
+    setSending(true);
+
+    // Clear recording UI immediately
+    setRecordedBlob(null);
+    setRecordedUrl(null);
+    setRecordingDuration(0);
+    setIsPlayingPreview(false);
+    setReplyTo(null);
+
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, 50);
+
+    try {
+      const formData = new FormData();
+      formData.append("text", "");
+      const blobMime = targetBlob.type || "audio/webm";
+      const ext =
+        blobMime.includes("mp4") || blobMime.includes("aac")
+          ? "mp4"
+          : blobMime.includes("ogg")
+            ? "ogg"
+            : blobMime.includes("wav")
+              ? "wav"
+              : "webm";
+      const audioFile = new File([targetBlob], `voice-${Date.now()}.${ext}`, { type: blobMime });
+      formData.append("files", audioFile);
+      formData.append("duration", String(targetDuration));
+
+      if (replyToSnapshot) {
+        formData.append("replyTo", replyToSnapshot._id);
+      }
+
+      const res = await apiFetch(`/api/communities/${selectedCommunity._id}/messages`, {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        delete unsentPayloadsRef.current[pendingId];
+        delete activeUploadsRef.current[pendingId];
+        setMessages((prev) =>
+          prev.map((m) => (m._id === pendingId ? (data.sentMessage || data.message || data.editedMessage) : m))
+        );
+      } else {
+        setMessages((prev) =>
+          prev.map((m) => (m._id === pendingId ? { ...m, _pending: false, _failed: true } : m))
+        );
+        logger.error("Voice note send failed", data?.message);
+      }
+    } catch (err: any) {
+      if (err.name === "AbortError") {
+        logger.info("Voice note upload aborted by user");
+        return;
+      }
+      logger.error("Failed to send voice note", err);
+      setMessages((prev) =>
+        prev.map((m) => (m._id === pendingId ? { ...m, _pending: false, _failed: true } : m))
+      );
+    } finally {
+      setSending(false);
+    }
+  };
+
   // ─── File selection ────────────────────────────────────────────
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    const validFiles = files.filter((f) => f.type.startsWith("image/"));
-    const previews = validFiles.map((f) => URL.createObjectURL(f));
-    setSelectedFiles((prev) => [...prev, ...validFiles]);
-    setFilePreviews((prev) => [...prev, ...previews]);
+    if (files.length === 0) return;
+
+    // Enforce file count limit (max 5 total, matching backend route)
+    const maxAllowed = 5 - selectedFiles.length;
+    if (maxAllowed <= 0) {
+      window.dispatchEvent(
+        new CustomEvent("showToast", {
+          detail: { message: "Maximum 5 files allowed.", type: "error" },
+        }),
+      );
+      if (e.target) e.target.value = "";
+      return;
+    }
+    const validFiles = files.slice(0, maxAllowed);
+
+    // Filter out oversized files (50MB per file limit matching backend)
+    const oversized = validFiles.filter((f) => f.size > MAX_FILE_SIZE);
+    oversized.forEach((f) => {
+      window.dispatchEvent(
+        new CustomEvent("showToast", {
+          detail: { message: `"${f.name}" exceeds the 50MB size limit.`, type: "error" },
+        }),
+      );
+    });
+    const okFiles = validFiles.filter((f) => f.size <= MAX_FILE_SIZE);
+    if (okFiles.length === 0) {
+      if (e.target) e.target.value = "";
+      return;
+    }
+
+    const images: { file: File; preview: string }[] = [];
+    const otherFiles: File[] = [];
+
+    okFiles.forEach((f) => {
+      if (f.type.startsWith("image/")) {
+        images.push({ file: f, preview: URL.createObjectURL(f) });
+      } else if (f.type.startsWith("video/") || f.type.startsWith("audio/") || f.type.startsWith("application/") || f.type.startsWith("text/")) {
+        otherFiles.push(f);
+      }
+    });
+
+    if (images.length > 0) {
+      // Store images in the crop queue and open the crop modal for the first one
+      const queue = images.map((img) => ({ file: img.file, preview: img.preview }));
+      cropPendingQueueRef.current = queue;
+      setCropQueueFiles(queue);
+      setCropSrc(queue[0].preview);
+      setCropModalOpen(true);
+    }
+
+    if (otherFiles.length > 0) {
+      const previews = otherFiles.map((f) => URL.createObjectURL(f));
+      setSelectedFiles((prev) => [...prev, ...otherFiles]);
+      setFilePreviews((prev) => [...prev, ...previews]);
+    }
+
     if (e.target) e.target.value = "";
+  };
+
+  // Handle crop completion
+  const handleCropComplete = (croppedBlob: Blob) => {
+    const croppedFile = new File([croppedBlob], `cropped-${Date.now()}.jpg`, { type: "image/jpeg" });
+    const previewUrl = URL.createObjectURL(croppedBlob);
+
+    setSelectedFiles((prev) => [...prev, croppedFile]);
+    setFilePreviews((prev) => [...prev, previewUrl]);
+
+    // Advance to next queued image (the modal is about to close via ImageCropModal's internal onClose call)
+    // We schedule the next open AFTER the current frame so onClose doesn't clobber it
+    const remaining = cropQueueFiles.slice(1);
+    if (remaining.length > 0) {
+      cropPendingQueueRef.current = remaining;
+      setCropQueueFiles(remaining);
+      setCropSrc(remaining[0].preview);
+      // Open the modal on the next frame AFTER ImageCropModal calls onClose
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setCropModalOpen(true);
+        });
+      });
+    } else {
+      cropPendingQueueRef.current = [];
+      setCropQueueFiles([]);
+      setCropSrc(null);
+    }
   };
 
   const removeFile = (index: number) => {
@@ -418,23 +1071,127 @@ export default function Communities({ user, socket }: CommunitiesProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ─── Camera capture ─────────────────────────────────────────────
+  const handleCapturePhoto = () => {
+    const video = cameraVideoRef.current;
+    if (!video) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 1080;
+    canvas.height = video.videoHeight || 1920;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
+      const preview = URL.createObjectURL(blob);
+      setSelectedFiles((prev) => [...prev, file]);
+      setFilePreviews((prev) => [...prev, preview]);
+      handleCloseCamera();
+    }, "image/jpeg", 0.9);
+  };
+
+  const handleCloseCamera = () => {
+    setShowCamera(false);
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+      cameraStreamRef.current = null;
+    }
+    if (cameraVideoRef.current) {
+      cameraVideoRef.current.srcObject = null;
+    }
+  };
+
   // ─── Send message ──────────────────────────────────────────────
   const handleSendMessage = async () => {
+    // If currently recording, stop and send the voice note instead
+    if (isRecording) {
+      shouldSendAfterRecordRef.current = true;
+      handleMicToggle();
+      return;
+    }
     if ((!messageInput.trim() && selectedFiles.length === 0) || sending) return;
     if (!selectedCommunity) return;
+
+    // Snapshot the text/attachments/reply before any state changes
+    const textToSend = messageInput.trim();
+    const filesToSend = [...selectedFiles];
+    const previewsToClear = [...filePreviews];
+    const replyToSend = replyTo ? { ...replyTo } : null;
+
+    // ─── Optimistic: show message immediately ───────────────────
+    const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Build attachments array from selected files for the optimistic preview
+    const optimisticAttachments: any[] = [];
+    filesToSend.forEach((file, idx) => {
+      const previewUrl = previewsToClear[idx] || URL.createObjectURL(file);
+      const fileType = file.type;
+      let attType: string = "file";
+      if (fileType.startsWith("image/") && fileType !== "image/gif") attType = "image";
+      else if (fileType === "image/gif") attType = "gif";
+      else if (fileType.startsWith("video/")) attType = "video";
+      else if (fileType.startsWith("audio/")) attType = "voice_note";
+      optimisticAttachments.push({ url: previewUrl, type: attType });
+    });
+
+    const optimisticMessage: any = {
+      _id: pendingId,
+      _pending: true,
+      community: selectedCommunity._id,
+      sender: {
+        _id: user._id,
+        username: user.username,
+        fullName: user.fullName,
+        profilePic: user.profilePic,
+      },
+      text: textToSend,
+      replyTo: replyToSend
+        ? {
+            _id: replyToSend._id,
+            sender: replyToSend.sender,
+            text: replyToSend.text,
+            attachments: replyToSend.attachments,
+            createdAt: replyToSend.createdAt,
+          }
+        : null,
+      attachments: optimisticAttachments,
+      reactions: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isDeleted: false,
+      isEdited: false,
+    };
+
+    // Add optimistic message and clear input immediately
+    setMessages((prev) => [...prev, optimisticMessage]);
+    setMessageInput("");
+    setSelectedFiles([]);
+    setFilePreviews((prev) => {
+      prev.forEach((url) => URL.revokeObjectURL(url));
+      return [];
+    });
+    setReplyTo(null);
+    if (inputRef.current) {
+      inputRef.current.style.height = "auto";
+    }
 
     setSending(true);
     setSendingError(null);
     emitTyping(false);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, 50);
+
     try {
       const formData = new FormData();
-      formData.append("text", messageInput.trim());
-      if (replyTo) {
-        formData.append("replyTo", replyTo._id);
+      formData.append("text", textToSend);
+      if (replyToSend) {
+        formData.append("replyTo", replyToSend._id);
       }
-      selectedFiles.forEach((file) => {
+      filesToSend.forEach((file) => {
         formData.append("files", file);
       });
 
@@ -447,23 +1204,21 @@ export default function Communities({ user, socket }: CommunitiesProps) {
       );
       const data = await res.json();
       if (res.ok && data.success) {
-        setMessageInput("");
-        setSelectedFiles([]);
-        setFilePreviews((prev) => {
-          prev.forEach((url) => URL.revokeObjectURL(url));
-          return [];
-        });
-        setReplyTo(null);
-
-        // Reset textarea height
-        if (inputRef.current) {
-          inputRef.current.style.height = "auto";
-        }
+        // Replace pending message with the real one from the server
+        setMessages((prev) =>
+          prev.map((m) => (m._id === pendingId ? (data.sentMessage || data.message || data.editedMessage) : m))
+        );
       } else {
+        setMessages((prev) =>
+          prev.map((m) => (m._id === pendingId ? { ...m, _pending: false, _failed: true } : m))
+        );
         setSendingError(data.message || "Failed to send message");
       }
     } catch (err) {
       logger.error("Failed to send message", err);
+      setMessages((prev) =>
+        prev.map((m) => (m._id === pendingId ? { ...m, _pending: false, _failed: true } : m))
+      );
       setSendingError("Failed to send message");
     } finally {
       setSending(false);
@@ -500,7 +1255,22 @@ export default function Communities({ user, socket }: CommunitiesProps) {
         { method: "DELETE" }
       );
       if (res.ok) {
-        setMessages((prev) => prev.filter((m) => m._id !== messageId));
+        // Mark as deleted (placeholder) for me only — others still see it.
+        // Matches personal-chat behavior; the server keeps the message with
+        // our id in deletedFor so the placeholder survives reloads.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m._id === messageId
+              ? {
+                  ...m,
+                  isDeleted: true,
+                  text: "This message was deleted",
+                  attachments: [],
+                  deletedFor: [...(m.deletedFor || []), userId],
+                }
+              : m
+          )
+        );
       }
     } catch (err) {
       logger.error("Failed to delete message for me", err);
@@ -528,6 +1298,33 @@ export default function Communities({ user, socket }: CommunitiesProps) {
     }
     setContextMenu(null);
   };
+
+	// ─── Drag-and-Drop Handlers ─────────────────────────────────
+	const handleDragOver = useCallback((e: React.DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		setIsDragActive(true);
+	}, []);
+
+	const handleDragLeave = useCallback((e: React.DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) {
+			setIsDragActive(false);
+		}
+	}, []);
+
+	const handleDrop = useCallback((e: React.DragEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
+		setIsDragActive(false);
+		const droppedFiles = Array.from(e.dataTransfer.files || []);
+		if (droppedFiles.length === 0) return;
+		const syntheticEvent = {
+			target: { files: droppedFiles as any, value: "" },
+		} as React.ChangeEvent<HTMLInputElement>;
+		handleFileSelect(syntheticEvent);
+	}, [handleFileSelect]);
 
   const handleEditSubmit = async () => {
     if (!editingMessage || !messageInput.trim()) return;
@@ -567,7 +1364,25 @@ export default function Communities({ user, socket }: CommunitiesProps) {
     }
   };
 
-  // ─── Context menu handlers ─────────────────────────────────────
+  // Viewport-safe positioning: after the context menu mounts, measure its
+// actual dimensions and adjust position to keep it fully within the viewport.
+useLayoutEffect(() => {
+  if (!contextMenu || !contextMenuRef.current) return;
+  const menu = contextMenuRef.current;
+  const rect = menu.getBoundingClientRect();
+  let adjX = rect.left;
+  let adjY = rect.top;
+  if (rect.right > window.innerWidth) adjX = window.innerWidth - rect.width - 12;
+  if (rect.left < 12) adjX = 12;
+  if (rect.bottom > window.innerHeight) adjY = window.innerHeight - rect.height - 12;
+  if (rect.top < 12) adjY = 12;
+  if (adjX !== rect.left || adjY !== rect.top) {
+    menu.style.left = adjX + "px";
+    menu.style.top = adjY + "px";
+  }
+}, [contextMenu]);
+
+// ─── Context menu handlers ─────────────────────────────────────
   // ─── Pin/Unpin handlers ──────────────────────────────────────
   const handlePinMessage = async (messageId: string) => {
     try {
@@ -595,12 +1410,37 @@ export default function Communities({ user, socket }: CommunitiesProps) {
   const isMessagePinned = (messageId: string) =>
     pinnedMessages.some((m) => m._id === messageId);
 
+  // Timestamp ref to prevent synthetic click events on mobile from closing the
+  // context menu immediately after a long-press (browsers fire click after touchend).
+  const contextMenuOpenedAtRef = useRef(0);
+
+  // Close context menu when clicking outside.
+  // Uses a timestamp guard to ignore synthetic click events that mobile browsers
+  // fire after touchend — these race with the long-press handler (500ms in MessageBubble)
+  // and cause the menu to open and immediately close. Clicks more than 300ms after the
+  // menu opened are real user clicks (e.g. tapping outside) and should close the menu.
+  useEffect(() => {
+    const handleClick = () => {
+      if (Date.now() - contextMenuOpenedAtRef.current > 300) {
+        setContextMenu(null);
+      }
+    };
+    window.addEventListener("click", handleClick);
+    return () => window.removeEventListener("click", handleClick);
+  }, []);
+
   const handleContextMenu = (
     e: React.MouseEvent | { clientX: number; clientY: number; preventDefault: () => void },
     message: any
   ) => {
     e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY, message });
+    // Calculate safe position to prevent menu from being cut off
+    const x = Math.min(Math.max(10, e.clientX), window.innerWidth - 10);
+    const y = Math.min(Math.max(10, e.clientY), window.innerHeight - 10);
+    // Record timestamp so the click-to-close handler can ignore synthetic
+    // click events that mobile browsers fire immediately after touchend
+    contextMenuOpenedAtRef.current = Date.now();
+    setContextMenu({ x, y, message });
   };
 
   // ─── Formatting helpers ────────────────────────────────────────
@@ -644,6 +1484,90 @@ export default function Communities({ user, socket }: CommunitiesProps) {
     return grouped;
   };
 
+  // ─── Copy message to clipboard ─────────────────────────────
+  const handleCopyMessage = async (message: CommunityMessage) => {
+    if (message.text) {
+      await navigator.clipboard.writeText(message.text);
+    }
+    setContextMenu(null);
+  };
+
+  // ─── Forward message ──────────────────────────────────────────────
+  const fetchForwardConversations = useCallback(async () => {
+    setLoadingForwardConvs(true);
+    try {
+      const res = await apiFetch("/api/chats/conversations");
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setForwardConversations(data.conversations || []);
+      }
+    } catch (err) {
+      logger.error("Failed to fetch conversations for forward", err);
+    } finally {
+      setLoadingForwardConvs(false);
+    }
+  }, []);
+
+  const handleToggleForwardSelection = (targetConversationId: string) => {
+    setSelectedForwardConvIds((prev) => {
+      if (prev.includes(targetConversationId)) {
+        return prev.filter((id) => id !== targetConversationId);
+      }
+      if (prev.length >= 5) {
+        window.dispatchEvent(
+          new CustomEvent("showToast", {
+            detail: {
+              message: "You can forward to a maximum of 5 conversations.",
+              type: "error",
+            },
+          })
+        );
+        return prev;
+      }
+      return [...prev, targetConversationId];
+    });
+  };
+
+  const handleExecuteForward = async () => {
+    if (!forwardModal || selectedForwardConvIds.length === 0) return;
+    try {
+      const originalMessage = forwardModal.message;
+      const senderName = originalMessage.sender.fullName || originalMessage.sender.username;
+      const originalText = originalMessage.text;
+
+      await Promise.all(
+        selectedForwardConvIds.map(async (targetConvId) => {
+          const formData = new FormData();
+          const forwardedText = originalText
+            ? `Forwarded from @${senderName}: ${originalText}`
+            : `Forwarded from @${senderName}`;
+          formData.append("text", forwardedText);
+          formData.append("forwardedFrom", originalMessage._id);
+
+          if (originalMessage.attachments && originalMessage.attachments.length > 0) {
+            formData.append("forwardedAttachments", JSON.stringify(originalMessage.attachments));
+          }
+
+          await apiFetch(`/api/chats/conversations/${targetConvId}/messages`, {
+            method: "POST",
+            body: formData,
+          });
+        })
+      );
+
+      setForwardModal(null);
+      setSelectedForwardConvIds([]);
+      setForwardConversations([]);
+    } catch (err) {
+      logger.error("Failed to forward message", err);
+      window.dispatchEvent(
+        new CustomEvent("showToast", {
+          detail: { message: "Failed to forward message. Please try again.", type: "error" },
+        })
+      );
+    }
+  };
+
   // ─── Join/Leave community ──────────────────────────────────────
   const handleJoinCommunity = async (communityId: string) => {
     if (joiningCommunities.has(communityId)) return;
@@ -655,17 +1579,41 @@ export default function Communities({ user, socket }: CommunitiesProps) {
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        // Find the community in allCommunities to get its full data
+        const joinedCommunity = allCommunities.find((c) => c._id === communityId);
+        const updatedCommunity = joinedCommunity
+          ? { ...joinedCommunity, isMember: true, memberCount: data.memberCount }
+          : null;
+
         setAllCommunities((prev) =>
           prev.map((c) =>
-            c._id === communityId ? { ...c, isMember: true, memberCount: data.memberCount } : c
+            c._id === communityId
+              ? { ...c, isMember: true, memberCount: data.memberCount }
+              : c
           )
         );
+
         // Join the community room immediately for live member count updates
         if (socket) {
           socket.emit("community:join", { communityId });
         }
+
+        // Evict stale caches so the joined community appears in
+        // "My Communities" instantly (apiFetch is cache-first and would
+        // otherwise serve the old list without the new membership).
+        await Promise.all([
+          evictCachedResponse("/api/communities/mine"),
+          evictCachedResponse("/api/communities?limit=50"),
+          evictCachedResponse(`/api/communities/${communityId}/messages?limit=30`),
+        ]);
+
         // Refresh my communities
-        fetchMyCommunities();
+        await fetchMyCommunities();
+
+        // Auto-open the community chat after joining
+        if (updatedCommunity) {
+          handleSelectCommunity(updatedCommunity);
+        }
       }
     } catch (err) {
       logger.error("Failed to join community", err);
@@ -694,7 +1642,20 @@ export default function Communities({ user, socket }: CommunitiesProps) {
         if (selectedCommunity?._id === communityId) {
           setView("list");
           setSelectedCommunity(null);
+          setMessages([]);
+          setCursor(null);
+          setHasMore(true);
         }
+        // Evict stale caches so the left community disappears from
+        // "My Communities" and its cached messages can't be re-shown
+        // if the user rejoins (server hides pre-rejoin history anyway).
+        await Promise.all([
+          evictCachedResponse("/api/communities/mine"),
+          evictCachedResponse("/api/communities?limit=50"),
+          evictCachedResponse(`/api/communities/${communityId}/messages?limit=30`),
+        ]);
+        // Refresh from server to ensure consistency (e.g. stale cache edge cases)
+        await fetchMyCommunities();
       }
     } catch (err) {
       logger.error("Failed to leave community", err);
@@ -718,10 +1679,92 @@ export default function Communities({ user, socket }: CommunitiesProps) {
     setConfirmLeaveOpen(false);
   };
 
+  // ─── Cancel/Retry handlers for voice notes ────────────────────
+  const handleCancelUpload = (pendingId: string) => {
+    const controller = activeUploadsRef.current[pendingId];
+    if (controller) {
+      controller.abort();
+      delete activeUploadsRef.current[pendingId];
+    }
+    delete unsentPayloadsRef.current[pendingId];
+    setMessages((prev) => prev.filter((m) => m._id !== pendingId));
+  };
+
+  const handleRetrySend = async (pendingId: string) => {
+    const payload = unsentPayloadsRef.current[pendingId];
+    if (!payload) return;
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m._id === pendingId ? { ...m, _pending: true, _failed: false } : m
+      )
+    );
+
+    const controller = new AbortController();
+    activeUploadsRef.current[pendingId] = controller;
+
+    try {
+      const formData = new FormData();
+      formData.append("text", "");
+      const blobMime = payload.blob.type || "audio/webm";
+      const ext =
+        blobMime.includes("mp4") || blobMime.includes("aac")
+          ? "mp4"
+          : blobMime.includes("ogg")
+            ? "ogg"
+            : blobMime.includes("wav")
+              ? "wav"
+              : "webm";
+      const audioFile = new File(
+        [payload.blob],
+        `voice-${Date.now()}.${ext}`,
+        { type: blobMime }
+      );
+      formData.append("files", audioFile);
+      formData.append("duration", String(payload.duration));
+      if (payload.replyToId) {
+        formData.append("replyTo", payload.replyToId);
+      }
+
+      const res = await apiFetch(
+        `/api/communities/${selectedCommunity?._id}/messages`,
+        {
+          method: "POST",
+          body: formData,
+          signal: controller.signal,
+        }
+      );
+      const data = await res.json();
+      if (res.ok && data.success) {
+        delete unsentPayloadsRef.current[pendingId];
+        delete activeUploadsRef.current[pendingId];
+        setMessages((prev) => {
+          const filtered = prev.filter((m) => m._id !== pendingId);
+          if (filtered.some((m) => m._id === data.sentMessage?._id)) return filtered;
+          return [...filtered, data.sentMessage];
+        });
+      } else {
+        throw new Error(data?.message || "Failed to send");
+      }
+    } catch (err: any) {
+      if (err.name === "AbortError") return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m._id === pendingId ? { ...m, _pending: false, _failed: true } : m
+        )
+      );
+    } finally {
+      delete activeUploadsRef.current[pendingId];
+    }
+  };
+
   // ─── Handle community created ──────────────────────────────────
   const handleCommunityCreated = (community: Community) => {
     setMyCommunities((prev) => [community, ...prev]);
     setAllCommunities((prev) => [community, ...prev]);
+    // Evict cached lists so the new community shows everywhere immediately
+    evictCachedResponse("/api/communities/mine");
+    evictCachedResponse("/api/communities?limit=50");
   };
 
   // ─── Handle community updated ──────────────────────────────────
@@ -735,9 +1778,69 @@ export default function Communities({ user, socket }: CommunitiesProps) {
     setSelectedCommunity((prev) =>
       prev?._id === updated._id ? updated : prev
     );
+    // Refresh both lists from server to ensure data consistency (e.g. image URL)
+    fetchMyCommunities();
+    fetchAllCommunities();
   };
 
   // ─── Handle community deleted ──────────────────────────────────
+  // ─── Group Call (LiveKit) ────────────────────────────────────────
+  const handleGroupCall = async (callType: "audio" | "video") => {
+    if (!selectedCommunity || startingCall) return;
+    setStartingCall(true);
+    setGroupCallType(callType);
+    try {
+      const res = await apiFetch(
+        `/api/communities/${selectedCommunity._id}/livekit-token`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: callType }),
+        },
+      );
+      const data = await res.json();
+      if (res.ok && data.success && data.token) {
+        setGroupCallToken(data.token);
+        setGroupCallRoomName(data.roomName);
+        setGroupCallUrl(data.livekitUrl);
+        setShowGroupCall(true);
+        // Announce the call to the community room so other members see a
+        // "Join call" banner and can connect to the SAME LiveKit room.
+        socket?.emit("community:call-started", {
+          communityId: selectedCommunity._id,
+          roomName: data.roomName,
+          type: callType,
+        });
+        setActiveCommunityCall({
+          roomName: data.roomName,
+          type: callType,
+          startedBy: userId,
+        });
+      } else {
+        window.dispatchEvent(
+          new CustomEvent("showToast", {
+            detail: {
+              message: data?.message || "Failed to start group call. LiveKit may not be configured.",
+              type: "error",
+            },
+          }),
+        );
+      }
+    } catch (err) {
+      logger.error("Failed to start group call", err);
+      window.dispatchEvent(
+        new CustomEvent("showToast", {
+          detail: {
+            message: "Failed to start group call. Please try again.",
+            type: "error",
+          },
+        }),
+      );
+    } finally {
+      setStartingCall(false);
+    }
+  };
+
   const handleCommunityDeleted = (communityId: string) => {
     setMyCommunities((prev) => prev.filter((c) => c._id !== communityId));
     setAllCommunities((prev) => prev.filter((c) => c._id !== communityId));
@@ -756,8 +1859,13 @@ export default function Communities({ user, socket }: CommunitiesProps) {
 
   // ─── Render Community List ─────────────────────────────────────
   const renderCommunityList = () => {
-    const displayCommunities =
-      communityTab === "mine" ? myCommunities : allCommunities;
+    const filteredCommunities =
+      (communityTab === "mine" ? myCommunities : allCommunities).filter(
+        (c) =>
+          c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (c.description &&
+            c.description.toLowerCase().includes(searchQuery.toLowerCase()))
+      );
 
     return (
       <div className="h-full flex flex-col">
@@ -765,7 +1873,7 @@ export default function Communities({ user, socket }: CommunitiesProps) {
         <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-b border-zinc-800/50 shrink-0">
           <div className="flex items-center gap-2">
             <Hash className="h-4 w-4 text-zinc-400" />
-            <h2 className="text-sm font-bold text-white">Communities</h2>
+            <h2 className="text-display-xs text-white">Communities</h2>
           </div>
           <button
             onClick={() => setCreateModalOpen(true)}
@@ -779,25 +1887,47 @@ export default function Communities({ user, socket }: CommunitiesProps) {
         {/* Tabs */}
         <div className="flex border-b border-zinc-800/50 shrink-0">
           <button
-            onClick={() => setCommunityTab("mine")}
+            onClick={() => {
+              setCommunityTab("mine");
+              setSearchQuery("");
+            }}
             className={`flex-1 py-2.5 text-[11px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
               communityTab === "mine"
-                ? "text-white border-b-2 border-indigo-500"
+                ? "text-white border-b-2 border-white"
                 : "text-zinc-500 hover:text-zinc-300"
             }`}
           >
             My Communities
           </button>
           <button
-            onClick={() => setCommunityTab("browse")}
+            onClick={() => {
+              setCommunityTab("browse");
+              setSearchQuery("");
+            }}
             className={`flex-1 py-2.5 text-[11px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
               communityTab === "browse"
-                ? "text-white border-b-2 border-indigo-500"
+                ? "text-white border-b-2 border-white"
                 : "text-zinc-500 hover:text-zinc-300"
             }`}
           >
             Browse All
           </button>
+        </div>
+
+        {/* Search */}
+        <div className="px-3 sm:px-4 py-2 shrink-0">
+          <div className="relative">
+            <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-zinc-500">
+              <Search className="h-3.5 w-3.5" />
+            </span>
+            <input
+              type="text"
+              placeholder="Search communities..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-full border border-zinc-800 bg-zinc-950/50 py-2 pl-9 pr-4 text-[12px] font-bold text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
+            />
+          </div>
         </div>
 
         {/* List */}
@@ -806,7 +1936,7 @@ export default function Communities({ user, socket }: CommunitiesProps) {
             <div className="flex items-center justify-center py-20">
               <Loader2 className="h-5 w-5 text-zinc-500 animate-spin" />
             </div>
-          ) : displayCommunities.length === 0 ? (
+          ) : filteredCommunities.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center px-6">
               <Hash className="h-10 w-10 text-zinc-700 mb-3" />
               <p className="text-sm font-semibold text-zinc-400 mb-1">
@@ -814,7 +1944,7 @@ export default function Communities({ user, socket }: CommunitiesProps) {
                   ? "No communities yet"
                   : "No communities found"}
               </p>
-              <p className="text-[11px] text-zinc-600 mb-4">
+              <p className="text-[11px] text-zinc-400 mb-4">
                 {communityTab === "mine"
                   ? "Create or join a community to get started"
                   : "Be the first to create one!"}
@@ -822,7 +1952,7 @@ export default function Communities({ user, socket }: CommunitiesProps) {
               {communityTab === "mine" && (
                 <button
                   onClick={() => setCreateModalOpen(true)}
-                  className="rounded-full bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-xs font-bold text-white transition-all cursor-pointer"
+                  className="rounded-full bg-white hover:bg-zinc-200 px-4 py-2 text-xs font-bold text-black transition-all cursor-pointer"
                 >
                   Create Community
                 </button>
@@ -830,24 +1960,39 @@ export default function Communities({ user, socket }: CommunitiesProps) {
             </div>
           ) : (
             <div className="py-2">
-              {displayCommunities.map((community) => (
-                <button
+              {filteredCommunities.map((community) => (
+                <div
                   key={community._id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => {
                     if (community.isMember) {
                       handleSelectCommunity(community);
-                    } else {
-                      handleJoinCommunity(community._id);
                     }
                   }}
-                  className="w-full flex items-center gap-3 px-4 sm:px-5 py-3 hover:bg-zinc-900/50 transition-all cursor-pointer text-left group"
-                >
-                  <div className="h-10 w-10 rounded-xl bg-zinc-800 flex items-center justify-center shrink-0 border border-zinc-700/50">
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      if (community.isMember) {
+                        handleSelectCommunity(community);
+                      }
+                    }
+                  }}					  className={`w-full flex items-center gap-3 px-4 sm:px-5 py-3 transition-all text-left group ${
+					    community.isMember
+					      ? "hover:bg-zinc-900/50 cursor-pointer"
+					      : "cursor-default opacity-80"
+					  }`}
+					  >
+					  <div className="h-10 w-10 rounded-full bg-zinc-800 flex items-center justify-center shrink-0 border border-zinc-700/50 overflow-hidden">
                     {community.image?.url ? (
                       <img
                         src={community.image.url}
                         alt={community.name}
-                        className="h-full w-full rounded-xl object-cover"
+                        className="h-full w-full rounded-full object-cover cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          window.dispatchEvent(new CustomEvent("openImagePreview", { detail: community.image!.url }));
+                        }}
                       />
                     ) : (
                       <Hash className="h-5 w-5 text-zinc-500" />
@@ -864,22 +2009,29 @@ export default function Communities({ user, socket }: CommunitiesProps) {
                   </div>
                   <div className="shrink-0">
                     {community.isMember ? (
-                      <span className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-full">
+                      <span className="text-[10px] font-bold text-zinc-300 bg-white/10 px-2.5 py-1 rounded-full">
                         Open
                       </span>
                     ) : (
-                      <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full group-hover:bg-emerald-500/20 transition-all inline-flex items-center gap-1.5">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleJoinCommunity(community._id);
+                        }}
+                        disabled={joiningCommunities.has(community._id)}
+                        className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full hover:bg-emerald-500/20 transition-all inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
                         {joiningCommunities.has(community._id) ? (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         ) : null}
                         {joiningCommunities.has(community._id) ? "Joining..." : "Join"}
-                      </span>
+                      </button>
                     )}
-                  </div>
-                </button>
+                  </div>                </div>
               ))}
             </div>
-          )}
+          )
+        }
         </div>
       </div>
     );
@@ -916,12 +2068,12 @@ export default function Communities({ user, socket }: CommunitiesProps) {
             <p className="text-sm font-semibold text-zinc-400 mb-1">
               You're not a member of this community
             </p>
-            <p className="text-[11px] text-zinc-600 mb-4">
+            <p className="text-[11px] text-zinc-400 mb-4">
               Join to see messages and participate in the conversation
             </p>              <button
               onClick={() => handleJoinCommunity(selectedCommunity._id)}
               disabled={joiningCommunities.has(selectedCommunity._id)}
-              className="rounded-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-600 px-5 py-2.5 text-xs font-bold text-white transition-all cursor-pointer disabled:cursor-not-allowed inline-flex items-center gap-2"
+              className="rounded-full bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 px-5 py-2.5 text-xs font-bold text-black transition-all cursor-pointer disabled:cursor-not-allowed inline-flex items-center gap-2"
             >
               {joiningCommunities.has(selectedCommunity._id) ? (
                 <>
@@ -962,39 +2114,61 @@ export default function Communities({ user, socket }: CommunitiesProps) {
             )}
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-semibold text-white truncate">
+            <button
+              onClick={() => setView("profile")}
+              className="text-sm font-semibold text-white truncate text-left hover:underline cursor-pointer"
+            >
               {selectedCommunity.name}
-            </h3>
+            </button>
             <p className="text-[10px] text-zinc-500">
               {selectedCommunity.memberCount} member{selectedCommunity.memberCount !== 1 ? "s" : ""}
               {Object.keys(typingUsers).length > 0 && (
-                <span className="text-indigo-400 ml-2">
+                <span className="text-zinc-300 ml-2">
                   · {Object.keys(typingUsers).length} typing...
                 </span>
               )}
             </p>
           </div>
-          <button
-            onClick={() => {
-              setShowMembers((prev) => !prev);
-              if (!showMembers && memberList.length === 0 && selectedCommunity) {
-                fetchMembers(selectedCommunity._id);
-              }
-            }}
-            className={`h-7 w-7 rounded-full flex items-center justify-center hover:bg-zinc-700/50 transition-colors cursor-pointer shrink-0 ${showMembers ? "bg-indigo-500/20 text-indigo-400" : ""}`}
-            title="Members"
-          >
-            <Users className="h-3.5 w-3.5 text-zinc-500 hover:text-zinc-300" />
-          </button>
-          {selectedCommunity.creator?._id === userId && (
+          {/* Group Audio call button - only when enabled */}
+          {selectedCommunity.audioCallEnabled && (
             <button
-              onClick={() => setSettingsOpen(true)}
-              className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-zinc-700/50 transition-colors cursor-pointer shrink-0"
-              title="Community settings"
+              onClick={() => handleGroupCall("audio")}
+              disabled={startingCall}
+              className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-green-500/20 transition-colors cursor-pointer shrink-0 disabled:opacity-40"
+              title="Start group audio call"
             >
-              <Settings className="h-3.5 w-3.5 text-zinc-500 hover:text-zinc-300" />
+              <Phone className="h-3.5 w-3.5 text-zinc-500 hover:text-green-400" />
             </button>
           )}
+          {/* Group Video call button - only when enabled */}
+          {selectedCommunity.videoCallEnabled && (
+            <button
+              onClick={() => handleGroupCall("video")}
+              disabled={startingCall}
+              className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-green-500/20 transition-colors cursor-pointer shrink-0 disabled:opacity-40"
+              title="Start group video call"
+            >
+              <Video className="h-3.5 w-3.5 text-zinc-500 hover:text-green-400" />
+            </button>
+          )}
+          <button
+            onClick={() => {
+              setShowMessageSearch((prev) => !prev);
+              setMessageSearchQuery("");
+              setSearchResults([]);
+            }}
+            className={`h-7 w-7 rounded-full flex items-center justify-center hover:bg-zinc-700/50 transition-colors cursor-pointer shrink-0 ${showMessageSearch ? "bg-white/10 text-white" : ""}`}
+            title="Search messages"
+          >
+            <Search className="h-3.5 w-3.5 text-zinc-500 hover:text-zinc-300" />
+          </button>
+          <button
+            onClick={() => setConfirmClearForMeOpen(true)}
+            className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-zinc-700/50 transition-colors cursor-pointer shrink-0"
+            title="Clear chat for me"
+          >
+            <Trash2 className="h-3.5 w-3.5 text-zinc-500 hover:text-zinc-300" />
+          </button>
           <button
             onClick={promptLeaveCommunity}
             disabled={leavingCommunity}
@@ -1009,62 +2183,89 @@ export default function Communities({ user, socket }: CommunitiesProps) {
           </button>
         </div>
 
-        {/* Member list panel */}
-        {showMembers && (
-          <div className="shrink-0 border-b border-zinc-800/50 bg-zinc-900/80 px-4 py-3 max-h-[280px] overflow-y-auto">
-            <div className="flex items-center gap-2 mb-3">
-              <Users className="h-3.5 w-3.5 text-zinc-400" />
-              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
-                {memberList.length} Member{memberList.length !== 1 ? "s" : ""}
+        {/* Active group call banner — join the call started by another member */}
+        {activeCommunityCall && !showGroupCall && (
+          <button
+            onClick={() => handleGroupCall(activeCommunityCall.type)}
+            disabled={startingCall}
+            className="shrink-0 flex items-center justify-center gap-2 px-4 py-2.5 w-full border-b border-emerald-500/20 bg-emerald-500/10 hover:bg-emerald-500/15 transition-colors cursor-pointer disabled:opacity-50"
+            title="Join the active group call"
+          >
+            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <Phone className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+            <span className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider">
+              {activeCommunityCall.type === "video"
+                ? "Live group video call — tap to join"
+                : "Live group audio call — tap to join"}
+            </span>
+            <ArrowRight className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+          </button>
+        )}
+
+        {/* Message search bar */}
+        {showMessageSearch && (
+          <div className="shrink-0 border-b border-zinc-800/50 bg-zinc-900/80 px-4 py-2.5">
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-zinc-500">
+                <Search className="h-3.5 w-3.5" />
               </span>
-            </div>
-            <div className="space-y-2">
-              {memberList.map((member) => {
-                const isCreator = selectedCommunity?.creator?._id === member.user._id;
-                return (
-                  <div
-                    key={member.user._id}
-                    className="flex items-center gap-2.5"
-                  >
-                    <div className="h-7 w-7 rounded-full bg-zinc-800 shrink-0 flex items-center justify-center overflow-hidden">
-                      {member.user.profilePic?.url ? (
-                        <img
-                          src={member.user.profilePic.url}
-                          alt={member.user.fullName}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <span className="text-[9px] font-bold text-zinc-500">
-                          {member.user.fullName?.charAt(0) || "?"}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[12px] font-semibold text-zinc-200 truncate">
-                          {member.user.fullName}
-                        </span>
-                        {isCreator && (
-                          <span className="text-[8px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-full uppercase tracking-wider">
-                            Creator
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-zinc-500">
-                        Joined {new Date(member.joinedAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-              {memberList.length === 0 && (
-                <p className="text-[11px] text-zinc-600 text-center py-2">
-                  No members data available
-                </p>
+              <input
+                type="text"
+                placeholder="Search messages..."
+                value={messageSearchQuery}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setMessageSearchQuery(val);
+
+                  // Clear previous debounce timer
+                  if (messageSearchTimerRef.current) {
+                    clearTimeout(messageSearchTimerRef.current);
+                  }
+
+                  if (!val.trim() || !selectedCommunity) {
+                    setSearchResults([]);
+                    setSearchingMessages(false);
+                    return;
+                  }
+
+                  setSearchingMessages(true);
+
+                  // Debounce: wait 350ms after last keystroke before searching
+                  messageSearchTimerRef.current = setTimeout(async () => {
+                    try {
+                      const res = await apiFetch(
+                        `/api/communities/${selectedCommunity._id}/messages/search?q=${encodeURIComponent(val)}`
+                      );
+                      const data = await res.json();
+                      if (res.ok && data.success) {
+                        setSearchResults(data.messages || []);
+                      }
+                    } catch (err) {
+                      logger.error("Failed to search messages", err);
+                    } finally {
+                      setSearchingMessages(false);
+                    }
+                  }, 350);
+                }}
+                className="w-full rounded-full border border-zinc-800 bg-zinc-950/50 py-2 pl-9 pr-9 text-[12px] font-bold text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
+              />
+              {messageSearchQuery && (
+                <button
+                  onClick={() => {
+                    setMessageSearchQuery("");
+                    setSearchResults([]);
+                  }}
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                  type="button"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
               )}
             </div>
           </div>
         )}
+
+
 
         {/* Pinned messages banner */}
         {pinnedMessages.length > 0 && (
@@ -1086,7 +2287,11 @@ export default function Communities({ user, socket }: CommunitiesProps) {
                       <img
                         src={pinned.sender.profilePic.url}
                         alt={pinned.sender.fullName}
-                        className="h-full w-full object-cover"
+                        className="h-full w-full object-cover cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          window.dispatchEvent(new CustomEvent("openImagePreview", { detail: pinned.sender.profilePic!.url }));
+                        }}
                       />
                     ) : (
                       <span className="text-[9px] font-bold text-zinc-500">
@@ -1098,7 +2303,7 @@ export default function Communities({ user, socket }: CommunitiesProps) {
                     <p className="text-[10px] font-semibold text-zinc-300 truncate leading-tight">
                       {pinned.text || (pinned.attachments?.length ? "📎 Attachment" : "")}
                     </p>
-                    <p className="text-[9px] text-zinc-600 mt-0.5">
+                    <p className="text-[9px] text-zinc-400 mt-0.5">
                       {pinned.sender.fullName} · {formatMessageTime(pinned.createdAt)}
                     </p>
                   </div>
@@ -1108,87 +2313,159 @@ export default function Communities({ user, socket }: CommunitiesProps) {
           </div>
         )}
 
-        {/* Messages */}
-        <div
-          ref={messagesContainerRef}
-          className="flex-1 overflow-y-auto px-4 py-2 space-y-0.5"
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            if (el.scrollTop < 50 && hasMore && !loadingMessages) {
-              handleLoadMore();
-            }
-          }}
-        >
-          {loadingMessages && messages.length === 0 && (
-            <div className="flex items-center justify-center py-20">
-              <Loader2 className="h-5 w-5 text-zinc-500 animate-spin" />
+        {/* Messages area — regular or search results */}
+        {searchResults.length > 0 ? (
+          <div className="flex-1 overflow-y-auto px-4 py-2 space-y-0.5">
+            <div className="sticky top-0 z-10 bg-zinc-950/90 backdrop-blur-sm py-2 mb-2 flex items-center gap-2 border-b border-zinc-800/40">
+              <Search className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                Search results for "{messageSearchQuery}"
+              </span>
+              <span className="text-[10px] text-zinc-400 ml-auto">{searchResults.length} result{searchResults.length !== 1 ? "s" : ""}</span>
             </div>
-          )}
+            {searchResults.map((msg, index) => {
+              const isMe = msg.sender._id === userId;
+              const adaptedMsg = {
+                ...msg,
+                conversation: msg.community,
+                recipient: msg.sender._id,
+                seen: (msg.seenBy?.length || 0) > 0,
+              } as any;
 
-          {!loadingMessages && messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 text-center">
-              <MessageSquare className="h-10 w-10 text-zinc-700 mb-3" />
-              <p className="text-sm font-semibold text-zinc-400 mb-1">
-                No messages yet
-              </p>
-              <p className="text-[11px] text-zinc-600">
-                Be the first to send a message in {selectedCommunity.name}
-              </p>
-            </div>
-          )}
+              return (
+                <MessageBubble
+                  key={msg._id}
+                  msg={adaptedMsg}
+                  isMe={isMe}
+                  userId={userId}
+                  groupedReactions={getGroupedReactions(msg)}
+                  handleContextMenu={handleContextMenu as any}
+                  handleReaction={handleReaction as any}
+                  formatMessageTime={formatMessageTime}
+                  onSwipeToReply={handleReply as any}
+                  onCancelUpload={handleCancelUpload}
+                  onRetrySend={handleRetrySend}
+                  showDateSeparator={index === 0}
+                  dateSeparatorText={formatDateSeparator(msg.createdAt)}
+                  showTimeHeader={false}
+                  isFirstInGroup={index === 0 || searchResults[index - 1]?.sender._id !== msg.sender._id}
+                  isLastInGroup={index === searchResults.length - 1 || searchResults[index + 1]?.sender._id !== msg.sender._id}
+                />
+              );
+            })}
+          </div>
+        ) : (
+          <div
+            ref={messagesContainerRef}
+            className="flex-1 overflow-y-auto px-4 py-2 space-y-0.5 relative"
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              setShowScrollToBottom(
+                el.scrollHeight - el.scrollTop - el.clientHeight > 400,
+              );
+              if (el.scrollTop < 50 && hasMore && !loadingMessages) {
+                handleLoadMore();
+              }
+            }}
+          >
+            {loadingMessages && messages.length === 0 && (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="h-5 w-5 text-zinc-500 animate-spin" />
+              </div>
+            )}
 
-          {loadingMessages && messages.length > 0 && (
-            <div className="flex justify-center py-3">
-              <Loader2 className="h-4 w-4 text-zinc-500 animate-spin" />
-            </div>
-          )}
+            {!loadingMessages && messages.length === 0 && !searchingMessages && (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <MessageSquare className="h-10 w-10 text-zinc-700 mb-3" />
+                <p className="text-sm font-semibold text-zinc-400 mb-1">
+                  No messages yet
+                </p>
+                <p className="text-[11px] text-zinc-400">
+                  Be the first to send a message in {selectedCommunity.name}
+                </p>
+              </div>
+            )}
 
-          {messages.map((msg, index) => {
-            const isMe = msg.sender._id === userId;
-            // Convert CommunityMessage fields to match MessageBubble expectations
-            const adaptedMsg = {
-              ...msg,
-              conversation: msg.community,
-              recipient: msg.sender._id,
-              seen: true,
-              _pending: undefined,
-              _failed: undefined,
-            } as any;
+            {loadingMessages && messages.length > 0 && (
+              <div className="flex justify-center py-3">
+                <Loader2 className="h-4 w-4 text-zinc-500 animate-spin" />
+              </div>
+            )}
 
-            return (
-              <MessageBubble
-                key={msg._id}
-                msg={adaptedMsg}
-                isMe={isMe}
-                userId={userId}
-                groupedReactions={getGroupedReactions(msg)}
-                handleContextMenu={handleContextMenu as any}
-                handleReaction={handleReaction as any}
-                formatMessageTime={formatMessageTime}
-                onSwipeToReply={handleReply as any}
-                showDateSeparator={shouldShowDateSeparator(msg, index)}
-                dateSeparatorText={formatDateSeparator(msg.createdAt)}
-                showTimeHeader={false}
-                isFirstInGroup={
-                  index === 0 ||
-                  messages[index - 1]?.sender._id !== msg.sender._id
-                }
-                isLastInGroup={
-                  index === messages.length - 1 ||
-                  messages[index + 1]?.sender._id !== msg.sender._id
-                }
-              />
-            );
-          })}
-          <div ref={messagesEndRef} />
-        </div>
+            {/* Scroll to bottom button */}
+            {showScrollToBottom && (
+              <div className="absolute bottom-4 right-4 z-20">
+                <button
+                  onClick={() =>
+                    messagesEndRef.current?.scrollIntoView({
+                      behavior: "smooth",
+                    })
+                  }
+                  className="h-9 w-9 rounded-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/50 flex items-center justify-center shadow-lg transition-all cursor-pointer animate-bounce"
+                  title="Scroll to bottom"
+                  type="button"
+                >
+                  <ChevronDown className="h-4 w-4 text-zinc-300" />
+                </button>
+              </div>
+            )}
+
+            {searchingMessages && (
+              <div className="flex justify-center py-6">
+                <Loader2 className="h-4 w-4 text-zinc-500 animate-spin" />
+              </div>
+            )}
+
+            {messages.map((msg, index) => {
+              const isMe = msg.sender._id === userId;
+              // Convert CommunityMessage fields to match MessageBubble expectations
+              const adaptedMsg = {
+                ...msg,
+                conversation: msg.community,
+                recipient: msg.sender._id,
+                // Show blue tick when other members have seen this message
+                seen: (msg.seenBy?.length || 0) > 0,
+                _pending: (msg as any)._pending,
+                _failed: (msg as any)._failed,
+              } as any;
+
+              return (
+                <MessageBubble
+                  key={msg._id}
+                  msg={adaptedMsg}
+                  isMe={isMe}
+                  userId={userId}
+                  groupedReactions={getGroupedReactions(msg)}
+                  handleContextMenu={handleContextMenu as any}
+                  handleReaction={handleReaction as any}
+                  formatMessageTime={formatMessageTime}
+                  onSwipeToReply={handleReply as any}
+                  onCancelUpload={handleCancelUpload}
+                  onRetrySend={handleRetrySend}
+                  showDateSeparator={shouldShowDateSeparator(msg, index)}
+                  dateSeparatorText={formatDateSeparator(msg.createdAt)}
+                  showTimeHeader={false}
+                  isFirstInGroup={
+                    index === 0 ||
+                    messages[index - 1]?.sender._id !== msg.sender._id
+                  }
+                  isLastInGroup={
+                    index === messages.length - 1 ||
+                    messages[index + 1]?.sender._id !== msg.sender._id
+                  }
+                />
+              );
+            })}
+            <div ref={messagesEndRef} />
+          </div>
+        )}
 
         {/* Reply/Edit indicator */}
         {replyTo && (
-          <div className="px-4 py-2 bg-zinc-900/80 border-t border-zinc-800/50 flex items-center gap-2 shrink-0">
-            <CornerDownLeft className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+          <div className="px-2 py-2 bg-zinc-900/80 border-t border-zinc-800/50 flex items-center gap-2 shrink-0">
+            <CornerDownLeft className="h-3.5 w-3.5 text-zinc-300 shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] font-bold text-indigo-400">
+              <p className="text-[10px] font-bold text-zinc-300">
                 Replying to {replyTo.sender.fullName}
               </p>
               <p className="text-[11px] text-zinc-500 truncate">
@@ -1205,7 +2482,7 @@ export default function Communities({ user, socket }: CommunitiesProps) {
         )}
 
         {editingMessage && (
-          <div className="px-4 py-2 bg-zinc-900/80 border-t border-zinc-800/50 flex items-center gap-2 shrink-0">
+          <div className="px-2 py-2 bg-zinc-900/80 border-t border-zinc-800/50 flex items-center gap-2 shrink-0">
             <Edit3 className="h-3.5 w-3.5 text-amber-400 shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-[10px] font-bold text-amber-400">Editing message</p>
@@ -1219,109 +2496,333 @@ export default function Communities({ user, socket }: CommunitiesProps) {
           </div>
         )}
 
-        {/* File previews */}
+        {/* File previews - using ChatGallery like personal chat */}
         {filePreviews.length > 0 && (
-          <div className="px-4 py-2 border-t border-zinc-800/50 flex gap-2 overflow-x-auto shrink-0">
-            {filePreviews.map((url, i) => (
-              <div key={i} className="relative shrink-0">
-                <img
-                  src={url}
-                  alt="Preview"
-                  className="h-14 w-14 rounded-lg object-cover border border-zinc-700/50"
-                />
-                <button
-                  onClick={() => removeFile(i)}
-                  className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-red-500 flex items-center justify-center cursor-pointer"
-                >
-                  <X className="h-3 w-3 text-white" />
-                </button>
-              </div>
-            ))}
+          <div className="px-4 py-2 border-t border-zinc-800/50 shrink-0">
+            <ChatGallery
+              attachmentPreviews={filePreviews}
+              attachments={selectedFiles}
+              removeAttachment={removeFile}
+            />
           </div>
         )}
 
-        {/* Input area */}
-        <div className="px-4 py-3 border-t border-zinc-800/50 shrink-0">
+        {/* Messaging disabled banner */}
+        {selectedCommunity.messagingEnabled === false && selectedCommunity.creator?._id !== userId && (
+          <div className="px-4 py-3 border-t border-zinc-800/50 shrink-0 bg-zinc-900/80">
+            <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+              <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+              <span>Messaging is disabled in this community.</span>
+            </div>
+          </div>
+        )}
+
+        {/* Input area - hidden for non-creator members when messaging is disabled */}
+        {(selectedCommunity.messagingEnabled !== false || selectedCommunity.creator?._id === userId) && (
+        <div className={`px-2 ${isMobile ? "pb-[calc(0.375rem+env(safe-area-inset-bottom,0px))] pt-3" : "py-3"} border-t border-zinc-800/50 shrink-0 relative`} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
+          {isDragActive && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-sky-500/10 border-2 border-dashed border-sky-500/40 backdrop-blur-sm">
+              <div className="text-center">
+                <Image className="h-8 w-8 text-sky-400 mx-auto mb-2" />
+                <p className="text-xs font-semibold text-sky-300">Drop files here</p>
+              </div>
+            </div>
+          )}
           {sendingError && (
             <div className="mb-2 flex items-center gap-1.5 text-[10px] text-red-400 bg-red-500/10 rounded-lg px-3 py-1.5 border border-red-500/20">
               <AlertCircle className="h-3 w-3 shrink-0" />
               <span>{sendingError}</span>
             </div>
           )}
-          <div className="flex items-end gap-2">
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="h-9 w-9 rounded-xl flex items-center justify-center hover:bg-zinc-800 transition-colors shrink-0 cursor-pointer"
-              title="Attach image"
-            >
-              <Image className="h-4 w-4 text-zinc-500 hover:text-zinc-300" />
-            </button>
+          <div className="flex items-center gap-2">
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="*/*"
               multiple
               className="hidden"
               onChange={handleFileSelect}
             />
-            <div className="flex-1 min-w-0">
-              <textarea
-                ref={inputRef}
-                value={messageInput}
-                onChange={handleInputChange}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    if (editingMessage) {
-                      handleEditSubmit();
-                    } else {
-                      handleSendMessage();
+            <div className="flex-1 min-w-0 relative">
+              {!recordedUrl && !isRecording && (
+                <>
+                  <textarea
+                    ref={inputRef}
+                    value={messageInput}
+                    onChange={handleInputChange}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        if (editingMessage) {
+                          handleEditSubmit();
+                        } else {
+                          handleSendMessage();
+                        }
+                      }
+                    }}
+                    placeholder={
+                      editingMessage
+                        ? "Edit message..."
+                        : `Message ${selectedCommunity.name}...`
                     }
-                  }
-                }}
-                placeholder={
-                  editingMessage
-                    ? "Edit message..."
-                    : `Message ${selectedCommunity.name}...`
-                }
-                rows={1}
-                className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 transition-all resize-none max-h-[120px]"
-              />
-            </div>
-            <button
-              onClick={editingMessage ? handleEditSubmit : handleSendMessage}
-              disabled={
-                (!messageInput.trim() && selectedFiles.length === 0) || sending
-              }
-              className="h-9 w-9 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-600 flex items-center justify-center transition-all cursor-pointer disabled:cursor-not-allowed shrink-0"
-            >
-              {sending ? (
-                <Loader2 className="h-4 w-4 text-white animate-spin" />
-              ) : (
-                <Send className="h-4 w-4 text-white" />
+                    rows={1}
+                    className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all resize-none max-h-[120px]"
+                  />
+  {/* Gallery icon — single media entry point (choose files or take photo via OS native dialog) */}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-zinc-800/80 hover:bg-zinc-700/80 flex items-center justify-center transition-colors cursor-pointer"
+                    title="Attach file"
+                    type="button"
+                  >
+                    <Image className="h-3.5 w-3.5 text-zinc-400 hover:text-zinc-200" />
+                  </button>
+
+                </>
               )}
-            </button>
+              
+
+              {/* Recording indicator — animated waveform bars */}
+              {isRecording && (
+                <div className={`flex items-center gap-2 shrink-0 px-2 transition-opacity duration-200 ${isPaused ? "opacity-50" : ""}`}>
+                  {/* Animated waveform bars */}
+                  <span className="flex items-center gap-[3px] h-5">
+                    {[3, 6, 10, 14, 18, 14, 10, 6, 3].map((h, i) => (
+                      <span
+                        key={i}
+                        className={`w-[3px] bg-red-500 rounded-full transition-transform duration-200 ${
+                          isPaused ? "" : "waveform-bar"
+                        }`}
+                        style={{
+                          height: `${h}px`,
+                          ...(!isPaused ? { animation: `waveform 0.5s ease-in-out ${i * 0.1}s infinite alternate` } : {}),
+                        }}
+                      />
+                    ))}
+                  </span>
+                  <span className={`text-[12px] font-mono tabular-nums font-bold transition-colors duration-200 ${isPaused ? "text-zinc-500" : "text-red-400"}`}>
+                    {isPaused ? `${recordingDuration}s (paused)` : `${recordingDuration}s`}
+                  </span>
+                </div>
+              )}
+
+              {/* Recorded audio preview — match Chat.tsx styling */}
+              {recordedUrl && !isRecording && (
+                <div className="flex items-center gap-3 px-2 py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (audioPreviewRef.current) {
+                        if (isPlayingPreview) {
+                          audioPreviewRef.current.pause();
+                          audioPreviewRef.current.currentTime = 0;
+                        }
+                        setIsPlayingPreview(!isPlayingPreview);
+                        if (!isPlayingPreview) {
+                          audioPreviewRef.current.play();
+                        }
+                      }
+                    }}
+                    className="h-9 w-9 rounded-full bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-300 hover:bg-indigo-500/30 transition-all cursor-pointer shrink-0"
+                  >
+                    {isPlayingPreview ? (
+                      <Pause className="h-4 w-4" />
+                    ) : (
+                      <Play className="h-4 w-4" />
+                    )}
+                  </button>
+                  <div className="flex-1 flex items-center gap-2 min-w-0">
+                    <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                      <div className="h-full bg-indigo-500/60 rounded-full w-0" />
+                    </div>
+                    <span className="text-[11px] font-mono text-zinc-400 tabular-nums">
+                      {recordingDuration}s
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRecordedBlob(null);
+                      if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+                      setRecordedUrl(null);
+                      setRecordingDuration(0);
+                      setIsPlayingPreview(false);
+                    }}
+                    className="h-7 w-7 rounded-full border border-zinc-700 bg-zinc-800/60 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-zinc-700 transition-all cursor-pointer shrink-0"
+                    title="Discard recording"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSendVoiceNote()}
+                    disabled={sending}
+                    className="flex shrink-0 items-center justify-center rounded-full bg-white text-black hover:bg-zinc-200 cursor-pointer shadow-md transition-all duration-200 h-9 w-9 disabled:bg-zinc-800 disabled:text-zinc-600 disabled:cursor-not-allowed"
+                  >
+                    {sending ? (
+                      <Loader2 className="h-4.5 w-4.5 animate-spin" />
+                    ) : (
+                      <Send className="h-4.5 w-4.5" />
+                    )}
+                  </button>
+                  <audio
+                    ref={audioPreviewRef}
+                    src={recordedUrl}
+                    onEnded={() => setIsPlayingPreview(false)}
+                    className="hidden"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Right side buttons: Dictation, Mic or Send */}
+            {!isRecording && !recordedUrl ? (
+              <>
+{!messageInput.trim() && selectedFiles.length === 0 ? (
+                  <button
+                    onClick={(e) => { handleMicClick(e); }}
+                    className="h-9 w-9 rounded-xl bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                    title="Record voice note"
+                    type="button"
+                  >
+                    <Mic className="h-4 w-4 text-zinc-400" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={editingMessage ? handleEditSubmit : handleSendMessage}
+                    disabled={sending}
+                    className="h-9 w-9 rounded-xl bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 flex items-center justify-center transition-all cursor-pointer disabled:cursor-not-allowed shrink-0"
+                  >
+                    {sending ? (
+                      <Loader2 className="h-4 w-4 text-black animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4 text-black" />
+                    )}
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                {isRecording && (
+                  <div className="flex items-center gap-1.5">
+                    {/* Pause/Resume toggle button */}
+                    <button
+                      onClick={isPaused ? handleResumeRecording : handlePauseRecording}
+                      className={`h-9 w-9 rounded-full flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+                        isPaused
+                          ? "bg-green-500 hover:bg-green-600"
+                          : "bg-amber-500 hover:bg-amber-600"
+                      }`}
+                      title={isPaused ? "Resume recording" : "Pause recording"}
+                      type="button"
+                    >
+                      {isPaused ? (
+                        <Play className="h-4 w-4 text-white ml-0.5" />
+                      ) : (
+                        <Pause className="h-4 w-4 text-white" />
+                      )}
+                    </button>
+                    {/* Send directly button - stops recording and sends immediately */}
+                    <button
+                      onClick={async () => {
+                        // Stop the recorder first to get the final blob
+                        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+                          mediaRecorderRef.current.stop();
+                        }
+                        if (recordingTimerRef.current) {
+                          clearInterval(recordingTimerRef.current);
+                          recordingTimerRef.current = null;
+                        }
+                        setIsRecording(false);
+                        setIsPaused(false);
+
+                        // Create blob from accumulated chunks
+                        const chunkBlob = new Blob(audioChunksRef.current, { type: audioChunksRef.current.length > 0 ? audioChunksRef.current[0].type : "audio/webm" });
+                        const duration = recordingDurationRef.current;
+
+                        // Send the voice note immediately
+                        await handleSendVoiceNote(chunkBlob, duration);
+                      }}
+                      className="h-9 w-9 rounded-xl bg-white hover:bg-zinc-200 flex items-center justify-center transition-all cursor-pointer shrink-0"
+                      title="Send recording"
+                      type="button"
+                    >
+                      <Send className="h-4 w-4 text-black" />
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
+        )}
 
-        {/* Context menu */}
-        <AnimatePresence>
-          {contextMenu && (
-            <>
+        {/* Context menu — rendered via portal to avoid motion.div transform stacking context */}
+        {/* Camera capture portal */}
+        {showCamera && createPortal(
+          <div className="fixed inset-0 z-[500] bg-black flex flex-col">
+            <video
+              ref={cameraVideoRef}
+              autoPlay
+              playsInline
+              muted
+              className="flex-1 w-full object-cover"
+            />
+            <div className="flex items-center justify-between px-8 py-6 bg-black/80">
+              <button
+                type="button"
+                onClick={handleCloseCamera}
+                className="h-10 w-20 rounded-full border border-zinc-600 text-zinc-400 hover:text-white hover:border-zinc-400 font-bold text-xs transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCapturePhoto}
+                className="h-16 w-16 rounded-full bg-white border-4 border-zinc-300 hover:border-white transition-all cursor-pointer flex items-center justify-center"
+              >
+                <div className="h-12 w-12 rounded-full bg-white border-2 border-zinc-900" />
+              </button>
+              <div className="w-20" />
+            </div>
+          </div>,
+          document.body
+        )}
+
+        {contextMenu && createPortal(
+          <>
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 z-[100]"
+                className="fixed inset-0 z-[300]"
                 onClick={() => setContextMenu(null)}
               />
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
-                className="fixed z-[101] bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden py-1 min-w-[160px]"
+                className="fixed z-[310] bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden py-1 min-w-[180px]"
+                ref={contextMenuRef}
                 style={{ left: contextMenu.x, top: contextMenu.y }}
               >
+                {/* Reactions row */}
+                {!contextMenu.message.isDeleted && (
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/50 gap-0.5">
+                    {["👍", "❤️", "😂", "😮", "😢", "😠"].map((emoji) => (
+                      <button
+                        key={emoji}
+                        onClick={() => {
+                          handleReaction(contextMenu.message, emoji);
+                          setContextMenu(null);
+                        }}
+                        className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-zinc-800 text-sm transition-all cursor-pointer hover:scale-110 active:scale-95"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <button
                   onClick={() => {
                     handleReply(contextMenu.message);
@@ -1351,14 +2852,42 @@ export default function Communities({ user, socket }: CommunitiesProps) {
                       <Trash2 className="h-3.5 w-3.5" />
                       Delete for everyone
                     </button>
-                    <button
-                      onClick={() => handleDeleteForMe(contextMenu.message._id)}
-                      className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-400 hover:bg-zinc-800 transition-colors cursor-pointer"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                      Delete for me
-                    </button>
                   </>
+                )}
+                {/* Delete for me — available for ALL messages, not just own */}
+                {!contextMenu.message.isDeleted && (
+                  <button
+                    onClick={() => handleDeleteForMe(contextMenu.message._id)}
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-400 hover:bg-zinc-800 transition-colors cursor-pointer"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Delete for me
+                  </button>
+                )}
+                {/* Copy Message */}
+                {!contextMenu.message.isDeleted && (
+                  <button
+                    onClick={() => handleCopyMessage(contextMenu.message)}
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    Copy Message
+                  </button>
+                )}
+                {/* Forward Message */}
+                {!contextMenu.message.isDeleted && (
+                  <button
+                    onClick={() => {
+                      setForwardModal({ message: contextMenu.message });
+                      setContextMenu(null);
+                      fetchForwardConversations();
+                      setSelectedForwardConvIds([]);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+                  >
+                    <Share2 className="h-3.5 w-3.5" />
+                    Forward Message
+                  </button>
                 )}
                 {/* Pin/Unpin — available to all members */}
                 {isMessagePinned(contextMenu.message._id) ? (
@@ -1379,18 +2908,38 @@ export default function Communities({ user, socket }: CommunitiesProps) {
                   </button>
                 )}
               </motion.div>
-            </>
-          )}
-        </AnimatePresence>
+            </>,
+          document.body
+        )}
       </div>
     );
   };
 
   return (
     <>
-      <div className="h-full w-full overflow-hidden">
-        {view === "list" ? renderCommunityList() : renderCommunityChat()}
-      </div>
+      <GlassCard
+        className="w-full h-full pt-0 sm:pt-4 lg:pt-4 xl:pt-5 pb-0 px-0 flex !rounded-none sm:!rounded-3xl lg:!rounded-4xl sm:border-x sm:border-t sm:border-white/5"
+      >
+        {view === "list" && renderCommunityList()}
+        {view === "chat" && renderCommunityChat()}
+        {view === "profile" && selectedCommunity && (
+          <CommunityProfileOverlay
+            community={selectedCommunity}
+            isAdmin={selectedCommunity.creator?._id === userId}
+            onClose={() => setView("chat")}
+    onOpenSettings={() => setView("settings")}
+    onUserSelected={onUserSelected}
+  />
+)}
+{view === "settings" && selectedCommunity && (
+  <CommunitySettingsPage
+    community={selectedCommunity}
+    isAdmin={selectedCommunity.creator?._id === userId}            onClose={() => setView("chat")}
+    onUpdated={handleCommunityUpdated}
+    onDeleted={handleCommunityDeleted}
+  />
+)}
+      </GlassCard>
       <CreateCommunityModal
         isOpen={createModalOpen}
         onClose={() => setCreateModalOpen(false)}
@@ -1406,15 +2955,200 @@ export default function Communities({ user, socket }: CommunitiesProps) {
         onConfirm={handleLeaveCurrentCommunity}
         onCancel={cancelLeaveCommunity}
       />
-      {selectedCommunity && (
-        <CommunitySettingsModal
-          isOpen={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          community={selectedCommunity}
-          onUpdated={handleCommunityUpdated}
-          onDeleted={handleCommunityDeleted}
+      <ConfirmDialog
+        isOpen={confirmClearForMeOpen}
+        title="Clear chat for me?"
+        message={`This will clear all messages in "${selectedCommunity?.name || "this community"}" for you only. Other members will still see their messages.`}
+        confirmLabel="Clear"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={() => {
+          setMessages([]);
+          setConfirmClearForMeOpen(false);
+        }}
+        onCancel={() => setConfirmClearForMeOpen(false)}
+      />
+
+      {/* Image Crop Modal */}
+      <ImageCropModal
+        isOpen={cropModalOpen}
+        onClose={() => {
+          setCropModalOpen(false);
+          // Only clean up queue if there are no remaining items (otherwise handleCropComplete manages it)
+          if (cropPendingQueueRef.current.length === 0) {
+            setCropQueueFiles([]);
+            setCropSrc(null);
+          }
+        }}
+        imageSrc={cropSrc || ""}
+        onCropComplete={handleCropComplete}
+      />
+
+      {/* Group call floor — LiveKit-powered multi-participant audio/video */}
+      {showGroupCall && groupCallToken && groupCallUrl && selectedCommunity && (
+        <GroupCallFloor
+          livekitUrl={groupCallUrl}
+          token={groupCallToken}
+          roomName={groupCallRoomName}
+          callType={groupCallType}
+          onLeave={() => {
+            setShowGroupCall(false);
+            setGroupCallToken(null);
+            socket?.emit("community:call-ended", {
+              communityId: selectedCommunity._id,
+            });
+          }}
         />
       )}
+
+      {/* Forward Message Modal */}
+      {forwardModal && createPortal(
+        <AnimatePresence>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center"
+          >
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => {
+                setForwardModal(null);
+                setSelectedForwardConvIds([]);
+                setForwardConversations([]);
+              }}
+            />
+            <motion.div
+              initial={{ opacity: 0, y: 20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="relative z-10 w-full max-w-md mx-4 bg-zinc-900/95 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden max-h-[80vh] flex flex-col"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/50 shrink-0">
+                <h3 className="text-label text-base font-semibold text-white">Forward Message</h3>
+                <button
+                  onClick={() => {
+                    setForwardModal(null);
+                    setSelectedForwardConvIds([]);
+                    setForwardConversations([]);
+                  }}
+                  className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer"
+                >
+                  <X className="h-3.5 w-3.5 text-zinc-500" />
+                </button>
+              </div>
+
+              {/* Message preview */}
+              <div className="px-4 py-3 border-b border-zinc-800/30 bg-zinc-900/60 shrink-0">
+                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">
+                  Message
+                </p>
+                <div className="flex items-start gap-2.5">
+                  <div className="h-6 w-6 rounded-full bg-zinc-800 shrink-0 flex items-center justify-center overflow-hidden">
+                    {forwardModal.message.sender.profilePic?.url ? (
+                      <img src={forwardModal.message.sender.profilePic?.url || ""} alt="" className="h-full w-full object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                    ) : (
+                      <span className="text-[8px] font-bold text-zinc-500">
+                        {forwardModal.message.sender.fullName?.charAt(0) || "?"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] font-semibold text-zinc-300 line-clamp-2 leading-snug">
+                      {forwardModal.message.text || (forwardModal.message.attachments?.length ? "📎 Attachment" : "")}
+                    </p>
+                    <p className="text-[9px] text-zinc-400 mt-0.5">
+                      {forwardModal.message.sender.fullName} · {formatMessageTime(forwardModal.message.createdAt)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Conversation list */}
+              <div className="flex-1 overflow-y-auto px-4 py-2">
+                {loadingForwardConvs ? (
+                  <div className="flex items-center justify-center py-10">
+                    <Loader2 className="h-5 w-5 text-zinc-500 animate-spin" />
+                  </div>
+                ) : forwardConversations.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 text-center">
+                    <MessageSquare className="h-8 w-8 text-zinc-700 mb-2" />
+                    <p className="text-sm font-semibold text-zinc-400">No conversations yet</p>
+                    <p className="text-[11px] text-zinc-400 mt-1">
+                      Start a chat to forward messages
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-0.5 py-1">
+                    {forwardConversations.map((conv) => {
+                      const partner = conv.participants?.find((p: any) => p._id !== user._id);
+                      const isSelected = selectedForwardConvIds.includes(conv._id);
+                      return (
+                        <button
+                          key={conv._id}
+                          onClick={() => handleToggleForwardSelection(conv._id)}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all cursor-pointer text-left ${
+                            isSelected
+                              ? "bg-white/10 border border-white/20"
+                              : "hover:bg-zinc-800/50 border border-transparent"
+                          }`}
+                        >
+                          <div className="h-9 w-9 rounded-full bg-zinc-800 shrink-0 flex items-center justify-center overflow-hidden border border-zinc-700/50">
+                            {partner?.profilePic?.url ? (
+                              <img src={partner.profilePic?.url || ""} alt="" className="h-full w-full object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                            ) : (
+                              <span className="text-[10px] font-bold text-zinc-500">
+                                {partner?.fullName?.charAt(0) || "?"}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-zinc-200 truncate">
+                              {partner?.fullName || "Unknown"}
+                            </p>
+                            <p className="text-[11px] text-zinc-500 truncate">
+                              @{partner?.username || "unknown"}
+                            </p>
+                          </div>
+                          <div className={`h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
+                            isSelected ? "bg-white border-white" : "border-zinc-600"
+                          }`}>
+                            {isSelected && (
+                              <svg className="h-3 w-3 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-4 py-3 border-t border-zinc-800/50 shrink-0">
+                <button
+                  onClick={handleExecuteForward}
+                  disabled={selectedForwardConvIds.length === 0}
+                  className="w-full rounded-full bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black text-sm font-bold py-2.5 transition-all cursor-pointer disabled:cursor-not-allowed"
+                >
+                  {selectedForwardConvIds.length > 0
+                    ? `Send (${selectedForwardConvIds.length}/5)`
+                    : "Select conversations"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        </AnimatePresence>,
+        document.body
+      )}
+
     </>
   );
 }

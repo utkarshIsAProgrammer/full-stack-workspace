@@ -38,14 +38,6 @@ export async function shareToExternal(data: ShareData): Promise<boolean> {
     const shareUrl = url || window.location.href;
     const shareText = text ? `${text}\n\n${shareUrl}` : shareUrl;
     await navigator.clipboard.writeText(shareText);
-    window.dispatchEvent(
-      new CustomEvent("showToast", {
-        detail: {
-          message: "Link copied to clipboard!",
-          type: "success",
-        },
-      }),
-    );
     return true;
   } catch (err) {
     logger.error("Clipboard fallback failed", err);
@@ -64,15 +56,9 @@ export async function shareToExternal(data: ShareData): Promise<boolean> {
 /**
  * Specific helper to share a post to external platforms.
  */
-export function sharePostToExternal(
-  slug: string,
-  title?: string,
-  authorUsername?: string,
-) {
+export function sharePostToExternal(slug: string) {
   const url = `${window.location.origin}/post/${slug}`;
   return shareToExternal({
-    title: `ORBIT | ${title || "A post"}`,
-    text: `Check out this post${authorUsername ? ` by @${authorUsername}` : ""} on ORBIT`,
     url,
   });
 }

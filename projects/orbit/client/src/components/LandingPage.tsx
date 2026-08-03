@@ -1,4 +1,4 @@
-import { useEffect, useRef, lazy, Suspense, useState } from "react";
+import { useEffect, useRef } from "react";
 import { gsap } from "gsap";
 import { motion } from "motion/react";
 import {
@@ -13,8 +13,6 @@ import {
 import GlassCard from "./GlassCard";
 import SplitText from "./SplitText";
 import ShinyText from "./ShinyText";
-
-const LandingSpaceBackdrop = lazy(() => import("./LandingSpaceBackdrop"));
 
 interface LandingPageProps {
 	onScrollToAuth: () => void;
@@ -33,20 +31,6 @@ export default function LandingPage({
 	const prefersReducedMotion =
 		typeof window !== "undefined" &&
 		window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-	const [isLargeScreen, setIsLargeScreen] = useState(() => {
-		if (typeof window === "undefined") return false;
-		return window.innerWidth >= 768;
-	});
-
-	useEffect(() => {
-		if (typeof window === "undefined") return;
-		const checkScreen = () => {
-			setIsLargeScreen(window.innerWidth >= 768);
-		};
-		window.addEventListener("resize", checkScreen);
-		return () => window.removeEventListener("resize", checkScreen);
-	}, []);
 
 	useEffect(() => {
 		if (!subtitleRef.current || !ctaRef.current || prefersReducedMotion)
@@ -86,25 +70,8 @@ export default function LandingPage({
 
 	return (
 		<div className="relative w-full min-h-screen bg-transparent overflow-hidden flex flex-col justify-between font-sans selection:bg-white/20">
-			{/* Fully interactive 3D deep space cosmic backdrop (lazy-loaded) */}
-			{isLargeScreen && (
-				<Suspense
-					fallback={<div className="absolute inset-0 bg-black z-0" />}>
-					<LandingSpaceBackdrop />
-				</Suspense>
-			)}
-			{!isLargeScreen && (
-				<div
-					aria-hidden="true"
-					className="landing-mobile-backdrop absolute inset-0 z-0 pointer-events-none overflow-hidden">
-					<div className="landing-mobile-backdrop__glow" />
-					<div className="landing-mobile-globe">
-						<span />
-						<span />
-						<span />
-					</div>
-				</div>
-			)}
+			{/* Background fallback */}
+			<div className="absolute inset-0 bg-zinc-950 z-0" />
 
 			{/* 1. Monochromatic Accent Glows */}
 			<div className="absolute inset-x-0 -top-40 h-[70vh] bg-linear-to-b from-white/5 via-transparent to-transparent blur-[140px] pointer-events-none -z-10" />

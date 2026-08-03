@@ -75,11 +75,11 @@ const userSchema = new mongoose.Schema(
 			unique: true,
 		},
 
-		// hashed password
+		// hashed password (not required for OAuth users)
 		password: {
 			type: String,
-			required: [true, "Password is required!"],
 			minlength: [8, "Password must be at least 8 characters long!"],
+			default: "",
 		},
 
 		// user followers
@@ -201,6 +201,19 @@ const userSchema = new mongoose.Schema(
 				ref: "User",
 			},
 		],
+
+		// OAuth provider ("google", "local", etc.)
+		oauthProvider: {
+			type: String,
+			enum: ["local", "google"],
+			default: "local",
+		},
+
+		// OAuth provider user ID
+		oauthId: {
+			type: String,
+			default: null,
+		},
 
 		// Admin flag
 		isAdmin: {

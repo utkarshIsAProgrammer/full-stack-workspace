@@ -6,7 +6,13 @@ import GlassCard from "./GlassCard";
 import Skeleton from "./Skeleton";
 import UserAvatar from "./UserAvatar";
 import { apiFetch } from "../utils/api";
+import { getCachedResponse } from "../utils/apiCache";
+import { useCacheRefresh } from "../hooks/useCacheRefresh";
 import EmptyState from "./EmptyState";
+
+// Stable RegExp for matching trending/popular cache refresh events
+// — module-level to prevent React effect re-attachment on every render.
+const MATCHER_TRENDING = /\/api\/posts\/trending|sort=likesCount/;
 import { logger } from "../utils/logger";
 
 interface ExploreProps {
@@ -38,9 +44,9 @@ export default function Explore({
   useEffect(() => {
     const handleCommentAdded = (e: CustomEvent<{ postId: string; commentsCount: number }>) => {
       const { postId, commentsCount } = e.detail;
-      setPostCandidates((prev) =>
-        prev.map((p) => (p._id === postId ? { ...p, commentsCount } : p))
-      );
+      const update = (p: Post) => (p._id === postId ? { ...p, commentsCount } : p);
+      setPostCandidates((prev) => prev.map(update));
+      setTrendingPosts((prev) => prev.map(update));
     };
     window.addEventListener("postCommentAdded", handleCommentAdded as EventListener);
     return () => window.removeEventListener("postCommentAdded", handleCommentAdded as EventListener);
@@ -51,6 +57,7 @@ export default function Explore({
     const handlePostDeleted = (e: CustomEvent<{ postId: string }>) => {
       const { postId } = e.detail;
       setPostCandidates((prev) => prev.filter((p) => p._id !== postId));
+      setTrendingPosts((prev) => prev.filter((p) => p._id !== postId));
     };
     window.addEventListener("postDeleted", handlePostDeleted as EventListener);
     return () => window.removeEventListener("postDeleted", handlePostDeleted as EventListener);
@@ -60,13 +67,12 @@ export default function Explore({
   useEffect(() => {
     const handlePostUpdated = (e: CustomEvent<{ post: Post }>) => {
       const { post } = e.detail;
-      setPostCandidates((prev) =>
-        prev.map((p) =>
-          p._id === post._id
-            ? { ...p, ...post, likedByMe: p.likedByMe, savedByMe: p.savedByMe, repostedByMe: p.repostedByMe }
-            : p,
-        ),
-      );
+      const update = (p: Post) =>
+        p._id === post._id
+          ? { ...p, ...post, likedByMe: p.likedByMe, savedByMe: p.savedByMe, repostedByMe: p.repostedByMe }
+          : p;
+      setPostCandidates((prev) => prev.map(update));
+      setTrendingPosts((prev) => prev.map(update));
     };
     window.addEventListener("postUpdated", handlePostUpdated as EventListener);
     return () => window.removeEventListener("postUpdated", handlePostUpdated as EventListener);
@@ -76,9 +82,9 @@ export default function Explore({
   useEffect(() => {
     const handleCommentDeleted = (e: CustomEvent<{ postId: string; commentsCount: number }>) => {
       const { postId, commentsCount } = e.detail;
-      setPostCandidates((prev) =>
-        prev.map((p) => (p._id === postId ? { ...p, commentsCount } : p))
-      );
+      const update = (p: Post) => (p._id === postId ? { ...p, commentsCount } : p);
+      setPostCandidates((prev) => prev.map(update));
+      setTrendingPosts((prev) => prev.map(update));
     };
     window.addEventListener("postCommentDeleted", handleCommentDeleted as EventListener);
     return () => window.removeEventListener("postCommentDeleted", handleCommentDeleted as EventListener);
@@ -88,9 +94,9 @@ export default function Explore({
   useEffect(() => {
     const handlePostViewUpdated = (e: CustomEvent<{ postId: string; viewsCount: number }>) => {
       const { postId, viewsCount } = e.detail;
-      setPostCandidates((prev) =>
-        prev.map((p) => (p._id === postId ? { ...p, viewsCount } : p))
-      );
+      const update = (p: Post) => (p._id === postId ? { ...p, viewsCount } : p);
+      setPostCandidates((prev) => prev.map(update));
+      setTrendingPosts((prev) => prev.map(update));
     };
     window.addEventListener("postViewUpdated", handlePostViewUpdated as EventListener);
     return () => window.removeEventListener("postViewUpdated", handlePostViewUpdated as EventListener);
@@ -101,26 +107,24 @@ export default function Explore({
     const handleInteraction = (e: CustomEvent<{ postId: string; type: string; value: boolean; source?: string }>) => {
       const { postId, type, value, source } = e.detail;
       const isSocketSource = source === "socket";
-      setPostCandidates((prev) =>
-        prev.map((p) => {
-          if (p._id !== postId) return p;
-          if (type === "like" || type === "save" || type === "repost") {
-            const statusField = type === "like" ? "likedByMe" : type === "save" ? "savedByMe" : "repostedByMe";
-            const countField = type === "like" ? "likesCount" : type === "save" ? "savesCount" : "repostsCount";
-            const count = Math.max(0, (p[countField as keyof Post] as number || 0) + (value ? 1 : -1));
-            if (isSocketSource) {
-              // Socket: only update count, leave existing status untouched
-              return { ...p, [countField]: count };
-            }
-            // Local: update both status and count
-            return { ...p, [statusField]: value, [countField]: count };
+      const updatePost = (p: Post): Post => {
+        if (p._id !== postId) return p;
+        if (type === "like" || type === "save" || type === "repost") {
+          const statusField = type === "like" ? "likedByMe" : type === "save" ? "savedByMe" : "repostedByMe";
+          const countField = type === "like" ? "likesCount" : type === "save" ? "savesCount" : "repostsCount";
+          const count = Math.max(0, (p[countField as keyof Post] as number || 0) + (value ? 1 : -1));
+          if (isSocketSource) {
+            return { ...p, [countField]: count };
           }
-          if (type === "share") {
-            return { ...p, sharesCount: Math.max(0, (p.sharesCount || 0) + 1) };
-          }
-          return p;
-        }),
-      );
+          return { ...p, [statusField]: value, [countField]: count };
+        }
+        if (type === "share") {
+          return { ...p, sharesCount: Math.max(0, (p.sharesCount || 0) + 1) };
+        }
+        return p;
+      };
+      setPostCandidates((prev) => prev.map(updatePost));
+      setTrendingPosts((prev) => prev.map(updatePost));
     };
     window.addEventListener("postInteractionChanged", handleInteraction as EventListener);
     return () => window.removeEventListener("postInteractionChanged", handleInteraction as EventListener);
@@ -129,104 +133,111 @@ export default function Explore({
   // Toggle like from search results
   const handleLikeToggle = async (postId: string, likedByMe: boolean) => {
     const prevLiked = likedByMe;
-    const prevCount = (() => { const p = postCandidates.find(x => x._id === postId); return p?.likesCount ?? 0; })();
+    const prevCount = (() => { const p = [...postCandidates, ...trendingPosts].find(x => x._id === postId); return p?.likesCount ?? 0; })();
 
-    setPostCandidates((prev) =>
-      prev.map((p) =>
-        p._id === postId
-          ? { ...p, likedByMe: !prevLiked, likesCount: Math.max(0, (p.likesCount || 0) + (prevLiked ? -1 : 1)) }
-          : p,
-      ),
-    );
+    const toggleLike = (p: Post) =>
+      p._id === postId
+        ? { ...p, likedByMe: !prevLiked, likesCount: Math.max(0, (p.likesCount || 0) + (prevLiked ? -1 : 1)) }
+        : p;
+    setPostCandidates((prev) => prev.map(toggleLike));
+    setTrendingPosts((prev) => prev.map(toggleLike));
     try {
       const res = await apiFetch(`/api/likes/post/${postId}`, { method: "POST" });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setPostCandidates((prev) =>
-          prev.map((p) =>
-            p._id === postId ? { ...p, likedByMe: prevLiked, likesCount: prevCount } : p
-          )
-        );
+        const rollback = (p: Post) =>
+          p._id === postId ? { ...p, likedByMe: prevLiked, likesCount: prevCount } : p;
+        setPostCandidates((prev) => prev.map(rollback));
+        setTrendingPosts((prev) => prev.map(rollback));
+        window.dispatchEvent(new CustomEvent("showToast", {
+          detail: { message: data.message || "Failed to like post", type: "error" },
+        }));
       } else {
         window.dispatchEvent(new CustomEvent("postInteractionChanged", { detail: { postId, type: "like", value: !likedByMe } }));
       }
     } catch (e) {
       logger.error(e);
-      setPostCandidates((prev) =>
-        prev.map((p) =>
-          p._id === postId ? { ...p, likedByMe: prevLiked, likesCount: prevCount } : p
-        )
-      );
+      const rollback = (p: Post) =>
+        p._id === postId ? { ...p, likedByMe: prevLiked, likesCount: prevCount } : p;
+      setPostCandidates((prev) => prev.map(rollback));
+      setTrendingPosts((prev) => prev.map(rollback));
+      window.dispatchEvent(new CustomEvent("showToast", {
+        detail: { message: "Network connection error", type: "error" },
+      }));
     }
   };
 
   // Toggle save from search results
   const handleSaveToggle = async (postId: string, savedByMe: boolean) => {
     const prevSaved = savedByMe;
-    const prevCount = (() => { const p = postCandidates.find(x => x._id === postId); return p?.savesCount ?? 0; })();
+    const prevCount = (() => { const p = [...postCandidates, ...trendingPosts].find(x => x._id === postId); return p?.savesCount ?? 0; })();
 
-    setPostCandidates((prev) =>
-      prev.map((p) =>
-        p._id === postId
-          ? { ...p, savedByMe: !prevSaved, savesCount: Math.max(0, (p.savesCount || 0) + (prevSaved ? -1 : 1)) }
-          : p,
-      ),
-    );
+    const toggleSave = (p: Post) =>
+      p._id === postId
+        ? { ...p, savedByMe: !prevSaved, savesCount: Math.max(0, (p.savesCount || 0) + (prevSaved ? -1 : 1)) }
+        : p;
+    setPostCandidates((prev) => prev.map(toggleSave));
+    setTrendingPosts((prev) => prev.map(toggleSave));
     try {
       const res = await apiFetch(`/api/saves/${postId}`, { method: "POST" });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        setPostCandidates((prev) =>
-          prev.map((p) =>
-            p._id === postId ? { ...p, savedByMe: prevSaved, savesCount: prevCount } : p
-          )
-        );
+        const rollback = (p: Post) =>
+          p._id === postId ? { ...p, savedByMe: prevSaved, savesCount: prevCount } : p;
+        setPostCandidates((prev) => prev.map(rollback));
+        setTrendingPosts((prev) => prev.map(rollback));
+        window.dispatchEvent(new CustomEvent("showToast", {
+          detail: { message: data.message || "Failed to save post", type: "error" },
+        }));
       } else {
         window.dispatchEvent(new CustomEvent("postInteractionChanged", { detail: { postId, type: "save", value: !savedByMe } }));
       }
     } catch (e) {
       logger.error(e);
-      setPostCandidates((prev) =>
-        prev.map((p) =>
-          p._id === postId ? { ...p, savedByMe: prevSaved, savesCount: prevCount } : p
-        )
-      );
+      const rollback = (p: Post) =>
+        p._id === postId ? { ...p, savedByMe: prevSaved, savesCount: prevCount } : p;
+      setPostCandidates((prev) => prev.map(rollback));
+      setTrendingPosts((prev) => prev.map(rollback));
+      window.dispatchEvent(new CustomEvent("showToast", {
+        detail: { message: "Network connection error", type: "error" },
+      }));
     }
   };
 
   // Toggle repost from search results
   const handleRepostToggle = async (postId: string, repostedByMe: boolean) => {
     const prevReposted = repostedByMe;
-    const prevCount = (() => { const p = postCandidates.find(x => x._id === postId); return p?.repostsCount ?? 0; })();
+    const prevCount = (() => { const p = [...postCandidates, ...trendingPosts].find(x => x._id === postId); return p?.repostsCount ?? 0; })();
 
-    setPostCandidates((prev) =>
-      prev.map((p) =>
-        p._id === postId
-          ? { ...p, repostedByMe: !prevReposted, repostsCount: Math.max(0, (p.repostsCount || 0) + (prevReposted ? -1 : 1)) }
-          : p,
-      ),
-    );
+    const toggleRepost = (p: Post) =>
+      p._id === postId
+        ? { ...p, repostedByMe: !prevReposted, repostsCount: Math.max(0, (p.repostsCount || 0) + (prevReposted ? -1 : 1)) }
+        : p;
+    setPostCandidates((prev) => prev.map(toggleRepost));
+    setTrendingPosts((prev) => prev.map(toggleRepost));
     try {
       const res = await apiFetch(`/api/reposts/${postId}`, { method: "POST" });
       const data = await res.json();
-      if (!res.ok || !data.success) {      setPostCandidates((prev) =>
-        prev.map((p) =>
-          p._id === postId ? { ...p, repostedByMe: prevReposted, repostsCount: prevCount } : p
-        )
-      );
-      window.dispatchEvent(new CustomEvent("showToast", {
-        detail: { message: data.message || "Failed to repost", type: "error" },
-      }));
+      if (!res.ok || !data.success) {
+        const rollback = (p: Post) =>
+          p._id === postId ? { ...p, repostedByMe: prevReposted, repostsCount: prevCount } : p;
+        setPostCandidates((prev) => prev.map(rollback));
+        setTrendingPosts((prev) => prev.map(rollback));
+        window.dispatchEvent(new CustomEvent("showToast", {
+          detail: { message: data.message || "Failed to repost", type: "error" },
+        }));
       } else {
         window.dispatchEvent(new CustomEvent("postInteractionChanged", { detail: { postId, type: "repost", value: !repostedByMe } }));
+        window.dispatchEvent(new CustomEvent("showToast", {
+          detail: { message: !repostedByMe ? "Reposted!" : "Repost removed.", type: "success" },
+        }));
       }
     } catch (e) {
       logger.error(e);
-      setPostCandidates((prev) =>
-        prev.map((p) =>
-          p._id === postId ? { ...p, repostedByMe: prevReposted, repostsCount: prevCount } : p
-        )
-      );
+      const rollback = (p: Post) =>
+        p._id === postId ? { ...p, repostedByMe: prevReposted, repostsCount: prevCount } : p;
+      setPostCandidates((prev) => prev.map(rollback));
+      setTrendingPosts((prev) => prev.map(rollback));
       window.dispatchEvent(new CustomEvent("showToast", {
         detail: { message: "Network connection error", type: "error" },
       }));
@@ -260,15 +271,46 @@ export default function Explore({
     } finally {
       setLoading(false);
     }
-  };
+  };	// On mount, try to display cached trending data instantly (stale-while-revalidate)
+	useEffect(() => {
+		(async () => {
+			if (activeSegment !== "trending" || q) return;
+			try {
+				const [cachedHashtags, cachedPosts] = await Promise.all([
+					getCachedResponse<{ hashtags: string[]; success: boolean }>(
+						"/api/posts/trending/hashtags",
+					),
+					getCachedResponse<{
+						posts: Post[];
+						success: boolean;
+					}>("/api/posts?limit=5&sort=likesCount"),
+				]);
+				if (cachedHashtags?.hashtags?.length && cachedHashtags.success) {
+					setTrendingHashtags(cachedHashtags.hashtags);
+				}
+				if (cachedPosts?.posts?.length && cachedPosts.success) {
+					setTrendingPosts(cachedPosts.posts);
+				}
+				if (cachedHashtags || cachedPosts) {
+					setLoading(false);
+				}
+			} catch {
+				// Cache read failures are non-critical
+			}
+		})();
+	}, []);
 
-  // Fetch trending hashtags and popular posts
-  const fetchTrending = async () => {
+	// When the background cache timer refreshes trending/popular data,
+	// re-fetch so the Explore tab stays up-to-date automatically.
+	useCacheRefresh(MATCHER_TRENDING, () => fetchTrending());
+
+	// Fetch trending hashtags and popular posts
+	const fetchTrending = async () => {
     setLoading(true);
     try {
       const [hashtagRes, postsRes] = await Promise.all([
-        apiFetch("/api/posts/trending/hashtags"),
-        apiFetch("/api/posts?limit=5&sort=likesCount"),
+        apiFetch("/api/posts/trending/hashtags", { bypassCache: true }),
+        apiFetch("/api/posts?limit=5&sort=likesCount", { bypassCache: true }),
       ]);
       const hashtagData = await hashtagRes.json();
       const postsData = await postsRes.json();
@@ -312,7 +354,7 @@ export default function Explore({
           <span className="text-[10px] font-mono tracking-[0.25em] font-black text-zinc-400 uppercase flex items-center gap-1.5">
             <Compass className="h-6 w-6 text-white shrink-0" /> EXPLORE
           </span>
-          <h2 className="font-sans text-xl font-black uppercase tracking-tight text-slate-900 dark:text-zinc-100 md:text-2xl mt-1">
+          <h2 className="text-display-sm text-slate-900 dark:text-zinc-100 mt-1">
             Discover
           </h2>
         </div>
@@ -417,7 +459,7 @@ export default function Explore({
                         <div className="text-left min-w-0">
                           <h4
                             onClick={() => onUserSelected(usr.username)}
-                            className="text-sm font-semibold text-slate-900 dark:text-zinc-100 cursor-pointer hover:underline hover:text-indigo-600 dark:hover:text-indigo-400 truncate"
+                            className="text-sm font-semibold text-slate-900 dark:text-zinc-100 cursor-pointer hover:underline hover:text-white dark:hover:text-white truncate"
                           >
                             {usr.fullName}
                           </h4>
@@ -539,8 +581,8 @@ export default function Explore({
                 <GlassCard className="p-5 rounded-3xl border border-zinc-800/40">
                   <div className="flex items-center gap-2 mb-4">
                     <TrendingUp className="h-5 w-5 text-orange-400" />
-                    <h3 className="text-[11px] font-black tracking-widest text-zinc-400 uppercase">
-                      TRENDING HASHTAGS
+                    <h3 className="text-label font-semibold text-zinc-300">
+                      Trending Hashtags
                     </h3>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -569,8 +611,8 @@ export default function Explore({
 
               {/* Trending Posts */}
               <div>
-                <h3 className="text-[11px] font-black tracking-widest text-zinc-400 uppercase mb-4 px-1 flex items-center gap-2">
-                  <Flame className="h-4 w-4 text-orange-400" /> POPULAR POSTS
+                <h3 className="text-label font-semibold text-zinc-300 mb-4 px-1 flex items-center gap-2">
+                  <Flame className="h-4 w-4 text-orange-400" /> Popular Posts
                 </h3>
                 {loading ? (
                   <div className="space-y-3">
