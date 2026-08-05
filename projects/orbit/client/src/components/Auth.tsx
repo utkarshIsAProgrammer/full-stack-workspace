@@ -219,7 +219,7 @@ export default function Auth({
                   onChange={(e) => { setUsername(e.target.value.toLowerCase().replace(/\s+/g, "")); clearFieldError("username"); }}
                   maxLength={100}
                   aria-describedby={fieldErrors.username ? "signup-username-error" : undefined}
-                  className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-[12px] md:text-sm font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-[12px] md:text-sm font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
                 />
                 <div className="flex items-center justify-between px-1">
                   <ValidationMessage id="signup-username-error" message={fieldErrors.username} />
@@ -238,7 +238,7 @@ export default function Auth({
                   onChange={(e) => { setFullName(e.target.value); clearFieldError("fullName"); }}
                   maxLength={50}
                   aria-describedby={fieldErrors.fullName ? "signup-fullname-error" : undefined}
-                  className="w-full rounded-full border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-[12px] md:text-sm font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-[12px] md:text-sm font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all"
                 />
                 <div className="flex items-center justify-between px-1">
                   <ValidationMessage id="signup-fullname-error" message={fieldErrors.fullName} />
@@ -326,7 +326,7 @@ export default function Auth({
                 value={bio}
                 onChange={(e) => setBio(e.target.value)}
                 maxLength={300}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-[12px] md:text-sm font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all resize-none"
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-950/20 py-2 px-3.5 text-[12px] md:text-sm font-medium text-white placeholder-zinc-500 focus:outline-none focus:border-white focus:bg-zinc-900 focus:ring-1 focus:ring-white/10 transition-all resize-none"
               />
               <div className="flex justify-end px-1">
                 <CharCounter current={bio.length} max={300} />

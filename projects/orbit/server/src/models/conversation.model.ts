@@ -22,6 +22,37 @@ const conversationSchema = new mongoose.Schema(
       ref: "Message",
       default: null,
     },
+    // Last NON-message action in the conversation (e.g. a reaction). Used by
+    // the chat list to show "reacted ❤️ to your message" instead of the stale
+    // last message. Reset to null whenever a new message is sent.
+    lastAction: {
+      type: {
+        type: String,
+        enum: ["reaction"],
+        default: null,
+      },
+      emoji: { type: String, default: "" },
+      messageId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Message",
+        default: null,
+      },
+      messageSenderId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+      },
+      actor: {
+        _id: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+        fullName: { type: String, default: "" },
+        username: { type: String, default: "" },
+      },
+      createdAt: { type: Date, default: null },
+    },
     unreadCounts: {
       type: Map,
       of: Number,

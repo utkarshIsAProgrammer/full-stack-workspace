@@ -49,6 +49,29 @@ export default function GlanceViewer({
 	const [showMenu, setShowMenu] = useState(false);
 	const [showReplyInput, setShowReplyInput] = useState(false);
 	const [replyText, setReplyText] = useState("");
+
+	// ── Smart media fit: fill the 9:16 frame exactly when the content matches;
+	// center it (no crop) when the content is smaller than the story canvas. ──
+	const [mediaFit, setMediaFit] = useState<"cover" | "contain">("cover");
+
+	const computeMediaFit = (w: number, h: number) => {
+		if (!w || !h) return;
+		const mediaAspect = w / h;
+		const frameAspect = 9 / 16; // story frame
+		const ratioMatches = Math.abs(mediaAspect - frameAspect) / frameAspect < 0.04;
+		const tooSmallToFill = w < 1080 && h < 1920; // less than a story canvas
+		setMediaFit(ratioMatches || !tooSmallToFill ? "cover" : "contain");
+	};
+
+	const handleImgLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+		const img = e.currentTarget;
+		computeMediaFit(img.naturalWidth, img.naturalHeight);
+	};
+
+	const handleVideoMeta = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+		const v = e.currentTarget;
+		computeMediaFit(v.videoWidth, v.videoHeight);
+	};
 	const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
 	const isLongPressingRef = useRef(false);
 	const menuRef = useRef<HTMLDivElement>(null);
@@ -84,6 +107,7 @@ export default function GlanceViewer({
 
 	// Sync localReactions when currentGlance changes
 	useEffect(() => {
+		setMediaFit("cover");
 		setLocalReactions(currentGlance?.reactions || []);
 		setReactedByMe(
 			currentGlance?.reactions?.some((r) => {
@@ -626,6 +650,9 @@ export default function GlanceViewer({
 			<div
 				className="relative w-full max-w-2xl max-h-[90vh] mx-4"
 				onClick={(e) => e.stopPropagation()}>
+				{/* Story frame + progress bars share one centered wrapper so the bars
+				    always sit exactly over the frame regardless of device size. */}
+				<div className="relative w-fit mx-auto">
 				{/* Progress bars row */}
 				<div className="absolute -top-8 left-0 right-0 flex gap-1.5 z-10">
 					{glimpses.map((g, idx) => (
@@ -648,9 +675,15 @@ export default function GlanceViewer({
 					))}
 				</div>
 
-				{/* The glance media with slide animation */}
+				{/* The glance media with slide animation — strict 9:16 story frame that
+				    always fits the viewport (width derived from height so the ratio is
+				    never broken, unlike aspect-ratio + max-height which conflict). */}
 				<div
-					className="relative overflow-hidden rounded-2xl border border-white/10 bg-black/40 shadow-2xl aspect-[9/16] max-h-[80vh]"
+					className="relative overflow-hidden rounded-2xl border border-white/10 bg-black/40 shadow-2xl"
+					style={{
+						aspectRatio: "9 / 16",
+						width: "min(100%, calc(80vh * 9 / 16), 26rem)",
+					}}
 					onMouseDown={handleMouseDown}
 					onMouseUp={handleMouseUp}
 					onMouseLeave={handleMouseUp}
@@ -726,6 +759,7 @@ export default function GlanceViewer({
 					<AnimatePresence mode="popLayout" initial={false}>
 						<motion.div
 							key={currentGlance._id}
+							className="absolute inset-0"
 							initial={{
 								opacity: 0,
 								x: slideDirection === "right" ? 80 : -80,
@@ -740,23 +774,24 @@ export default function GlanceViewer({
 							transition={{ duration: 0.2, ease: "easeOut" }}
 						>
 						{currentGlance.mediaType === "video" ? (
-							<div className="relative">
-								<video
-									ref={videoRef}
-									src={currentGlance.media.url}
-									className="w-full h-full object-cover"
-									autoPlay										muted
-										playsInline
-										draggable={false}
-										onEnded={handleVideoEnded}
-									/>
-							</div>
+							<video
+								ref={videoRef}
+								src={currentGlance.media.url}
+								className={`w-full h-full ${mediaFit === "contain" ? "object-contain object-center" : "object-cover"}`}
+								autoPlay
+								muted
+								playsInline
+								draggable={false}
+								onEnded={handleVideoEnded}
+								onLoadedMetadata={handleVideoMeta}
+							/>
 						) : (
 							<img
 								src={currentGlance.media.url}
 								alt=""
-								className="w-full h-full object-cover"
+								className={`w-full h-full ${mediaFit === "contain" ? "object-contain object-center" : "object-cover"}`}
 								draggable={false}
+								onLoad={handleImgLoad}
 							/>
 						)}
 						</motion.div>
@@ -793,6 +828,7 @@ export default function GlanceViewer({
 						</div>
 					)}
 				</div>
+				</div>{/* end story frame wrapper */}
 
 				{/* Liked by text */}
 				{(() => {

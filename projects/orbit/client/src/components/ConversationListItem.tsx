@@ -52,7 +52,11 @@ export default function ConversationListItem({
 				</div>
 				<div className="flex justify-between items-center gap-2 mt-1">
 					<p className="text-[11px] truncate leading-tight flex-1 text-zinc-400">
-						<ConversationLastMessage lastMessage={conv.lastMessage} />
+						<ConversationLastMessage
+							lastMessage={conv.lastMessage}
+							lastAction={conv.lastAction}
+							currentUserId={user._id}
+						/>
 					</p>
 					{unread > 0 && (
 						<span className="h-4.5 min-w-4.5 px-1 rounded-full bg-white text-[9px] font-extrabold text-black flex items-center justify-center shadow-sm border border-zinc-200 shrink-0">

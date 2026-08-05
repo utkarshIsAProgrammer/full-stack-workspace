@@ -10,6 +10,7 @@ import {
 } from "../schemas/comment.schema";
 import { getCache, setCache, clearCommentsCache } from "../configs/cache";
 import { createNotification, extractMentions } from "../utilities/notification";
+import { areMutuallyBlocked, getBlockedUserIds } from "../utilities/blockCheck";
 import { sanitizePlainText } from "../configs/sanitize";
 import { emitPostComment, emitCommentReply, emitCommentDeleted, emitCommentUpdated } from "../configs/socket";
 import { logInteraction } from "../services/affinityService";
@@ -36,8 +37,12 @@ export const getAllCommentsForPost = async (req: Request<Params>, res: Response)
       throw new BadRequestError("Invalid post ID!");
     }
 
-    // cache key
-    const cacheKey = `comments:all:${postId}`;
+    // Blocked users must not exist — filter out comments from anyone blocked
+    // in either direction. Because results are per-viewer, the cache key must
+    // include the viewer's ID (otherwise one user's filtered list would be
+    // served to another user).
+    const currentUserId = req.user?._id?.toString();
+    const cacheKey = `comments:all:${postId}:${currentUserId || "anon"}`;
 
     // get from cache
     try {
@@ -47,15 +52,35 @@ export const getAllCommentsForPost = async (req: Request<Params>, res: Response)
       logger.error(`Cache error in getAllCommentsForPost!`, { error: err.message });
     }
 
+    let blockedCommentIds: string[] = [];
+    if (currentUserId) {
+      const blockedIds = await getBlockedUserIds(currentUserId);
+      if (blockedIds.length > 0) {
+        const blockedComments = await Comment.find({ post: postId, author: { $in: blockedIds } })
+          .select("_id")
+          .lean();
+        blockedCommentIds = blockedComments.map((c) => c._id.toString());
+      }
+    }
+
     // fetch ALL comments for this post (including replies) with author info
     const comments = await Comment.find({ post: postId })
       .sort({ _id: -1 })
       .populate("author", "username email fullName profilePic")
       .lean();
 
+    // Filter out comments (and their reply subtrees) from blocked users
+    const blockedSet = new Set(blockedCommentIds);
+    const isBlockedSubtree = (c: any): boolean => {
+      if (blockedSet.has(c._id.toString())) return true;
+      if (c.parent && blockedSet.has(c.parent.toString())) return true;
+      return false;
+    };
+    const filteredComments = comments.filter((c) => !isBlockedSubtree(c));
+
     const responseData = {
       success: true,
-      comments,
+      comments: filteredComments,
     };
 
     // set cache
@@ -97,8 +122,18 @@ export const getComment = async (req: Request<Params>, res: Response) => {
       query._id = { $lt: cursor };
     }
 
+    // Blocked users must not exist — hide comments from anyone blocked in
+    // either direction. Per-viewer result, so the cache key includes the viewer.
+    const currentUserId = req.user?._id?.toString();
+    if (currentUserId) {
+      const blockedIds = await getBlockedUserIds(currentUserId);
+      if (blockedIds.length > 0) {
+        query.author = { $nin: blockedIds };
+      }
+    }
+
     // cache key
-    const cacheKey = `comments:${postId}:${cursor || "first"}:${limit}`;
+    const cacheKey = `comments:${postId}:${cursor || "first"}:${limit}:${currentUserId || "anon"}`;
 
     // get from cache
     try {
@@ -218,18 +253,27 @@ export const getCommentReplies = async (
     const limit = Math.min(Number(req.query.limit) || 10, 50);
     const cursor = req.query.cursor as string;
 
+    const query: any = { parent: commentId };
+    if (cursor) {
+      query._id = { $lt: cursor };
+    }
+
+    // Blocked users must not exist — hide replies from blocked authors
+    const currentUserId = req.user?._id?.toString();
+    if (currentUserId) {
+      const blockedIds = await getBlockedUserIds(currentUserId);
+      if (blockedIds.length > 0) {
+        query.author = { $nin: blockedIds };
+      }
+    }
+
     // cache key
-    const cacheKey = `comments:replies:${commentId}:${cursor || "first"}:${limit}`;
+    const cacheKey = `comments:replies:${commentId}:${cursor || "first"}:${limit}:${currentUserId || "anon"}`;
     try {
       const cached = await getCache(cacheKey);
       if (cached) return res.status(200).json(cached);
     } catch (err: any) {
       logger.error(`Cache error in getCommentReplies!`, { error: err.message });
-    }
-
-    const query: any = { parent: commentId };
-    if (cursor) {
-      query._id = { $lt: cursor };
     }
 
     const replies = await Comment.find(query)
@@ -299,6 +343,20 @@ export const addComment = async (req: Request<Params>, res: Response) => {
       // ensure parent comment belongs to the same post
       if (parentComment.post?.toString() !== postId) {
         throw new BadRequestError("Parent comment does not belong to this post!");
+      }
+    }
+
+    // Blocked users must not exist for each other — no commenting on
+    // a blocked user's post, and no replies under a blocked user's comment.
+    const postAuthorDoc = await Post.findById(postId).select("author").lean();
+    if (postAuthorDoc) {
+      if (await areMutuallyBlocked(author.toString(), postAuthorDoc.author.toString())) {
+        throw new ForbiddenError("Cannot comment on this post!");
+      }
+    }
+    if (parentComment && parentComment.author?.toString() !== author.toString()) {
+      if (await areMutuallyBlocked(author.toString(), parentComment.author.toString())) {
+        throw new ForbiddenError("Cannot reply to this comment!");
       }
     }
 

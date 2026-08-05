@@ -22,9 +22,18 @@ export default defineConfig(() => {
           assets: "./dist/assets/**",
         },
       }),
-      // PWA — service worker with caching strategy for offline support
+      // PWA — custom service worker (src/sw.js) that handles web-push
+      // notifications AND workbox runtime caching for offline support.
       VitePWA({
         registerType: 'autoUpdate',
+        // injectManifest builds our custom SW so the push/notificationclick
+        // handlers survive the build (generateSW would produce a caching-only
+        // worker with NO push support — the root cause of missing device
+        // notifications).
+        strategies: 'injectManifest',
+        srcDir: 'src',
+        filename: 'sw.js',
+        injectRegister: 'auto',
         includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png'],
         manifest: {
           name: 'ORBIT — Your Inner Circle',
@@ -40,62 +49,8 @@ export default defineConfig(() => {
             { src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' },
           ],
         },
-        workbox: {
+        injectManifest: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-          navigateFallback: '/index.html',
-          navigateFallbackDenylist: [/^\/api/, /^\/socket\.io/],
-          runtimeCaching: [
-            {
-              urlPattern: /^https?:\/\/.*\/api\/chats\/conversations\/.*\/messages/i,
-              handler: 'NetworkFirst',
-              options: {
-                cacheName: 'orbit-chat-messages',
-                expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 7 },
-                networkTimeoutSeconds: 3,
-              },
-            },
-            {
-              urlPattern: /^https?:\/\/.*\/api\/.*/i,
-              handler: 'NetworkFirst',
-              options: {
-                cacheName: 'orbit-api-cache',
-                expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 },
-                networkTimeoutSeconds: 5,
-              },
-            },
-            {
-              urlPattern: /^https?:\/\/res\.cloudinary\.com\/.*\/(image|video)\/upload\/.*/i,
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'orbit-cloudinary-media',
-                expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 },
-              },
-            },
-            {
-              urlPattern: /^https?:\/\/.*\.(?:png|jpg|jpeg|svg|gif|webp|avif|ico)/i,
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'orbit-image-cache',
-                expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 },
-              },
-            },
-            {
-              urlPattern: /^https?:\/\/fonts\.googleapis\.com|fonts\.gstatic\.com/i,
-              handler: 'StaleWhileRevalidate',
-              options: {
-                cacheName: 'orbit-font-cache',
-                expiration: { maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 * 60 },
-              },
-            },
-            {
-              urlPattern: /^https?:\/\/.*\.(?:mp3|mp4|aac|ogg|wav|webm|m4a)/i,
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'orbit-audio-video',
-                expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 7 },
-              },
-            },
-          ],
         },
       }),
       // Visualize bundle composition (run with ANALYZE=true to open report)

@@ -4,6 +4,7 @@ import { Message } from "../models/message.model";
 import { Conversation } from "../models/conversation.model";
 import { BadRequestError, NotFoundError, ForbiddenError } from "../utilities/errors";
 import { emitMessageReaction } from "../configs/socket";
+import { clearChatCache } from "../configs/cache";
 import { createNotification } from "../utilities/notification";
 import { logger } from "../utilities/logger";
 
@@ -38,7 +39,9 @@ export const toggleReaction = async (
       return next(new BadRequestError("Cannot react to a deleted message!"));
     }
 
-    const conversation = await Conversation.findById(message.conversation).select("participants").lean();
+    const conversation = await Conversation.findById(message.conversation)
+      .select("participants lastMessage lastAction")
+      .lean();
     if (!conversation) {
       return next(new NotFoundError("Conversation not found!"));
     }
@@ -77,6 +80,53 @@ export const toggleReaction = async (
     }
 
     await message.save();
+
+    // Record the last action on the conversation so the chat list preview shows
+    // "reacted ❤️ to your message" instead of the stale last message.
+    // Only reactions on the conversation's NEWEST message are recorded — a
+    // reaction to an older message must not override the preview. Removing the
+    // matching reaction clears it again server-side so a reload never shows a
+    // stale "reacted" preview.
+    try {
+      const actorUser = (req.user as any) || {};
+      const participantIds = (conversation.participants || []).map((p: any) =>
+        p.toString(),
+      );
+      const reactedMessageIsLast =
+        conversation.lastMessage?.toString() === message._id.toString();
+      const lastActionMatches =
+        (conversation.lastAction as any)?.messageId?.toString() ===
+        message._id.toString();
+
+      if (type === "add" && reactedMessageIsLast) {
+        await Conversation.findByIdAndUpdate(message.conversation, {
+          $set: {
+            lastAction: {
+              type: "reaction",
+              emoji: emoji.trim(),
+              messageId: message._id,
+              messageSenderId: message.sender,
+              actor: {
+                _id: currentUserId,
+                fullName: actorUser.fullName || "",
+                username: actorUser.username || "",
+              },
+              createdAt: new Date(),
+            },
+          },
+        });
+      } else if (type === "remove" && lastActionMatches) {
+        await Conversation.findByIdAndUpdate(message.conversation, {
+          $set: { lastAction: null },
+        });
+      }
+      // Always invalidate cached conversation lists so the preview updates instantly
+      await clearChatCache(message.conversation.toString(), participantIds);
+    } catch (cacheErr: any) {
+      logger.error("Failed to update conversation lastAction", {
+        error: cacheErr.message,
+      });
+    }
 
     // Populate sender for the emitted event and client response
     const populatedMessage = await Message.findById(message._id)

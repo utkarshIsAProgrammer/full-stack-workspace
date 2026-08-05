@@ -15,6 +15,7 @@ import {
 	Repeat2,
 	FileText,
 	Image,
+	Lock,
 	FilePenLine,
 	Clock,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import ConfirmDialog from "./ConfirmDialog";
 
 import Streaks from "./Streaks";
 import BlockButton from "./BlockButton";
+import CloseFriendButton from "./CloseFriendButton";
 import ReputationDisplay from "./ReputationDisplay";
 import PollCard from "./PollCard";
 import { apiFetch } from "../utils/api";
@@ -1706,7 +1708,10 @@ export default function Profile({
 							</button>
 
 							{!isSelf && profile && (
-								<BlockButton targetUserId={profile._id} />
+								<>
+									<CloseFriendButton targetUserId={profile._id} />
+									<BlockButton targetUserId={profile._id} />
+								</>
 							)}
 
 							{isSelf ? (
@@ -1974,6 +1979,11 @@ export default function Profile({
 																		post.createdAt,
 																	)}
 																</p>
+																{post.visibility === "closeFriends" && (
+														<span className="mt-1 inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 text-[9px] font-bold text-emerald-400/80">
+															<Lock className="h-2.5 w-2.5" /> Close Friends
+														</span>
+																)}
 															</div>
 														</div>
 													</div>
@@ -2192,6 +2202,11 @@ export default function Profile({
 																post.createdAt,
 															)}
 														</p>
+														{post.visibility === "closeFriends" && (
+														<span className="mt-1 inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 text-[9px] font-bold text-emerald-400/80">
+															<Lock className="h-2.5 w-2.5" /> Close Friends
+														</span>
+														)}
 													</div>
 												</div>
 											</div>
@@ -2383,6 +2398,11 @@ export default function Profile({
 																post.createdAt,
 															)}
 														</p>
+														{post.visibility === "closeFriends" && (
+														<span className="mt-1 inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 text-[9px] font-bold text-emerald-400/80">
+															<Lock className="h-2.5 w-2.5" /> Close Friends
+														</span>
+														)}
 													</div>
 												</div>
 											</div>
@@ -2608,8 +2628,7 @@ export default function Profile({
 																		handlePublishDraft(
 																			post._id,
 																		)
-																	}
-																	className="rounded-full bg-green-500/20 border border-green-500/40 px-3 py-1.5 text-[10px] font-bold text-green-300 hover:bg-green-500/30 transition-all cursor-pointer">
+																	}																		className="rounded-full bg-green-500/10 border border-green-500/30 px-3 py-1.5 text-[10px] font-bold text-green-400/90 hover:bg-green-500/20 transition-all cursor-pointer">
 																	Publish
 																</button>
 																<button
@@ -2853,7 +2872,7 @@ export default function Profile({
 													setBio(e.target.value)
 												}
 												placeholder="Write something about yourself..."
-												className="w-full rounded-xl border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white focus:outline-none focus:border-zinc-600 focus:bg-zinc-900 transition-all resize-none font-medium"
+												className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white focus:outline-none focus:border-zinc-600 focus:bg-zinc-900 transition-all resize-none font-medium"
 												maxLength={150}
 											/>
 										</div>
@@ -2923,7 +2942,7 @@ export default function Profile({
 									value={editPostTitle}
 									onChange={(e) => setEditPostTitle(e.target.value)}
 									placeholder="Post title"
-									className="w-full rounded-xl border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white outline-none focus:border-zinc-600 transition-all"
+									className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white outline-none focus:border-zinc-600 transition-all"
 								/>
 								<textarea
 									value={editPostContent}
@@ -3144,11 +3163,15 @@ export default function Profile({
 												<div>
 													<div className="font-bold text-sm text-white">
 														{post.author?.fullName}
-													</div>
-													<div className="text-xs font-semibold text-zinc-500">
-														@{post.author?.username}
-													</div>
-													<p className="text-sm mt-1 text-zinc-400 line-clamp-2">
+													</div>														<div className="text-xs font-semibold text-zinc-500">
+															@{post.author?.username}
+														</div>
+														{post.visibility === "closeFriends" && (
+														<span className="mt-1 inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 text-[9px] font-bold text-emerald-400/80">
+															<Lock className="h-2.5 w-2.5" /> Close Friends
+														</span>
+														)}
+														<p className="text-sm mt-1 text-zinc-400 line-clamp-2">
 														{post.title}
 													</p>
 												</div>

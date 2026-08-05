@@ -105,6 +105,24 @@ function evictAffectedCaches(url: string): void {
 		cachedPath.startsWith("/api/reposts/") ||
 		cachedPath.startsWith("/api/search/posts");
 
+	// Chat message mutations (send/delete/clear) change lastMessage + unreadCounts,
+	// so the cached conversation LIST must be invalidated too — otherwise a stale
+	// list (with outdated unread badge counts) is served on the next read, causing
+	// the "unread count is off by one" / "badge doesn't show" bugs.
+	// Covers both POST/DELETE /api/chats/conversations/:id/messages (send/clear)
+	// AND DELETE /api/chats/messages/:id and /messages/:id/delete-for-me.
+	const isChatMessageMutation =
+		segments[0] === "api" &&
+		segments[1] === "chats" &&
+		((segments[2] === "conversations" &&
+			segments.length >= 5 &&
+			segments[4] === "messages") ||
+			(segments[2] === "messages" && segments.length >= 4));
+
+	// A cached URL that embeds conversation unread badge state.
+	const isConversationCache = (cachedPath: string) =>
+		cachedPath === "/api/chats/conversations";
+
 	// Fire-and-forget: clear caches that might be stale
 	Promise.resolve().then(async () => {
 		const cache = await caches.open("orbit-api-v1");
@@ -129,7 +147,9 @@ function evictAffectedCaches(url: string): void {
 				(isCommunityMembershipMutation && cachedPath === "/api/communities/mine") ||
 				// Post interactions (like/save/repost/share) invalidate ALL cached
 				// post lists/feeds because they embed interaction state
-				(isPostInteractionMutation && isPostCache(cachedPath))
+				(isPostInteractionMutation && isPostCache(cachedPath)) ||
+				// Chat message mutations invalidate the cached conversation list
+				(isChatMessageMutation && isConversationCache(cachedPath))
 			) {
 				urlsToDelete.push(req);
 			}

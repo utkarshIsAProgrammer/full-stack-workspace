@@ -22,6 +22,7 @@ import {
 import { User } from "../models/user.model";
 import { env } from "../configs/env";
 import { createNotification, extractMentions } from "../utilities/notification";
+import { areMutuallyBlocked, getBlockedUserIds } from "../utilities/blockCheck";
 import { sanitizePlainText } from "../configs/sanitize";
 import { emitPostCreated, emitPostDeleted, emitPostUpdated, emitPollUpdated, emitPostView, emitPostPin, emitPostUnpin, emitPostShare } from "../configs/socket";
 import { logger } from "../utilities/logger";
@@ -139,6 +140,17 @@ export const getPost = async (req: Request<Params>, res: Response) => {
       throw new NotFoundError("Post not found!");
     }
 
+    // Blocked users must not exist for each other — hide the post entirely
+    const postAuthorId = post.author?._id?.toString() || post.author?.toString();
+    if (
+      postAuthorId &&
+      currentUserId &&
+      postAuthorId !== currentUserId &&
+      (await areMutuallyBlocked(currentUserId, postAuthorId))
+    ) {
+      throw new NotFoundError("Post not found!");
+    }
+
     // Drafts & scheduled posts are only visible to their author
     if (post.status && post.status !== "published") {
       const isAuthor =
@@ -220,6 +232,26 @@ export const getAllPosts = async (req: Request, res: Response) => {
     // author filter
     if (authorId && mongoose.Types.ObjectId.isValid(authorId)) {
       query.author = authorId;
+    }
+
+    // If there's a specific author and they're blocked (either direction),
+    // return nothing — blocked users must not exist for each other.
+    if (authorId && currentUserId && authorId !== currentUserId) {
+      if (await areMutuallyBlocked(currentUserId, authorId)) {
+        return res.status(200).json({
+          success: true,
+          message: "No posts yet!",
+          posts: [],
+          nextCursor: null,
+          hasMore: false,
+        });
+      }
+    } else if (!authorId && currentUserId) {
+      // Global feed — hide posts from anyone blocked in either direction
+      const blockedIds = await getBlockedUserIds(currentUserId);
+      if (blockedIds.length > 0) {
+        query.author = { $nin: blockedIds };
+      }
     }
 
     // If viewing user's own profile, show all their posts

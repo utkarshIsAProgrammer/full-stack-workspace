@@ -152,6 +152,32 @@ button {
 	scrollbar-width: none;
 }
 
+/* ─── Thin visible scrollbar for textareas ────────────────────── */
+/* Long composer text can overflow at its max height; show a slim
+   scrollbar there so typed text is never invisibly clipped. */
+textarea::-webkit-scrollbar {
+	display: block;
+	width: 6px;
+}
+
+textarea::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+textarea::-webkit-scrollbar-thumb {
+	background: rgba(255, 255, 255, 0.14);
+	border-radius: 999px;
+}
+
+textarea::-webkit-scrollbar-thumb:hover {
+	background: rgba(255, 255, 255, 0.25);
+}
+
+textarea {
+	scrollbar-width: thin;
+	scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
 html {
 	background-color: #09090b;
 	color: #000000;
@@ -332,8 +358,10 @@ select:-webkit-autofill:focus {
 	to { transform: translate(-50%, -50%) rotateX(64deg) rotateZ(-18deg) rotateY(360deg); }
 }
 
-/* Safe area bottom padding utility — respects device notches and home indicators */
-.pb-safe-bottom {
+/* Safe area bottom padding utility — respects device notches and home indicators.
+   Registered as a Tailwind v4 @utility so responsive variants (sm:pb-safe-bottom)
+   are actually generated instead of silently dropping to the base padding. */
+@utility pb-safe-bottom {
 	padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
@@ -774,18 +802,7 @@ select {
 	}
 }
 
-/* Liquid-glass accent bar on the left edge — pure monochrome */
-[data-sonner-toaster] .orbit-toast[data-styled="true"]::before {
-	content: "";
-	position: absolute;
-	left: 0;
-	top: 7px;
-	bottom: 7px;
-	width: 3px;
-	border-radius: 9999px;
-	background: linear-gradient(180deg, rgba(255, 255, 255, 0.65), rgba(255, 255, 255, 0.18));
-	transition: opacity 250ms ease;
-}
+/* No left accent bar — clean minimal toast surface */
 
 /* Type depth — soft neutral glass glow (monochrome, no color tint) */
 [data-sonner-toaster] .orbit-toast[data-styled="true"][data-type="success"],

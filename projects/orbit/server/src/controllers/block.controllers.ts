@@ -2,7 +2,11 @@ import { Request, Response } from "express";
 import Block from "../models/block.model";
 import Follow from "../models/follow.model";
 import { User } from "../models/user.model";
+import { Conversation } from "../models/conversation.model";
+import { Message } from "../models/message.model";
+import Notification from "../models/notification.model";
 import { logger } from "../utilities/logger";
+import { clearChatCache, clearByPattern } from "../configs/cache";
 
 /**
  * Block a user.
@@ -24,6 +28,33 @@ export const blockUser = async (req: Request, res: Response) => {
     }
 
     await Block.create({ blocker: currentUserId as any, blocked: targetUserId as any });
+
+    // Blocked users must not exist for each other — wipe the direct
+    // conversation, all messages, and every notification between them.
+    try {
+      const conversation = await Conversation.findOneAndDelete({
+        participants: { $all: [currentUserId, targetUserId] },
+        type: { $ne: "group" },
+      });
+      if (conversation && targetUserId) {
+        await Message.deleteMany({ conversation: conversation._id });
+        await clearChatCache(conversation._id.toString(), [
+          currentUserId.toString(),
+          targetUserId,
+        ]);
+      }
+      // Also invalidate any route-level conversation-list caches for both users
+      await clearByPattern(`api:${currentUserId}:/conversations*`);
+      if (targetUserId) {
+        await clearByPattern(`api:${targetUserId}:/conversations*`);
+      }
+      await Notification.deleteMany({
+        $or: [
+          { recipient: currentUserId, sender: targetUserId },
+          { recipient: targetUserId, sender: currentUserId },
+        ],
+      });
+    } catch { /* non-critical cleanup */ }
 
     // Unfollow if following (clean up follow relationships and update counters)
     try {
@@ -81,7 +112,8 @@ export const getBlockedUsers = async (req: Request, res: Response) => {
 
     const users = blocks.map((b) => b.blocked);
 
-    return res.status(200).json({ success: true, users });
+    // Return under both keys for backward compatibility with older clients
+    return res.status(200).json({ success: true, users, blockedUsers: users });
   } catch (err: any) {
     logger.error("Error in getBlockedUsers", { error: err.message });
     return res.status(500).json({ success: false, message: "Failed to get blocked users" });

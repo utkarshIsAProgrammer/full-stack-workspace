@@ -59,6 +59,14 @@ const glimpseSchema = new mongoose.Schema(
       default: () => new Date(Date.now() + 12 * 60 * 60 * 1000), // 12 hours
     },
 
+    // Visibility: public | closeFriends
+    visibility: {
+      type: String,
+      enum: ["public", "closeFriends"],
+      default: "public",
+      index: true,
+    },
+
     // Story highlights (permanent pinning)
     highlighted: {
       type: Boolean,

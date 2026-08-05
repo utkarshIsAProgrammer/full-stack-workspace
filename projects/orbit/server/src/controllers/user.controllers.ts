@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { User } from "../models/user.model";
+import { areMutuallyBlocked, getBlockedUserIds } from "../utilities/blockCheck";
 import {
 	deleteAccountSchema,
 	updateProfileSchema,
@@ -79,6 +80,13 @@ export const getUserById = async (
 				await setCache(cacheKey, user, 60 * 30);
 			} catch (e) {
 				logger.error(`Cache set error in getUserById!`, { error: e });
+			}
+		}
+
+		// Blocked users must not exist for each other — hide profile entirely
+		if (currentUserId && currentUserId.toString() !== userId) {
+			if (await areMutuallyBlocked(currentUserId.toString(), userId)) {
+				throw new NotFoundError("User not found!");
 			}
 		}
 
@@ -612,6 +620,13 @@ export const getUserByUsername = async (
 			}
 		}
 
+		// Blocked users must not exist for each other — hide profile entirely
+		if (currentUserId && (user as any)._id?.toString() !== currentUserId.toString()) {
+			if (await areMutuallyBlocked(currentUserId.toString(), (user as any)._id?.toString())) {
+				throw new NotFoundError("User not found!");
+			}
+		}
+
 		let isFollowing = false;
 		if (currentUserId) {
 			const existingFollow = await Follow.findOne({
@@ -677,12 +692,24 @@ export const getUserPosts = async (
 				throw new BadRequestError("Invalid user id!");
 			}
 
-			const query: any = { author: userId };
-			if (cursor) {
-				query._id = { $lt: cursor };
-			}
+		const query: any = { author: userId };
+		if (cursor) {
+			query._id = { $lt: cursor };
+		}
 
-			// Enforce closeFriends privacy when viewed by non-owners
+		// Blocked users must not exist for each other
+		if (currentUserId && currentUserId !== userId) {
+			if (await areMutuallyBlocked(currentUserId, userId)) {
+				return res.status(200).json({
+					success: true,
+					posts: [],
+					nextCursor: null,
+					hasMore: false,
+				});
+			}
+		}
+
+		// Enforce closeFriends privacy when viewed by non-owners
 			if (currentUserId !== userId) {
 				const authorUser = await User.findById(userId).select("closeFriends").lean();
 				const closeFriendsList = (authorUser as any)?.closeFriends || [];
@@ -799,8 +826,10 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
 			.map(([id]) => id);
 
 		// 2. Fill remaining slots with popular users (by followers count)
+		// Exclude anyone blocked in either direction
+		const blockedIds = await getBlockedUserIds(currentUserId.toString());
 		const popularUsers = await User.find({
-			_id: { $nin: [...followingIds, ...mutualSorted] },
+			_id: { $nin: [...followingIds, ...mutualSorted, ...blockedIds] },
 		})
 			.select("_id fullName username profilePic bio followersCount")
 			.sort({ followersCount: -1, createdAt: -1 })
@@ -810,6 +839,7 @@ export const getSuggestedUsers = async (req: Request, res: Response) => {
 		// 3. Combine: mutual connections first, then popular users
 		const mutualUsers = await User.find({
 			_id: { $in: mutualSorted },
+			$nor: [{ _id: { $in: blockedIds } }],
 		})
 			.select("_id fullName username profilePic bio followersCount")
 			.lean();

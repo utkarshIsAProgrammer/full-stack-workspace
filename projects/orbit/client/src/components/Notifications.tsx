@@ -411,7 +411,13 @@ export default function Notifications({
 					icon: SmilePlus,
 					color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/30",
 					text: "reacted to your comment",
-				};    case "message_reply":
+				};    case "message":
+      return {
+        icon: MessageSquare,
+        color: "text-zinc-400 bg-zinc-900/20 border-zinc-800",
+        text: "sent you a message",
+      };
+    case "message_reply":
       return {
         icon: MessageSquare,
         color: "text-sky-600 bg-sky-50 dark:bg-sky-950/20 border-sky-200 dark:border-sky-900/30",
@@ -512,8 +518,9 @@ export default function Notifications({
 				)}
 			</div>
 
-			{/* Filter tabs — labels + icons when there's room, compact icon pills when not. "All" always shows its label. */}
-			<div className="mb-5 flex items-center gap-1.5 overflow-x-auto scrollbar-none @container @[520px]:flex-wrap @[520px]:overflow-visible">
+			{/* Filter tabs — labels + icons when there's room, compact icon pills when not. "All" always shows its label.
+			   Tabs always wrap (never scroll) so they fit beautifully on every device size. */}
+			<div className="mb-5 flex flex-wrap items-center gap-1.5">
 				{FILTER_TABS.map((tab) => {
 					const TabIcon = tab.icon;
 					const isActive = activeFilter === tab.key;
@@ -536,7 +543,7 @@ export default function Notifications({
 							{tab.key === "all" ? (
 								<span>{tab.label}</span>
 							) : (
-								<span className="hidden @[520px]:inline">{tab.label}</span>
+								<span className="hidden sm:inline">{tab.label}</span>
 							)}
 							{count > 0 && (
 								<span className={`ml-0.5 text-[10px] ${isActive ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-500"}`}>
@@ -615,13 +622,13 @@ export default function Notifications({
 											if (!notif.isRead)
 												handleMarkSingleRead(notif._id);
 										}}
-										className={`group relative flex items-start justify-between gap-4 p-4.5 transition-all cursor-pointer ${
+										className={`group relative flex items-start justify-between gap-3 p-3 sm:p-3.5 transition-all cursor-pointer ${
 											notif.isRead
 												? "opacity-85 hover:opacity-100"
 												: "ring-1 ring-zinc-500/10 border-white/20 dark:border-white/20"
 										}`}
 										showMacControls={false}>
-										<div className="flex gap-4.5">
+										<div className="flex gap-3">
 											{/* Floating Bubble Type Indicator */}
 											<div className="relative shrink-0">
 												<UserAvatar
@@ -629,8 +636,7 @@ export default function Notifications({
 														notif.sender?.profilePic
 															?.url
 													}
-													alt={notif.sender?.fullName}
-													className="h-11 w-11 cursor-pointer rounded-full object-cover border border-zinc-800"
+													alt={notif.sender?.fullName}															className="h-9 w-9 cursor-pointer rounded-full object-cover border border-zinc-800"
 													onClick={() =>
 														onUserClick(
 															notif.sender!
@@ -639,13 +645,13 @@ export default function Notifications({
 													}
 												/>
 												<span
-													className={`absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border text-[11px] ${details.color}`}>
-													<NotifIcon className="h-3 w-3" />
+													className={`absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border text-[9px] ${details.color}`}>
+													<NotifIcon className="h-2.5 w-2.5" />
 												</span>
 											</div>
 
 											<div className="space-y-1">
-												<p className="text-base text-slate-700 dark:text-zinc-200">
+												<p className="text-[13px] leading-snug text-slate-700 dark:text-zinc-200">
 													<span
 														onClick={() =>
 															onUserClick(
@@ -701,8 +707,11 @@ export default function Notifications({
 											</div>
 										</div>
 
-										{/* Actions / Read Indicator */}
-										<div className="flex flex-col items-end gap-2 shrink-0">
+										{/* Actions / Read Indicator — close (X) pinned to the top-right, unread dot beside the time */}
+										<div className="flex items-start gap-2 shrink-0">
+											{!notif.isRead && (
+												<span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-zinc-900 dark:bg-zinc-100 shadow-[0_0_8px_rgba(255,255,255,0.4)]" />
+											)}
 											<button
 												onClick={(e) => {
 													e.stopPropagation();
@@ -710,12 +719,9 @@ export default function Notifications({
 														notif._id,
 													);
 												}}
-												className="p-1 rounded-full text-slate-400 dark:text-zinc-500 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/30 transition-all focus:outline-none">
+												className="p-1 rounded-full text-zinc-500 hover:text-red-400 hover:bg-white/10 dark:hover:bg-zinc-800 transition-all focus:outline-none">
 												<X className="h-4 w-4" />
 											</button>
-											{!notif.isRead && (
-												<span className="h-2 w-2 rounded-full bg-zinc-900 dark:bg-zinc-100 shadow-[0_0_8px_rgba(255,255,255,0.4)]" />
-											)}
 										</div>
 									</GlassCard>
 								</div>

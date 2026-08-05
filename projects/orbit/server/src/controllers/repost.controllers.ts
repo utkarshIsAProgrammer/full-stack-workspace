@@ -7,6 +7,7 @@ import {
   createNotification,
   deleteInteractionNotification,
 } from "../utilities/notification";
+import { areMutuallyBlocked } from "../utilities/blockCheck";
 import { emitPostRepost, emitPostUnrepost } from "../configs/socket";
 import { getCache, setCache, clearByPattern, clearFeedCache } from "../configs/cache";
 import { logger } from "../utilities/logger";
@@ -53,9 +54,8 @@ export const getRepostedPosts = async (req: Request, res: Response) => {
       .sort({ _id: -1 })
       .limit(limit + 1)
       .populate({
-        path: "post",
-        select:
-          "title slug image author savesCount repostsCount likesCount commentsCount createdAt viewsCount sharesCount",
+        path: "post",		select:
+			"title slug image author savesCount repostsCount likesCount commentsCount createdAt viewsCount sharesCount visibility",
         populate: [
           {
             path: "author",
@@ -136,6 +136,11 @@ export const toggleRepost = async (req: Request<Params>, res: Response) => {
     // prevent self repost
     if (post.author.toString() === userId.toString()) {
       throw new BadRequestError("You cannot repost your own post!");
+    }
+
+    // Blocked users must not exist for each other
+    if (await areMutuallyBlocked(userId.toString(), post.author.toString())) {
+      throw new ForbiddenError("Cannot repost this post!");
     }
 
     // check closeFriends permission

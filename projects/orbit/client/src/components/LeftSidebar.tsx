@@ -83,7 +83,7 @@ export default React.memo(function LeftSidebar({
 
 						{/* Navigation Options — icon + label always visible */}
 						<nav
-							className="space-y-1 pt-3 flex flex-col"
+							className="space-y-1 sm:space-y-3 pt-3 flex flex-col"
 							aria-label="Main navigation">
 							{tabs.map((tab) => {
 								const active = currentTab === tab.id;

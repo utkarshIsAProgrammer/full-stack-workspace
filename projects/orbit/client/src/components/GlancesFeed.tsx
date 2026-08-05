@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Plus, Loader2 } from "lucide-react";
+import { Plus, Loader2, Lock, Globe } from "lucide-react";
 import type { Glance, User } from "../types";
 import { apiFetch } from "../utils/api";
 import { evictCachedResponse } from "../utils/apiCache";
 import { logger } from "../utils/logger";
 import GlanceViewer from "./GlanceViewer";
+import GlanceEditor from "./GlanceEditor";
 
 interface GlancesFeedProps {
   user: User | null;
@@ -17,13 +18,28 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
+  const [editFile, setEditFile] = useState<File | null>(null);
+  const [glanceVisibility, setGlanceVisibility] = useState<
+    "public" | "closeFriends"
+  >("public");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Keep latest user in a ref so the socket listeners (registered once) can
+  // check authorship/close-friendship without stale closures.
+  const userRef = useRef(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
-  // Fetch glances feed
-  const fetchGlances = async () => {
+  // Fetch glances feed. `bypass` forces a network fetch (skips the cache-first
+  // path) — used right after creating a glance so the author's own new glance
+  // is never wiped out by a stale cached feed that predates it.
+  const fetchGlances = async (bypass: boolean = false) => {
     try {
-      const res = await apiFetch("/api/glimpses/feed");
+      const res = await apiFetch(
+        "/api/glimpses/feed",
+        bypass ? { bypassCache: true } : undefined
+      );
       const data = await res.json();
       if (res.ok && data.success) {
         setGlances(data.glimpses || []);
@@ -50,6 +66,20 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
   useEffect(() => {
     const handleGlanceCreated = (e: Event) => {
       const detail = (e as CustomEvent).detail;
+      const uid = userRef.current?._id;
+      // Defensive privacy check: never surface a close-friends glimpse we
+      // aren't allowed to see, even if a socket payload slips through.
+      if (detail?.visibility === "closeFriends") {
+        const authorId = detail.author?._id?.toString();
+        const isAuthor = !!uid && authorId === uid.toString();
+        const isCloseFriend =
+          !!uid &&
+          Array.isArray(detail.author?.closeFriends) &&
+          (detail.author.closeFriends as any[]).some(
+            (id: any) => id?.toString() === uid.toString()
+          );
+        if (!isAuthor && !isCloseFriend) return;
+      }
       setGlances((prev) => {
         if (prev.some((g) => g._id === detail._id)) return prev;
         return [detail, ...prev];
@@ -86,6 +116,56 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
     };
   }, []);
 
+  // Upload a glance media blob/file to the server
+  const uploadGlanceMedia = async (media: Blob, filename: string) => {
+    setIsCreating(true);
+    const formData = new FormData();
+    formData.append("media", media, filename);
+    formData.append("visibility", glanceVisibility);
+
+    try {
+      const res = await apiFetch("/api/glimpses", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setGlances((prev) => {
+          if (prev.some((g) => g._id === data.glimpse._id)) return prev;
+          return [data.glimpse, ...prev];
+        });
+        // Evict the feed cache then force a network refetch. The eviction in
+        // apiFetch runs fire-and-forget, so a plain fetchGlances() could read
+        // the still-stale cache and REMOVE the glance the author just created.
+        await evictCachedResponse("/api/glimpses/feed").catch(() => {});
+        await fetchGlances(true);
+        window.dispatchEvent(
+          new CustomEvent("showToast", {
+            detail: {
+              message:
+                glanceVisibility === "closeFriends"
+                  ? "Glance shared with close friends only"
+                  : "Glance published to everyone",
+              type: "success",
+            },
+          })
+        );
+      } else {
+        throw new Error(data.message || "Failed to create glance");
+      }
+    } catch (err) {
+      logger.error("Failed to create glance", err);
+      window.dispatchEvent(
+        new CustomEvent("showToast", {
+          detail: { message: "Failed to create glance. Image may be too large or unsupported.", type: "error" },
+        })
+      );
+    } finally {
+      setIsCreating(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   // Handle creating a new glance
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -113,37 +193,15 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
       }
     }
 
-    setIsCreating(true);
-    const formData = new FormData();
-    formData.append("media", file);
-
-    try {
-      const res = await apiFetch("/api/glimpses", {
-        method: "POST",
-        body: formData,
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setGlances((prev) => {
-          if (prev.some((g) => g._id === data.glimpse._id)) return prev;
-          return [data.glimpse, ...prev];
-        });
-        // Instantly re-fetch glances to ensure absolute consistency
-        fetchGlances();
-      } else {
-        throw new Error(data.message || "Failed to create glance");
-      }
-    } catch (err) {
-      logger.error("Failed to create glance", err);
-      window.dispatchEvent(
-        new CustomEvent("showToast", {
-          detail: { message: "Failed to create glance. Image may be too large or unsupported.", type: "error" },
-        })
-      );
-    } finally {
-      setIsCreating(false);
+    // Images go through the pre-publish editor (drag / zoom / rotate / free crop)
+    if (file.type.startsWith("image/")) {
+      setEditFile(file);
       if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
     }
+
+    // Videos upload directly (client-side video cropping isn't feasible)
+    await uploadGlanceMedia(file, file.name);
   };
 
   // Open viewer for a specific glance
@@ -214,7 +272,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
       <div className="flex items-center gap-3 py-3 overflow-x-auto scrollbar-none">
         {[1, 2, 3].map((n) => (
           <div key={n} className="flex flex-col items-center gap-1 shrink-0">
-            <div className="h-16 w-16 rounded-2xl bg-zinc-900 animate-pulse ring-1 ring-zinc-800 sm:h-20 sm:w-20" />
+            <div className="h-14 w-14 rounded-2xl bg-zinc-900 animate-pulse ring-1 ring-zinc-800 sm:h-20 sm:w-20" />
             <div className="h-2 w-10 bg-zinc-900 animate-pulse rounded" />
           </div>
         ))}
@@ -233,18 +291,63 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
           {/* Create glance button (only for authenticated users) */}
           {user && (
             <div className="flex flex-col items-center gap-1 shrink-0">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isCreating}
-                className="relative flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-dashed border-zinc-600 hover:border-white/50 bg-zinc-900/50 hover:bg-zinc-800/50 transition-all cursor-pointer disabled:opacity-50 sm:h-20 sm:w-20"
-                title="Add a glance"
-              >
-                {isCreating ? (
-                  <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
-                ) : (
-                  <Plus className="h-5 w-5 text-zinc-400" />
-                )}
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isCreating}
+                  className={`relative flex h-14 w-14 items-center justify-center rounded-2xl border-2 border-dashed transition-all cursor-pointer disabled:opacity-50 sm:h-20 sm:w-20 ${
+                    glanceVisibility === "closeFriends"
+                      ? "border-emerald-500/60 hover:border-emerald-400"
+                      : "border-zinc-600 hover:border-white/50 bg-zinc-900/50 hover:bg-zinc-800/50"
+                  }`}
+                  title={
+                    glanceVisibility === "closeFriends"
+                      ? "Add a close-friends-only glance"
+                      : "Add a public glance"
+                  }
+                >
+                  {isCreating ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+                  ) : glanceVisibility === "closeFriends" ? (
+                    <Lock className="h-5 w-5 text-emerald-400/90" />
+                  ) : (
+                    <Plus className="h-5 w-5 text-zinc-400" />
+                  )}
+                </button>
+
+                {/* Audience toggle — Globe (public) by default, tap to switch to
+                    green Lock (close friends only). No dropdown, no overlap. */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setGlanceVisibility((v) =>
+                      v === "public" ? "closeFriends" : "public"
+                    );
+                  }}
+                  className={`absolute -top-1.5 -right-1.5 flex h-6 w-6 items-center justify-center rounded-full border shadow-md transition-all cursor-pointer ${
+                    glanceVisibility === "closeFriends"
+                      ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/25"
+                      : "bg-zinc-800/90 text-zinc-300 border-zinc-600 hover:bg-zinc-700 hover:text-white"
+                  }`}
+                  title={
+                    glanceVisibility === "closeFriends"
+                      ? "Close Friends only — tap for public"
+                      : "Public — tap for Close Friends only"
+                  }
+                  aria-label={
+                    glanceVisibility === "closeFriends"
+                      ? "Switch glance to public"
+                      : "Switch glance to close friends"
+                  }
+                >
+                  {glanceVisibility === "closeFriends" ? (
+                    <Lock className="h-3.5 w-3.5" />
+                  ) : (
+                    <Globe className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </div>
               <span className="text-[9px] font-bold text-zinc-500">Add</span>
             </div>
           )}
@@ -277,7 +380,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
                       );
                       if (idx >= 0) handleOpenViewer(idx);
                     }}
-                    className="relative h-16 w-16 rounded-2xl transition-all bg-gradient-to-br from-amber-400 via-yellow-300 to-orange-400 hover:scale-105 active:scale-95 sm:h-20 sm:w-20"
+                    className="relative h-14 w-14 rounded-2xl transition-all bg-gradient-to-br from-amber-400 via-yellow-300 to-orange-400 hover:scale-105 active:scale-95 sm:h-20 sm:w-20"
                   >
                     <div className="relative h-full w-full rounded-2xl border-2 border-zinc-950 bg-zinc-900 flex items-center justify-center">
                       <span className="text-lg">⭐</span>
@@ -320,10 +423,12 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
                       className="flex flex-col items-center gap-1 shrink-0 group cursor-pointer"
                     >
                       <div
-                        className={`relative h-16 w-16 rounded-2xl p-[2.5px] transition-all sm:h-20 sm:w-20 ${
-                          allViewed
-                            ? "bg-zinc-700"
-                            : "bg-gradient-to-br from-violet-400 via-fuchsia-300 to-sky-400"
+                        className={`relative h-14 w-14 rounded-2xl p-[2.5px] transition-all sm:h-20 sm:w-20 ${
+                          authorG.some((g) => g.visibility === "closeFriends")
+                            ? "bg-gradient-to-br from-emerald-500/60 via-green-400/50 to-teal-500/60"
+                            : allViewed
+                              ? "bg-zinc-700"
+                              : "bg-gradient-to-br from-violet-400 via-fuchsia-300 to-sky-400"
                         }`}
                       >
                         <div className="relative h-full w-full rounded-2xl overflow-hidden bg-zinc-900">
@@ -332,6 +437,11 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
                           alt={author.fullName}
                           className="relative h-full w-full object-cover"
                         />
+                        {authorG.some((g) => g.visibility === "closeFriends") && (
+                          <span className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-950/70 backdrop-blur-sm border border-emerald-500/40 shadow-md">
+                            <Lock className="h-3 w-3 text-emerald-400/90" />
+                          </span>
+                        )}
                         </div>
                       </div>
                       <span
@@ -365,6 +475,18 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
           onView={handleLocalView}
           currentUser={user}
           onDeleteGlance={handleDeleteGlance}
+        />
+      )}
+
+      {/* Pre-publish glance editor */}
+      {editFile && (
+        <GlanceEditor
+          file={editFile}
+          onClose={() => setEditFile(null)}
+          onApply={(blob) => {
+            setEditFile(null);
+            void uploadGlanceMedia(blob, "glance.jpg");
+          }}
         />
       )}
     </>

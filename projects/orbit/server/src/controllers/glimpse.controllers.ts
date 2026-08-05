@@ -8,7 +8,8 @@ import { getIO } from "../configs/socket";
 import { Conversation } from "../models/conversation.model";
 import { Message } from "../models/message.model";
 import { createNotification } from "../utilities/notification";
-import Block from "../models/block.model";
+import { User } from "../models/user.model";
+import { areMutuallyBlocked, getBlockedUserIds } from "../utilities/blockCheck";
 import { awardXP } from "../services/xpService";
 import { progressMission } from "../services/dailyMissionService";
 
@@ -31,9 +32,15 @@ export const getGlimpseFeed = async (req: Request, res: Response) => {
       query._id = { $lt: cursor };
     }
 
+    // Blocked users must not exist for each other — exclude their glimpses
+    const blockedIds = await getBlockedUserIds(currentUserId);
+    if (blockedIds.length > 0) {
+      query.author = { $nin: blockedIds };
+    }
+
     // Fetch glimpses with cursor pagination
     const glimpses = await Glimpse.find(query)
-      .populate("author", "username fullName profilePic")
+      .populate("author", "username fullName profilePic closeFriends")
       .populate("viewers.user", "username fullName profilePic")
       .sort({ createdAt: -1 })
       .limit(limit + 1)
@@ -45,13 +52,37 @@ export const getGlimpseFeed = async (req: Request, res: Response) => {
     }
     const nextCursor = glimpses.slice(-1).shift()?._id || null;
 
-    // Enrich with per-user view status
-    const enriched = glimpses.map((g) => ({
-      ...g,
-      viewedByMe: (g.viewers || []).some(
-        (v: any) => v.user?.toString() === currentUserId
-      ),
-    }));
+    // Enrich with per-user view status + filter closeFriends glimpses
+    const enriched = glimpses
+      .filter((g: any) => {
+        if (g.visibility !== "closeFriends") return true;
+        const authorId = g.author?._id?.toString() || g.author?.toString();
+        if (!authorId || authorId === currentUserId) return true;
+        const authorCloseFriends: any[] = g.author?.closeFriends || [];
+        return authorCloseFriends.some((id: any) => id.toString() === currentUserId);
+      })
+      .map((g) => {
+        const author = g.author && typeof g.author === "object" ? g.author : g.author;
+        // Privacy: don't leak every author's close-friends list to feed viewers.
+        // The filtering above already ran server-side; the client only needs
+        // `closeFriends` on the targeted socket payload, not on the feed.
+        if (author && typeof author === "object" && "closeFriends" in author) {
+          const { closeFriends, ...restAuthor } = author as Record<string, unknown>;
+          return {
+            ...g,
+            author: restAuthor,
+            viewedByMe: (g.viewers || []).some(
+              (v: any) => v.user?.toString() === currentUserId
+            ),
+          };
+        }
+        return {
+          ...g,
+          viewedByMe: (g.viewers || []).some(
+            (v: any) => v.user?.toString() === currentUserId
+          ),
+        };
+      });
 
     return res.status(200).json({
       success: true,
@@ -92,6 +123,11 @@ export const createGlimpse = async (req: Request, res: Response) => {
       }
     }
 
+    const visibility =
+      (req.body as any)?.visibility === "closeFriends"
+        ? "closeFriends"
+        : "public";
+
     const glimpse = new Glimpse({
       author,
       media: {
@@ -99,13 +135,14 @@ export const createGlimpse = async (req: Request, res: Response) => {
         public_id: (file as any).filename,
       },
       mediaType: isVideo ? "video" : "image",
+      visibility,
       expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000),
     });
 
     await glimpse.save();
 
     const populated = await Glimpse.findById(glimpse._id)
-      .populate("author", "username fullName profilePic")
+      .populate("author", "username fullName profilePic closeFriends")
       .populate("viewers.user", "username fullName profilePic")
       .lean({ virtuals: true });
 
@@ -114,10 +151,29 @@ export const createGlimpse = async (req: Request, res: Response) => {
       viewedByMe: false,
     };
 
-    // Broadcast via socket
+    // Broadcast via socket — public glimpses go to everyone, but
+    // closeFriends glimpses go ONLY to the author + their close friends.
+    // (Without this, an io.emit leaked private glances into every user's
+    // real-time feed even though the GET feed correctly filters them.)
     try {
       const io = getIO();
-      io.emit("glimpse:created", enrichedGlimpse);
+      if (visibility === "closeFriends") {
+        const authorUser = await User.findById(author)
+          .select("closeFriends")
+          .lean();
+        const closeFriendIds = (authorUser?.closeFriends || []).map((id: any) =>
+          id.toString()
+        );
+        const recipients = new Set([
+          author.toString(),
+          ...closeFriendIds,
+        ]);
+        recipients.forEach((recipientId) => {
+          io.to(`user:${recipientId}`).emit("glimpse:created", enrichedGlimpse);
+        });
+      } else {
+        io.emit("glimpse:created", enrichedGlimpse);
+      }
     } catch (socketErr) {
       logger.warn("Failed to broadcast glimpse:created via socket", {
         error: (socketErr as Error).message,
@@ -170,15 +226,26 @@ export const viewGlimpse = async (req: Request, res: Response) => {
     }
 
     // Check if already viewed (lightweight read-only check)
-    const existingGlimpse = await Glimpse.findById(glimpseId).select("author viewers expiresAt media");
+    const existingGlimpse = await Glimpse.findById(glimpseId).select("author viewers expiresAt media visibility");
     if (!existingGlimpse) {
       throw new NotFoundError("Glimpse not found!");
     }
+
+    // closeFriends glimpses are only visible to the author's close friends
+    await assertGlimpseAccess(existingGlimpse, currentUserId);
 
     if (existingGlimpse.expiresAt < new Date()) {
       await deleteGlimpseAndCleanup(existingGlimpse);
       try { getIO().emit("glimpse:expired", { glimpseId }); } catch {}
       throw new BadRequestError("Glimpse has expired!");
+    }
+
+    // Blocked users must not exist for each other
+    if (
+      existingGlimpse.author?.toString() !== currentUserId &&
+      (await areMutuallyBlocked(currentUserId, existingGlimpse.author?.toString()))
+    ) {
+      throw new NotFoundError("Glimpse not found!");
     }
 
     // Prevent the author from being recorded as a viewer of their own glance
@@ -276,6 +343,9 @@ export const getGlimpse = async (req: Request, res: Response) => {
       throw new NotFoundError("Glimpse not found!");
     }
 
+    // closeFriends + blocked access guard (404s so outsiders can't detect it)
+    await assertGlimpseAccess(glimpse, currentUserId);
+
     const enriched = {
       ...glimpse,
       viewedByMe: (glimpse.viewers || []).some(
@@ -294,6 +364,34 @@ export const getGlimpse = async (req: Request, res: Response) => {
     throw new AppError("Internal server error!");
   }
 };
+
+/**
+ * Shared access guard for any interaction with a single glimpse
+ * (view / react / reply). Enforces:
+ *  - blocked users are completely invisible to each other (404),
+ *  - closeFriends glimpses are only accessible to the author's close friends.
+ * Throws a NotFoundError so non-authorized users cannot even detect the glimpse.
+ */
+async function assertGlimpseAccess(
+  glimpse: any,
+  currentUserId: string,
+): Promise<void> {
+  const authorId = glimpse.author?._id?.toString() || glimpse.author?.toString();
+  if (!authorId || authorId === currentUserId) return;
+
+  if (await areMutuallyBlocked(currentUserId, authorId)) {
+    throw new NotFoundError("Glimpse not found!");
+  }
+  if (glimpse.visibility === "closeFriends") {
+    const author = await User.findById(authorId).select("closeFriends").lean();
+    const isCloseFriend = (author as any)?.closeFriends?.some(
+      (id: any) => id.toString() === currentUserId,
+    );
+    if (!isCloseFriend) {
+      throw new NotFoundError("Glimpse not found!");
+    }
+  }
+}
 
 // React to a glimpse (like/emoji reaction)
 export const reactToGlimpse = async (req: Request, res: Response) => {
@@ -318,6 +416,9 @@ export const reactToGlimpse = async (req: Request, res: Response) => {
     if (!glimpse) {
       throw new NotFoundError("Glimpse not found!");
     }
+
+    // closeFriends glimpses are only visible to the author's close friends
+    await assertGlimpseAccess(glimpse, currentUserId);
 
     // Check if user already reacted with this emoji
     const existingIdx = glimpse.reactions?.findIndex(
@@ -406,6 +507,9 @@ export const replyToGlimpse = async (req: Request, res: Response) => {
       throw new NotFoundError("Glimpse not found!");
     }
 
+    // closeFriends + blocked access guard (404s so outsiders can't detect it)
+    await assertGlimpseAccess(glimpse, currentUserId);
+
     const authorId = glimpse.author?._id?.toString();
     if (!authorId) {
       throw new BadRequestError("Glimpse author not found!");
@@ -414,17 +518,6 @@ export const replyToGlimpse = async (req: Request, res: Response) => {
     // Don't allow replying to your own glimpse
     if (authorId === currentUserId) {
       throw new BadRequestError("Cannot reply to your own glimpse!");
-    }
-
-    // Check block status
-    const isBlocked = await Block.findOne({
-      $or: [
-        { blocker: currentUserId, blocked: authorId },
-        { blocker: authorId, blocked: currentUserId },
-      ],
-    });
-    if (isBlocked) {
-      throw new ForbiddenError("Cannot reply to this glimpse!");
     }
 
     // Find existing conversation between these two users, or create a new one

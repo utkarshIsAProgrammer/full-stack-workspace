@@ -23,6 +23,8 @@ export const getNotificationText = (type: NotificationType, senderName?: string)
       return `${name} reacted to your comment!`;
     case "message_reply":
       return `${name} replied to your message!`;
+    case "message":
+      return `${name} sent you a message!`;
     case "glimpse_reaction":
       return `${name} reacted to your glance!`;
     case "glimpse_reply":
@@ -83,6 +85,8 @@ export const getFloatingToastText = (type: NotificationType): string => {
       return "reacted to your comment!";
     case "message_reply":
       return "replied to your message!";
+    case "message":
+      return "sent you a message!";
     case "glimpse_reaction":
       return "liked your glance!";
     case "glimpse_reply":

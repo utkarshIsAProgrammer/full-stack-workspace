@@ -15,6 +15,7 @@ import { sanitizePlainText } from "../configs/sanitize";
 import cloudinary from "../configs/cloudinary";
 import { getIO } from "../configs/socket";
 import { generateToken } from "../services/livekitService";
+import { sendPushToUser } from "../services/pushService";
 
 type CommunityParams = {
 	communityId: string;
@@ -994,6 +995,33 @@ export const sendCommunityMessage = async (
 					.lean();
 
 				io.to(`user:${recipientId}`).emit("notification", populated);
+
+				// Send a real on-device push notification
+				const senderInfo = (populated as any)?.sender || {};
+				const senderName =
+					senderInfo?.fullName || senderInfo?.username || "Someone";
+				const body =
+					sanitizedText?.slice(0, 120) ||
+					messageType === "photo"
+						? "📷 Photo"
+						: messageType === "video"
+							? "🎬 Video"
+							: messageType === "voice_note"
+								? "🎤 Voice note"
+								: "New message";
+				sendPushToUser(recipientId, {
+					title: senderName,
+					body,
+					icon: senderInfo?.profilePic?.url || "/icon-192.png",
+					tag: `orbit-community-${communityId}`,
+					timestamp: new Date().toISOString(),
+					data: {
+						url: "/communities",
+						type: "community_message",
+						communityId,
+						unreadCount: 0,
+					},
+				});
 			} catch (err: any) {
 				logger.error("Failed to create community message notification", {
 					error: err.message,

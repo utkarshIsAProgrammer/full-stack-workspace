@@ -5,6 +5,7 @@ import Follow from "../models/follow.model";
 import { getCache, setCache } from "../configs/cache";
 import { logger } from "../utilities/logger";
 import { AppError, BadRequestError } from "../utilities/errors";
+import { getBlockedUserIds } from "../utilities/blockCheck";
 import { addUserStatusToPosts } from "../utilities/postStatus";
 
 export const searchUsers = async (req: Request, res: Response) => {
@@ -24,6 +25,12 @@ export const searchUsers = async (req: Request, res: Response) => {
       logger.error(`Cache error in searchUsers!`, { error: err.message });
     }
 
+    // Blocked users must never appear in search
+    let blockedIds: any[] = [];
+    if (currentUserId) {
+      blockedIds = await getBlockedUserIds(currentUserId.toString());
+    }
+
     let users: any[] = [];
 
     if (q) {
@@ -35,6 +42,9 @@ export const searchUsers = async (req: Request, res: Response) => {
           textQuery._id = { $ne: currentUserId };
         } else if (cursor) {
           textQuery._id = { $lt: cursor };
+        }
+        if (blockedIds.length > 0) {
+          textQuery._id = { ...(typeof textQuery._id === "object" ? textQuery._id : {}), $nin: blockedIds };
         }
         users = await User.find(textQuery)
           .select("_id fullName username profilePic followersCount followingCount")
@@ -59,6 +69,9 @@ export const searchUsers = async (req: Request, res: Response) => {
         } else if (cursor) {
           regexQuery._id = { $lt: cursor };
         }
+        if (blockedIds.length > 0) {
+          regexQuery._id = { ...(typeof regexQuery._id === "object" ? regexQuery._id : {}), $nin: blockedIds };
+        }
         users = await User.find(regexQuery)
           .select("_id fullName username profilePic followersCount followingCount")
           .sort({ _id: -1 })
@@ -74,6 +87,9 @@ export const searchUsers = async (req: Request, res: Response) => {
         allUsersQuery._id = { $ne: currentUserId };
       } else if (cursor) {
         allUsersQuery._id = { $lt: cursor };
+      }
+      if (blockedIds.length > 0) {
+        allUsersQuery._id = { ...(typeof allUsersQuery._id === "object" ? allUsersQuery._id : {}), $nin: blockedIds };
       }
       users = await User.find(allUsersQuery)
         .select("_id fullName username profilePic followersCount followingCount")
@@ -149,11 +165,20 @@ export const searchPosts = async (req: Request, res: Response) => {
 
     let posts: any[] = [];
 
+    // Blocked users must never appear in post search
+    let blockedPostIds: string[] = [];
+    if (currentUserId) {
+      blockedPostIds = await getBlockedUserIds(currentUserId);
+    }
+
     if (q) {
       try {
         const textQuery: any = { $text: { $search: q } };
         if (cursor) {
           textQuery._id = { $lt: cursor };
+        }
+        if (blockedPostIds.length > 0) {
+          textQuery.author = { $nin: blockedPostIds };
         }
         posts = await Post.find(textQuery)
           .select(
@@ -183,6 +208,9 @@ export const searchPosts = async (req: Request, res: Response) => {
         if (cursor) {
           regexQuery._id = { $lt: cursor };
         }
+        if (blockedPostIds.length > 0) {
+          regexQuery.author = { $nin: blockedPostIds };
+        }
         posts = await Post.find(regexQuery)
           .select(
             "title content image images likesCount commentsCount repostsCount createdAt author viewsCount savesCount sharesCount tags slug",
@@ -197,6 +225,9 @@ export const searchPosts = async (req: Request, res: Response) => {
       const allPostsQuery: any = { visibility: "public" };
       if (cursor) {
         allPostsQuery._id = { $lt: cursor };
+      }
+      if (blockedPostIds.length > 0) {
+        allPostsQuery.author = { $nin: blockedPostIds };
       }
       posts = await Post.find(allPostsQuery)
         .select(

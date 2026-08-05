@@ -24,6 +24,7 @@ import {
   Mic,
   Play,
   Pause,
+  Square,
   ChevronDown,
   Phone,
   Video,
@@ -101,7 +102,7 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
 
   // Voice note recording state
   const [isRecording, setIsRecording] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
+
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -112,7 +113,7 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
   const shouldSendAfterRecordRef = useRef(false);
   const recordingDurationRef = useRef(0);
   const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
-  const recordingStreamRef = useRef<MediaStream | null>(null);
+
   const [leavingCommunity, setLeavingCommunity] = useState(false);
   const [joiningCommunities, setJoiningCommunities] = useState<Set<string>>(new Set());
   const [pinnedMessages, setPinnedMessages] = useState<CommunityMessage[]>([]);
@@ -366,7 +367,21 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
         // Dedup: don't add messages that already exist (prevents voice note optimistic dupes)
         setMessages((prev) => {
           if (prev.some((m) => m._id === message._id)) return prev;
-          return [...prev, message];
+          // When our own message comes back over the socket, strip its
+          // optimistic pending copy ("pending-..." ids never match the server
+          // id, so it would otherwise be appended alongside the optimistic one
+          // → the sender sees the same voice note / message twice). Only do
+          // this for OUR messages so other members' traffic never removes a
+          // failed/retry pending bubble.
+          const isOwnMessage = message.sender?._id === userId;
+          const filtered = isOwnMessage
+            ? prev.filter(
+                (m) =>
+                  !m._id.startsWith("pending-") ||
+                  (m as any).community !== message.community,
+              )
+            : prev;
+          return [...filtered, message];
         });
         setTimeout(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -736,31 +751,6 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
     return { mimeType: "", extension: "webm" };
   };
 
-  const handlePauseRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-      mediaRecorderRef.current.pause();
-      setIsPaused(true);
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-        recordingTimerRef.current = null;
-      }
-    }
-  };
-
-  const handleResumeRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "paused") {
-      mediaRecorderRef.current.resume();
-      setIsPaused(false);
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingDuration((prev) => {
-          const next = prev + 1;
-          recordingDurationRef.current = next;
-          return next;
-        });
-      }, 1000);
-    }
-  };
-
   const handleMicToggle = async () => {
     if (isRecording) {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
@@ -771,7 +761,6 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
         recordingTimerRef.current = null;
       }
       setIsRecording(false);
-      setIsPaused(false);
     } else {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -783,7 +772,6 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
             autoGainControl: true,
           },
         });
-        recordingStreamRef.current = stream;
         audioChunksRef.current = [];
         setRecordingDuration(0);
 
@@ -818,7 +806,6 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
         mediaRecorderRef.current = recorder;
         recorder.start();
         setIsRecording(true);
-        setIsPaused(false);
 
         recordingDurationRef.current = 0;
         recordingTimerRef.current = setInterval(() => {
@@ -2134,10 +2121,10 @@ useLayoutEffect(() => {
             <button
               onClick={() => handleGroupCall("audio")}
               disabled={startingCall}
-              className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-green-500/20 transition-colors cursor-pointer shrink-0 disabled:opacity-40"
+              className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-white/15 transition-colors cursor-pointer shrink-0 disabled:opacity-40"
               title="Start group audio call"
             >
-              <Phone className="h-3.5 w-3.5 text-zinc-500 hover:text-green-400" />
+              <Phone className="h-3.5 w-3.5 text-zinc-500 hover:text-white" />
             </button>
           )}
           {/* Group Video call button - only when enabled */}
@@ -2145,10 +2132,10 @@ useLayoutEffect(() => {
             <button
               onClick={() => handleGroupCall("video")}
               disabled={startingCall}
-              className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-green-500/20 transition-colors cursor-pointer shrink-0 disabled:opacity-40"
+              className="h-7 w-7 rounded-full flex items-center justify-center hover:bg-white/15 transition-colors cursor-pointer shrink-0 disabled:opacity-40"
               title="Start group video call"
             >
-              <Video className="h-3.5 w-3.5 text-zinc-500 hover:text-green-400" />
+              <Video className="h-3.5 w-3.5 text-zinc-500 hover:text-white" />
             </button>
           )}
           <button
@@ -2521,10 +2508,10 @@ useLayoutEffect(() => {
         {(selectedCommunity.messagingEnabled !== false || selectedCommunity.creator?._id === userId) && (
         <div className={`px-2 ${isMobile ? "pb-[calc(0.375rem+env(safe-area-inset-bottom,0px))] pt-3" : "py-3"} border-t border-zinc-800/50 shrink-0 relative`} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
           {isDragActive && (
-            <div className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-sky-500/10 border-2 border-dashed border-sky-500/40 backdrop-blur-sm">
+            <div className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-white/5 border-2 border-dashed border-white/25 backdrop-blur-sm">
               <div className="text-center">
-                <Image className="h-8 w-8 text-sky-400 mx-auto mb-2" />
-                <p className="text-xs font-semibold text-sky-300">Drop files here</p>
+                <Image className="h-8 w-8 text-zinc-300 mx-auto mb-2" />
+                <p className="text-xs font-semibold text-zinc-200">Drop files here</p>
               </div>
             </div>
           )}
@@ -2544,7 +2531,7 @@ useLayoutEffect(() => {
               onChange={handleFileSelect}
             />
             <div className="flex-1 min-w-0 relative">
-              {!recordedUrl && !isRecording && (
+              {!recordedUrl && (
                 <>
                   <textarea
                     ref={inputRef}
@@ -2566,7 +2553,7 @@ useLayoutEffect(() => {
                         : `Message ${selectedCommunity.name}...`
                     }
                     rows={1}
-                    className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-xl pl-10 pr-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all resize-none max-h-[120px]"
+                    className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-lg pl-10 pr-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all resize-none max-h-[120px]"
                   />
   {/* Gallery icon — single media entry point (choose files or take photo via OS native dialog) */}
                   <button
@@ -2582,31 +2569,29 @@ useLayoutEffect(() => {
               )}
               
 
-              {/* Recording indicator — animated waveform bars */}
+              {/* Recording indicator — animated waveform bars (matches personal chat) */}
               {isRecording && (
-                <div className={`flex items-center gap-2 shrink-0 px-2 transition-opacity duration-200 ${isPaused ? "opacity-50" : ""}`}>
+                <div className="flex items-center gap-2 shrink-0">
                   {/* Animated waveform bars */}
                   <span className="flex items-center gap-[3px] h-5">
                     {[3, 6, 10, 14, 18, 14, 10, 6, 3].map((h, i) => (
                       <span
                         key={i}
-                        className={`w-[3px] bg-red-500 rounded-full transition-transform duration-200 ${
-                          isPaused ? "" : "waveform-bar"
-                        }`}
+                        className="waveform-bar w-[3px] bg-red-500 rounded-full"
                         style={{
                           height: `${h}px`,
-                          ...(!isPaused ? { animation: `waveform 0.5s ease-in-out ${i * 0.1}s infinite alternate` } : {}),
+                          animation: `waveform 0.5s ease-in-out ${i * 0.1}s infinite alternate`,
                         }}
                       />
                     ))}
                   </span>
-                  <span className={`text-[12px] font-mono tabular-nums font-bold transition-colors duration-200 ${isPaused ? "text-zinc-500" : "text-red-400"}`}>
-                    {isPaused ? `${recordingDuration}s (paused)` : `${recordingDuration}s`}
+                  <span className="text-[12px] font-mono text-red-400 tabular-nums font-bold">
+                    {recordingDuration}s
                   </span>
                 </div>
               )}
 
-              {/* Recorded audio preview — match Chat.tsx styling */}
+              {/* Recorded audio preview — exact copy of personal chat (Chat.tsx) */}
               {recordedUrl && !isRecording && (
                 <div className="flex items-center gap-3 px-2 py-1.5">
                   <button
@@ -2623,7 +2608,7 @@ useLayoutEffect(() => {
                         }
                       }
                     }}
-                    className="h-9 w-9 rounded-full bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-300 hover:bg-indigo-500/30 transition-all cursor-pointer shrink-0"
+                    className="h-9 w-9 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-zinc-200 hover:bg-white/20 transition-all cursor-pointer shrink-0"
                   >
                     {isPlayingPreview ? (
                       <Pause className="h-4 w-4" />
@@ -2633,7 +2618,10 @@ useLayoutEffect(() => {
                   </button>
                   <div className="flex-1 flex items-center gap-2 min-w-0">
                     <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                      <div className="h-full bg-indigo-500/60 rounded-full w-0" />
+                      <div
+                        className="h-full bg-white/60 rounded-full w-0"
+                        id="voice-preview-progress"
+                      />
                     </div>
                     <span className="text-[11px] font-mono text-zinc-400 tabular-nums">
                       {recordingDuration}s
@@ -2656,100 +2644,58 @@ useLayoutEffect(() => {
                   <button
                     type="button"
                     onClick={() => handleSendVoiceNote()}
-                    disabled={sending}
-                    className="flex shrink-0 items-center justify-center rounded-full bg-white text-black hover:bg-zinc-200 cursor-pointer shadow-md transition-all duration-200 h-9 w-9 disabled:bg-zinc-800 disabled:text-zinc-600 disabled:cursor-not-allowed"
+                    className="flex shrink-0 items-center justify-center rounded-full bg-white text-black hover:bg-zinc-250 cursor-pointer shadow-md transition-all duration-200 h-9 w-9"
                   >
-                    {sending ? (
-                      <Loader2 className="h-4.5 w-4.5 animate-spin" />
-                    ) : (
-                      <Send className="h-4.5 w-4.5" />
-                    )}
+                    <Send className="h-4.5 w-4.5" />
                   </button>
                   <audio
                     ref={audioPreviewRef}
                     src={recordedUrl}
                     onEnded={() => setIsPlayingPreview(false)}
-                    className="hidden"
+                    onTimeUpdate={() => {
+                      if (audioPreviewRef.current) {
+                        const progress = document.getElementById("voice-preview-progress");
+                        if (progress) {
+                          progress.style.width = `${(audioPreviewRef.current.currentTime / (audioPreviewRef.current.duration || 1)) * 100}%`;
+                        }
+                      }
+                    }}
                   />
                 </div>
               )}
             </div>
 
-            {/* Right side buttons: Dictation, Mic or Send */}
-            {!isRecording && !recordedUrl ? (
+            {/* Right side buttons — exact copy of personal chat (Chat.tsx) */}
+            {!recordedUrl && (
               <>
-{!messageInput.trim() && selectedFiles.length === 0 ? (
+                {/* Mic toggle — red square while recording (stop) */}
+                {(!messageInput.trim() && selectedFiles.length === 0) || isRecording ? (
                   <button
-                    onClick={(e) => { handleMicClick(e); }}
-                    className="h-9 w-9 rounded-xl bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
-                    title="Record voice note"
                     type="button"
+                    onClick={(e) => { handleMicClick(e); }}
+                    className={`flex shrink-0 items-center justify-center rounded-full transition-all duration-200 cursor-pointer ${
+                      isRecording
+                        ? "h-9 w-9 bg-red-500 text-white hover:bg-red-600"
+                        : "h-9 w-9 bg-zinc-800/60 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-700"
+                    }`}
+                    title={isRecording ? "Stop recording" : "Record voice note"}
                   >
-                    <Mic className="h-4 w-4 text-zinc-400" />
-                  </button>
-                ) : (
-                  <button
-                    onClick={editingMessage ? handleEditSubmit : handleSendMessage}
-                    disabled={sending}
-                    className="h-9 w-9 rounded-xl bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 flex items-center justify-center transition-all cursor-pointer disabled:cursor-not-allowed shrink-0"
-                  >
-                    {sending ? (
-                      <Loader2 className="h-4 w-4 text-black animate-spin" />
+                    {isRecording ? (
+                      <Square className="h-4 w-4" />
                     ) : (
-                      <Send className="h-4 w-4 text-black" />
+                      <Mic className="h-4.5 w-4.5" />
                     )}
                   </button>
-                )}
-              </>
-            ) : (
-              <>
-                {isRecording && (
-                  <div className="flex items-center gap-1.5">
-                    {/* Pause/Resume toggle button */}
-                    <button
-                      onClick={isPaused ? handleResumeRecording : handlePauseRecording}
-                      className={`h-9 w-9 rounded-full flex items-center justify-center transition-all cursor-pointer shrink-0 ${
-                        isPaused
-                          ? "bg-green-500 hover:bg-green-600"
-                          : "bg-amber-500 hover:bg-amber-600"
-                      }`}
-                      title={isPaused ? "Resume recording" : "Pause recording"}
-                      type="button"
-                    >
-                      {isPaused ? (
-                        <Play className="h-4 w-4 text-white ml-0.5" />
-                      ) : (
-                        <Pause className="h-4 w-4 text-white" />
-                      )}
-                    </button>
-                    {/* Send directly button - stops recording and sends immediately */}
-                    <button
-                      onClick={async () => {
-                        // Stop the recorder first to get the final blob
-                        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-                          mediaRecorderRef.current.stop();
-                        }
-                        if (recordingTimerRef.current) {
-                          clearInterval(recordingTimerRef.current);
-                          recordingTimerRef.current = null;
-                        }
-                        setIsRecording(false);
-                        setIsPaused(false);
-
-                        // Create blob from accumulated chunks
-                        const chunkBlob = new Blob(audioChunksRef.current, { type: audioChunksRef.current.length > 0 ? audioChunksRef.current[0].type : "audio/webm" });
-                        const duration = recordingDurationRef.current;
-
-                        // Send the voice note immediately
-                        await handleSendVoiceNote(chunkBlob, duration);
-                      }}
-                      className="h-9 w-9 rounded-xl bg-white hover:bg-zinc-200 flex items-center justify-center transition-all cursor-pointer shrink-0"
-                      title="Send recording"
-                      type="button"
-                    >
-                      <Send className="h-4 w-4 text-black" />
-                    </button>
-                  </div>
+                ) : null}
+                {/* Send button — shown while recording too (sends immediately, stops recording) */}
+                {(messageInput.trim() || selectedFiles.length > 0 || isRecording) && (
+                  <button
+                    type="button"
+                    onClick={editingMessage ? handleEditSubmit : handleSendMessage}
+                    className="flex shrink-0 items-center justify-center rounded-full bg-white text-black hover:bg-zinc-250 cursor-pointer shadow-md transition-all duration-200 h-9 w-9"
+                  >
+                    <Send className="h-4.5 w-4.5" />
+                  </button>
                 )}
               </>
             )}
@@ -2918,7 +2864,7 @@ useLayoutEffect(() => {
   return (
     <>
       <GlassCard
-        className="w-full h-full pt-0 sm:pt-4 lg:pt-4 xl:pt-5 pb-0 px-0 flex !rounded-none sm:!rounded-3xl lg:!rounded-4xl sm:border-x sm:border-t sm:border-white/5"
+        className="w-full h-full pt-0 sm:pt-4 lg:pt-4 xl:pt-5 pb-0 px-0 flex !rounded-none sm:!rounded-3xl lg:!rounded-4xl sm:border sm:border-white/10"
       >
         {view === "list" && renderCommunityList()}
         {view === "chat" && renderCommunityChat()}

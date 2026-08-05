@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { User } from "../models/user.model";
 import Post from "../models/post.model";
 import { AppError, UnauthorizedError } from "../utilities/errors";
+import { getBlockedUserIds } from "../utilities/blockCheck";
 import { addUserStatusToPosts } from "../utilities/postStatus";
 import { getCache, setCache } from "../configs/cache";
 import { logger } from "../utilities/logger";
@@ -33,6 +34,10 @@ export const getForYouFeed = async (req: Request, res: Response) => {
     const contentAffinity = (user as any).contentAffinity || {};
     const seenPosts: string[] = (user as any).seenPosts || [];
 
+    // Blocked users must not exist in the feed (either direction)
+    const blockedIds = await getBlockedUserIds(currentUserId);
+    const blockedSet = new Set(blockedIds);
+
     // Get author IDs with affinity scores sorted by score descending
     const authorEntries = Object.entries(affinityScores) as [string, number][];
     const weightedAuthors = authorEntries
@@ -54,10 +59,16 @@ export const getForYouFeed = async (req: Request, res: Response) => {
       }) },
       status: "published",
     };
+    if (blockedIds.length > 0) {
+      query.author = { $nin: blockedIds };
+    }
 
     const orConditions: any[] = [];
     if (weightedAuthors.length > 0) {
-      orConditions.push({ author: { $in: weightedAuthors } });
+      const filteredAuthors = weightedAuthors.filter((id) => !blockedSet.has(id.toString()));
+      if (filteredAuthors.length > 0) {
+        orConditions.push({ author: { $in: filteredAuthors } });
+      }
     }
     if (topTags.length > 0) {
       orConditions.push({ hashtags: { $in: topTags } });
@@ -75,7 +86,11 @@ export const getForYouFeed = async (req: Request, res: Response) => {
 
     if (candidates.length === 0) {
       // Fallback: latest public posts
-      const fallback = await Post.find({ status: "published", visibility: "public" })
+      const fallbackQuery: any = { status: "published", visibility: "public" };
+      if (blockedIds.length > 0) {
+        fallbackQuery.author = { $nin: blockedIds };
+      }
+      const fallback = await Post.find(fallbackQuery)
         .populate("author", "username email fullName profilePic")
         .sort({ createdAt: -1 })
         .limit(limit)

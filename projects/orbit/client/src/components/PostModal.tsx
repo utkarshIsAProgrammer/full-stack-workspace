@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Image, Loader2, ListTodo, Calendar, Clock, UserPlus } from "lucide-react";
+import { X, Image, Loader2, ListTodo, Calendar, Clock, UserPlus, Globe, Lock } from "lucide-react";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 import { validatePost } from "../utils/validation";
@@ -26,7 +26,7 @@ export default function PostModal({
 }: PostModalProps) {
 	const [title, setTitle] = useState("");
 	const [content, setContent] = useState("");
-	const contentRef = useAutoGrow<HTMLTextAreaElement>(content);
+	const contentRef = useAutoGrow<HTMLTextAreaElement>(content, 360);
 	const [postImageFiles, setPostImageFiles] = useState<File[]>([]);
 	const [postImagePreviews, setPostImagePreviews] = useState<string[]>([]);
 	const [submittingPost, setSubmittingPost] = useState(false);
@@ -43,6 +43,11 @@ export default function PostModal({
 	const [showScheduler, setShowScheduler] = useState(false);
 	const [scheduledAt, setScheduledAt] = useState("");
 	const [isDraft, setIsDraft] = useState(false);
+
+	// Audience — who can see this post
+	const [visibility, setVisibility] = useState<"public" | "closeFriends">(
+		"public",
+	);
 
 	// Collab invite state
 	const [showCollabInvite, setShowCollabInvite] = useState(false);
@@ -182,6 +187,7 @@ export default function PostModal({
 			const formData = new FormData();
 			formData.append("title", title);
 			formData.append("content", content);
+			formData.append("visibility", visibility);
 
 			// Add poll data
 			if (showPollCreator) {
@@ -234,6 +240,7 @@ export default function PostModal({
 			setShowScheduler(false);
 			setScheduledAt("");
 			setIsDraft(false);
+			setVisibility("public");
 			setCollabUsername("");
 			setShowCollabInvite(false);
 
@@ -629,13 +636,40 @@ export default function PostModal({
 										</button>
 									</div>
 
+									{/* Audience toggle — Public / Close Friends */}
+									<button
+										type="button"
+										onClick={() =>
+											setVisibility((v) =>
+												v === "public" ? "closeFriends" : "public",
+											)
+										}
+										className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-bold transition-all cursor-pointer ${
+											visibility === "closeFriends"
+												? "border-emerald-500/25 bg-emerald-500/10 text-emerald-400/90"
+												: "border-zinc-700/60 bg-zinc-800/40 text-zinc-300 hover:bg-zinc-800 hover:text-white"
+										}`}
+										title={
+											visibility === "public"
+												? "Visible to everyone"
+												: "Only visible to your close friends"
+										}
+									>
+										{visibility === "public" ? (
+											<Globe className="h-3.5 w-3.5" />
+										) : (
+											<Lock className="h-3.5 w-3.5" />
+										)}
+										{visibility === "public" ? "Public" : "Close Friends"}
+									</button>
+
 									{/* Poll toggle */}
 									<button
 										type="button"
 										onClick={() => setShowPollCreator(!showPollCreator)}
 										className={`flex h-10 w-10 items-center justify-center rounded-full transition-all cursor-pointer ${
 										showPollCreator
-											? "bg-amber-400/20 text-amber-400"
+											? "bg-white/15 text-white"
 											: "text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900"
 										}`}
 										title="Add poll"
@@ -649,7 +683,7 @@ export default function PostModal({
 										onClick={() => setShowScheduler(!showScheduler)}
 										className={`flex h-10 w-10 items-center justify-center rounded-full transition-all cursor-pointer ${
 											showScheduler
-												? "bg-sky-500/20 text-sky-400"
+												? "bg-white/15 text-white"
 												: "text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900"
 										}`}
 										title="Schedule post"
@@ -675,7 +709,15 @@ export default function PostModal({
 									)}
 								</div>
 
-								<div className="flex items-center gap-2">
+								<div className="flex flex-col items-end gap-2">
+									{visibility === "closeFriends" && (
+										<div className="flex items-center justify-center gap-1.5 rounded-full border border-emerald-500/15 bg-emerald-500/5 px-3 py-1.5 text-[10px] font-bold text-emerald-400/80">
+											<Lock className="h-3 w-3" />
+											Only visible to your close friends
+										</div>
+									)}
+
+									<div className="flex items-center gap-2">
 									{/* Save as draft */}
 									<button
 										type="button"
@@ -708,6 +750,7 @@ export default function PostModal({
 											"Post"
 										)}
 									</button>
+									</div>
 								</div>
 							</div>
 						</form>

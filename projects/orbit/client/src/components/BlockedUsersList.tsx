@@ -24,7 +24,9 @@ export default function BlockedUsersList() {
       const res = await apiFetch("/api/blocks");
       const data = await res.json();
       if (res.ok && data.success) {
-        setBlockedUsers(data.blockedUsers || []);
+        // Server returns the list under `users` (primary) and `blockedUsers`
+        // (backward compat) — accept either.
+        setBlockedUsers(data.users || data.blockedUsers || []);
       } else {
         setError(data.message || "Failed to load blocked users");
       }

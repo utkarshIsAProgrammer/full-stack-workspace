@@ -18,11 +18,19 @@ export function useAutoGrow<T extends HTMLTextAreaElement>(
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.style.height = "auto";
-    const next = Math.min(el.scrollHeight, maxHeight);
-    el.style.height = `${next}px`;
-    // Only allow internal scrolling once the max height is reached
-    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+    const resize = () => {
+      el.style.height = "auto";
+      const next = Math.min(el.scrollHeight, maxHeight);
+      el.style.height = `${next}px`;
+      // Only allow internal scrolling once the max height is reached
+      el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+    };
+    resize();
+    // Recompute when the viewport changes too — a narrower window wraps
+    // text onto more lines, which can otherwise clip the opening words
+    // again until the next keystroke.
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
   }, [value, maxHeight]);
 
   return ref;

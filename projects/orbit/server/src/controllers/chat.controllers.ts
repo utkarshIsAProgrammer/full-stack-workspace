@@ -4,6 +4,7 @@ import { Conversation } from "../models/conversation.model";
 import { Message } from "../models/message.model";
 import { User } from "../models/user.model";
 import Block from "../models/block.model";
+import Notification from "../models/notification.model";
 import { sendMessageSchema, editMessageSchema } from "../schemas/chat.schema";
 import {
 	BadRequestError,
@@ -14,6 +15,7 @@ import {
 } from "../utilities/errors";
 import { logger } from "../utilities/logger";
 import { createNotification } from "../utilities/notification";
+import { sendPushToUser } from "../services/pushService";
 import { getCache, setCache, clearChatCache } from "../configs/cache";
 import { sanitizePlainText } from "../configs/sanitize";
 import cloudinary from "../configs/cloudinary";
@@ -589,7 +591,9 @@ export const sendMessage = async (
 		await message.save();
 
 		// Update conversation properties
-		const updateObj: any = { lastMessage: message._id };
+		// lastAction is reset to null — a fresh message supersedes any stale
+		// "reacted" preview in the conversations list.
+		const updateObj: any = { lastMessage: message._id, lastAction: null };
 		if (!isRecipientActive) {
 			// Increment unread count for recipient if they are not active in the chatbox
 			updateObj.$inc = { [`unreadCounts.${recipientId}`]: 1 };
@@ -670,6 +674,85 @@ export const sendMessage = async (
 				unreadCount: recipientUnreadCount,
 				conversation: populatedConversation,
 			});
+
+			// Create an in-app notification so the notifications bell badge reflects
+			// new messages too (previously only the messages-icon badge updated via
+			// emitChatNotification). Dedupe per sender while unread to avoid flooding.
+			try {
+				// Determine message type from attachments for the notification display
+				let messageType: "text" | "photo" | "video" | "voice_note" | "file" | "gif" | "sticker" = "text";
+				if (attachments.length > 0) {
+					const firstAttach = attachments[0];
+					if (firstAttach.type === "image") messageType = "photo";
+					else if (firstAttach.type === "gif") messageType = "gif";
+					else if (firstAttach.type === "sticker") messageType = "sticker";
+					else if (firstAttach.type === "video") messageType = "video";
+					else if (firstAttach.type === "voice_note") messageType = "voice_note";
+					else if (firstAttach.type === "file") messageType = "file";
+				}
+
+				// Upsert-style: reuse an existing unread notification from the same
+				// sender (touched so it bubbles to the top) instead of flooding the
+				// notifications list with one row per message.
+				const populatedNotif = await Notification.findOneAndUpdate(
+					{
+						recipient: recipientId,
+						sender: currentUserId,
+						type: "message",
+						isRead: false,
+					},
+					{
+						$set: { messageType, createdAt: new Date() },
+						$setOnInsert: {
+							recipient: recipientId,
+							sender: currentUserId,
+							type: "message",
+							messageType,
+						},
+					},
+					{ upsert: true, returnDocument: "after" },
+				)
+					.populate("sender", "username fullName profilePic")
+					.lean();
+
+				if (populatedNotif) {
+					getIO().to(`user:${recipientId}`).emit("notification", populatedNotif);
+				}
+			} catch (notifErr) {
+				logger.error("Failed to create chat message notification", {
+					error: (notifErr as Error).message,
+					recipientId,
+				});
+			}
+
+			// Send a real on-device push notification for the new message
+			try {
+				const senderInfo = (populatedMessage as any)?.sender || {};
+				const senderName =
+					senderInfo?.fullName || senderInfo?.username || "Someone";
+				const messageText =
+					(populatedMessage as any)?.text?.slice(0, 120) ||
+					((populatedMessage as any)?.attachments?.length
+						? "📎 Attachment"
+						: "New message");
+				sendPushToUser(recipientId, {
+					title: senderName,
+					body: messageText,
+					icon: senderInfo?.profilePic?.url || "/icon-192.png",
+					tag: `orbit-chat-${conversationId}`,
+					timestamp: new Date().toISOString(),
+					data: {
+						url: "/chat",
+						type: "message",
+						conversationId,
+						unreadCount: recipientUnreadCount || 0,
+					},
+				});
+			} catch (pushErr) {
+				logger.warn("Failed to send chat push notification", {
+					error: (pushErr as Error).message,
+				});
+			}
 		}
 
 		return res.status(201).json({
@@ -1129,6 +1212,7 @@ export const clearConversationMessages = async (
 
 		// Reset conversation metadata
 		conversation.lastMessage = undefined;
+		conversation.lastAction = null;
 		// Reset unread counts
 		const participants = conversation.participants.map((p) => p.toString());
 		participants.forEach((pId) => {

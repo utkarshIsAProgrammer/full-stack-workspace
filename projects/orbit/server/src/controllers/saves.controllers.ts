@@ -7,9 +7,10 @@ import {
   createNotification,
   deleteInteractionNotification,
 } from "../utilities/notification";
+import { areMutuallyBlocked } from "../utilities/blockCheck";
 import { emitPostSave, emitPostUnsave } from "../configs/socket";
 import { logger } from "../utilities/logger";
-import { AppError, BadRequestError, NotFoundError, UnauthorizedError } from "../utilities/errors";
+import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenError } from "../utilities/errors";
 import { toggleSaveSchema, updateSaveFolderSchema } from "../schemas/interaction.schema";
 import { addUserStatusToPosts } from "../utilities/postStatus";
 import { logInteraction } from "../services/affinityService";
@@ -39,6 +40,13 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
     const post = await Post.findById(postId).select("_id author").lean();
     if (!post) {
       throw new NotFoundError("Post not found!");
+    }
+
+    // Blocked users must not exist for each other — no saving blocked posts
+    if (post.author.toString() !== userId.toString()) {
+      if (await areMutuallyBlocked(userId.toString(), post.author.toString())) {
+        throw new ForbiddenError("Cannot save this post!");
+      }
     }
 
     // check user already saved this post
@@ -188,9 +196,8 @@ export const getSavedPosts = async (req: Request, res: Response) => {
       .limit(limit + 1)
       .select("post folder createdAt")
       .populate({
-        path: "post",
-        select:
-          "title slug image images author savesCount repostsCount likesCount commentsCount createdAt viewsCount sharesCount",
+        path: "post",		select:
+			"title slug image images author savesCount repostsCount likesCount commentsCount createdAt viewsCount sharesCount visibility",
         populate: [
           {
             path: "author",

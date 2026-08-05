@@ -139,13 +139,10 @@ export default React.memo(function Dock({
 							src={user.profilePic.url}
 							alt={user.fullName}
 							onError={() => setProfilePicError(true)}
-							onClick={() => {
-								// Don't stop propagation — let the parent button's onClick navigate to the profile tab
-								if (user?.profilePic?.url) {
-									window.dispatchEvent(new CustomEvent("openImagePreview", { detail: user.profilePic.url }));
-								}
-							}}
-							className={`h-6.5 w-6.5 sm:h-7 sm:w-7 aspect-square rounded-full object-cover border cursor-pointer ${isActive ? "border-white" : "border-zinc-700"} shadow-sm`}
+							// NOTE: intentionally NO onClick here — the parent button already
+							// navigates to the Profile tab. Previously this opened the
+							// fullscreen image preview, which was wrong for a dock icon.
+							className={`h-6.5 w-6.5 sm:h-7 sm:w-7 aspect-square rounded-full object-cover border ${isActive ? "border-white" : "border-zinc-700"} shadow-sm select-none`}
 						/>
 					) : (
 						<Icon
@@ -182,7 +179,7 @@ export default React.memo(function Dock({
 					bottom: `calc(${isKeyboardOpen ? "0.2rem" : "0.3rem"} + env(safe-area-inset-bottom, 0px))`,
 				}}>
 				<div
-					className={`relative flex items-center justify-between rounded-3xl sm:rounded-4xl border border-white/15 dark:border-zinc-800/50 bg-white/60 dark:bg-zinc-950/80 backdrop-blur-xl shadow-[0_20px_60px_-15px rgba(0,0,0,0.4)] transition-all duration-200 ${isKeyboardOpen ? "px-2 py-1.5 gap-0.5" : "px-2.5 py-3.5 gap-0.5 sm:gap-1.5 sm:px-3"}`}>
+					className={`relative flex items-center justify-between rounded-3xl sm:rounded-4xl border border-white/20 dark:border-zinc-700/60 bg-white/70 dark:bg-zinc-900/85 backdrop-blur-xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.45)] transition-all duration-200 ${isKeyboardOpen ? "px-2 py-1.5 gap-0.5" : "px-2.5 py-3.5 gap-0.5 sm:gap-1.5 sm:px-3"}`}>
 
 
 					{leftItems.map((item, i) => renderDockItem(item, i))}

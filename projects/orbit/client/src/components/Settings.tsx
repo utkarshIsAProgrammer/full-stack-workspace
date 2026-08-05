@@ -17,6 +17,7 @@ import GlassCard from "./GlassCard";
 import ValidationMessage from "./ValidationMessage";
 import CharCounter from "./CharCounter";
 import BlockedUsersList from "./BlockedUsersList";
+import CloseFriendsTab from "./CloseFriendsTab";
 import InvitesTab from "./InvitesTab";
 import { apiFetch } from "../utils/api";
 import {
@@ -38,11 +39,24 @@ interface SettingsProps {
 }: SettingsProps) {
 	// Navigation Tabs for settings sections
 	const [activeSubTab, setActiveSubTab] = useState<
-		"profile" | "password" | "account" | "blocked" | "invites" | "logout"
+		| "profile"
+		| "password"
+		| "account"
+		| "blocked"
+		| "close-friends"
+		| "invites"
+		| "logout"
 	>("profile");
 
 	const switchSubTab = (
-		tab: "profile" | "password" | "account" | "blocked" | "invites" | "logout",
+		tab:
+			| "profile"
+			| "password"
+			| "account"
+			| "blocked"
+			| "close-friends"
+			| "invites"
+			| "logout",
 	) => {
 		setActiveSubTab(tab);
 		setFieldErrors({});
@@ -51,12 +65,20 @@ interface SettingsProps {
 	// Shared settings navigation config — rendered as a desktop sidebar and
 	// a single horizontal line for non-desktop devices (text only, slim).
 	const settingsNav: {
-		id: "profile" | "password" | "account" | "blocked" | "invites" | "logout";
+		id:
+			| "profile"
+			| "password"
+			| "account"
+			| "blocked"
+			| "close-friends"
+			| "invites"
+			| "logout";
 		label: string;
 	}[] = [
 		{ id: "profile", label: "Profile" },
 		{ id: "password", label: "Password" },
 		{ id: "account", label: "Account" },
+		{ id: "close-friends", label: "Close Friends" },
 		{ id: "invites", label: "Invites" },
 		{ id: "blocked", label: "Blocked" },
 		{ id: "logout", label: "Log Out" },
@@ -541,7 +563,7 @@ interface SettingsProps {
 											clearFieldError("fullName");
 										}}
 										maxLength={50}
-										className="w-full rounded-full border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
+										className="w-full rounded-lg border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
 									/>
 									<div className="flex items-center justify-between px-1">
 										<ValidationMessage
@@ -647,7 +669,7 @@ interface SettingsProps {
 													"currentPassword",
 												);
 											}}
-											className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 pl-4 pr-11 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
+											className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 py-2.5 pl-4 pr-11 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
 										/>
 										<button
 											type="button"
@@ -690,7 +712,7 @@ interface SettingsProps {
 												setNewPassword(e.target.value);
 												clearFieldError("newPassword");
 											}}
-											className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 pl-4 pr-11 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
+											className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 py-2.5 pl-4 pr-11 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
 										/>
 										<button
 											type="button"
@@ -798,7 +820,7 @@ interface SettingsProps {
 											setDeleteEmail(e.target.value);
 											clearFieldError("deleteEmail");
 										}}
-										className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-rose-500 focus:bg-zinc-900 transition-all"
+										className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-rose-500 focus:bg-zinc-900 transition-all"
 									/>
 									<ValidationMessage
 										message={fieldErrors.deleteEmail}
@@ -835,7 +857,7 @@ interface SettingsProps {
 													"deletePassword",
 												);
 											}}
-											className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-2.5 pl-4 pr-11 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-rose-500 focus:bg-zinc-900 transition-all"
+											className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 py-2.5 pl-4 pr-11 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-rose-500 focus:bg-zinc-900 transition-all"
 										/>
 										<button
 											type="button"
@@ -872,6 +894,10 @@ interface SettingsProps {
 								</button>
 							</div>
 						</GlassCard>
+					)}
+
+					{activeSubTab === "close-friends" && (
+						<CloseFriendsTab user={user} />
 					)}
 
 					{activeSubTab === "invites" && (

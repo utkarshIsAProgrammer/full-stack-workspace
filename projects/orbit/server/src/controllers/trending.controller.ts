@@ -4,6 +4,7 @@ import Post from "../models/post.model";
 import { AppError } from "../utilities/errors";
 import { getCache, setCache } from "../configs/cache";
 import { logger } from "../utilities/logger";
+import { getBlockedUserIds } from "../utilities/blockCheck";
 
 /**
  * GET /api/trending/users
@@ -11,16 +12,28 @@ import { logger } from "../utilities/logger";
  */
 export const getTrendingUsers = async (req: Request, res: Response) => {
   try {
-    const cacheKey = "trending:users";
+    // Exclude anyone the current user has blocked (either direction),
+    // so the cache key must include the user to avoid leaking blocked users.
+    const currentUserId = req.user?._id?.toString();
+    const cacheKey = `trending:users:${currentUserId || "anon"}`;
     const cached = await getCache(cacheKey);
     if (cached) return res.status(200).json(cached);
 
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    const users = await User.find({
+    let blockedIds: string[] = [];
+    if (currentUserId) {
+      blockedIds = await getBlockedUserIds(currentUserId);
+    }
+    const usersQuery: any = {
       createdAt: { $lte: sevenDaysAgo },
       followersCount: { $gte: 1 },
-    })
+    };
+    if (blockedIds.length > 0) {
+      usersQuery._id = { $nin: blockedIds };
+    }
+
+    const users = await User.find(usersQuery)
       .select("username fullName profilePic bio followersCount createdAt")
       .sort({ followersCount: -1, createdAt: -1 })
       .limit(20)

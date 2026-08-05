@@ -34,7 +34,6 @@ const groupSchema = new mongoose.Schema(
 );
 
 groupSchema.index({ members: 1 });
-groupSchema.index({ admin: 1 });
 groupSchema.index({ updatedAt: -1 });
 
 type GroupType = InferSchemaType<typeof groupSchema>;

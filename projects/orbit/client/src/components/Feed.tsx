@@ -866,6 +866,13 @@ export default function Feed({
     ) => {
       const { postId, type, value, source, count } = e.detail;
 
+      // Socket events carry ANOTHER user's action (they liked/saved/reposted).
+      // Their action must only move the count — never color MY like/save/repost
+      // buttons. Only `source === "local"` (or no source, i.e. a broadcast of
+      // MY OWN action from another component like Explore/Profile) may toggle
+      // the current user's *ByMe flags.
+      const isSocketSource = source === "socket";
+
       // Sync across components
       if (source === "local") {
         // Let's still process it to synchronize other Feeds, but we should not double update the same component.
@@ -891,19 +898,29 @@ export default function Feed({
             case "like":
               return {
                 ...p,
-                likedByMe: value !== undefined ? value : p.likedByMe,
+                // Remote actions never touch my own like state
+                likedByMe:
+                  !isSocketSource && value !== undefined
+                    ? value
+                    : p.likedByMe,
                 likesCount: getCount(p, "likesCount", p.likedByMe === value),
               };
             case "save":
               return {
                 ...p,
-                savedByMe: value !== undefined ? value : p.savedByMe,
+                savedByMe:
+                  !isSocketSource && value !== undefined
+                    ? value
+                    : p.savedByMe,
                 savesCount: getCount(p, "savesCount", p.savedByMe === value),
               };
             case "repost":
               return {
                 ...p,
-                repostedByMe: value !== undefined ? value : p.repostedByMe,
+                repostedByMe:
+                  !isSocketSource && value !== undefined
+                    ? value
+                    : p.repostedByMe,
                 repostsCount: getCount(
                   p,
                   "repostsCount",
@@ -932,7 +949,11 @@ export default function Feed({
             case "like":
               return {
                 ...prev,
-                likedByMe: value !== undefined ? value : prev.likedByMe,
+                // Remote actions never touch my own like state
+                likedByMe:
+                  !isSocketSource && value !== undefined
+                    ? value
+                    : prev.likedByMe,
                 likesCount:
                   count !== undefined
                     ? count
@@ -941,7 +962,10 @@ export default function Feed({
             case "save":
               return {
                 ...prev,
-                savedByMe: value !== undefined ? value : prev.savedByMe,
+                savedByMe:
+                  !isSocketSource && value !== undefined
+                    ? value
+                    : prev.savedByMe,
                 savesCount:
                   count !== undefined
                     ? count
@@ -950,7 +974,10 @@ export default function Feed({
             case "repost":
               return {
                 ...prev,
-                repostedByMe: value !== undefined ? value : prev.repostedByMe,
+                repostedByMe:
+                  !isSocketSource && value !== undefined
+                    ? value
+                    : prev.repostedByMe,
                 repostsCount:
                   count !== undefined
                     ? count
@@ -2285,7 +2312,7 @@ export default function Feed({
                         }
                         className={`flex items-center gap-1.5 rounded-full text-[12px] md:text-sm font-bold transition-all cursor-pointer border px-3 py-1.5 ${
                           postVisibility === "closeFriends"
-                            ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-300"
+                            ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-400/80"
                             : "bg-zinc-800/50 border-zinc-700/50 text-zinc-400 hover:text-zinc-300"
                         }`}
                       >
@@ -2447,6 +2474,11 @@ export default function Feed({
                                   <p className="text-[11px] text-zinc-400 font-bold">
                                     @{post.author.username}
                                   </p>
+                                  {post.visibility === "closeFriends" && (
+                                    <span className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 text-[9px] font-bold text-emerald-400/80">
+                                      <Lock className="h-2.5 w-2.5" /> Close Friends
+                                    </span>
+                                  )}
                                   {post.collaborator && (
                                     <p className="text-[10px] text-green-400/80 font-semibold">
                                       {post.collabAccepted
@@ -2467,7 +2499,7 @@ export default function Feed({
                                         e.stopPropagation();
                                         handleAcceptCollab(post._id);
                                       }}
-                                      className="rounded-full border border-green-500/40 bg-green-500/10 px-3 py-1 text-[10px] font-bold text-green-400 hover:bg-green-500/20 transition-all cursor-pointer"
+                                      className="rounded-full border border-green-500/30 bg-green-500/5 px-3 py-1 text-[10px] font-bold text-green-400/90 hover:bg-green-500/15 transition-all cursor-pointer"
                                     >
                                       Accept collaboration
                                     </button>

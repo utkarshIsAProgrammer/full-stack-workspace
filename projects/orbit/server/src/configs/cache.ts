@@ -109,5 +109,12 @@ export const clearChatCache = async (conversationId: string, participantIds: str
   await clearByPattern(`chat:messages:${conversationId}:*`);
   for (const userId of participantIds) {
     await deleteCache(`chat:conversations:${userId}`);
+    // Also invalidate the route-level cacheMiddleware keys
+    // (format: `api:{userId}:{path}:{query}`) so the conversations list
+    // and message lists never serve stale unread counts after a message
+    // mutation. Without this, the cached GET /api/chats/conversations
+    // response shows outdated unreadCounts for up to 30s, causing the
+    // "badge shows wrong count" + "notification badge missing" bugs.
+    await clearByPattern(`api:${userId}:/conversations*`);
   }
 };

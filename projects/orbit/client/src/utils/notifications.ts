@@ -38,6 +38,33 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
 }
 
 /**
+ * Ensure the current device is subscribed to push notifications WITHOUT
+ * prompting the user — only acts when permission is already granted.
+ * Used on session restore (reload / re-login via cookie) so returning users
+ * stay subscribed even though no new permission prompt appears.
+ */
+export async function ensurePushSubscription(): Promise<void> {
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  if (!("serviceWorker" in navigator)) return;
+
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (!reg) return;
+    const existing = await reg.pushManager.getSubscription();
+    if (existing) {
+      // Re-sync the (possibly stale) subscription with the backend so the
+      // server keeps a fresh endpoint for this device.
+      await sendSubscriptionToServer(existing);
+      return;
+    }
+    await subscribeToPushNotifications();
+  } catch (err) {
+    logger.warn("[Push] ensurePushSubscription failed", err);
+  }
+}
+
+/**
  * Convert a base64 URL-encoded string to a Uint8Array (for VAPID public key).
  */
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -129,7 +156,8 @@ export function showBrowserNotification(
 
   try {
     new Notification(title, {
-      icon: "/vite.svg",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
       ...options,
     });
   } catch (err) {

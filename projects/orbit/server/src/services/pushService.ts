@@ -28,6 +28,7 @@ export async function sendPushToUser(
     data?: Record<string, unknown>;
     tag?: string;
     requireInteraction?: boolean;
+    timestamp?: string;
   }
 ): Promise<void> {
   if (!vapidPublicKey || !vapidPrivateKey) {
@@ -83,16 +84,20 @@ export async function sendPushToUser(
 /**
  * Build a notification payload from an in-app notification document.
  */
-export function buildPushPayload(notification: any): {
+export function buildPushPayload(
+  notification: any,
+  extra?: { unreadCount?: number }
+): {
   title: string;
   body: string;
   icon?: string;
   data?: Record<string, unknown>;
   tag: string;
   requireInteraction: boolean;
+  timestamp?: string;
 } {
   const senderName = notification.sender?.fullName || notification.sender?.username || "Someone";
-  const senderPic = notification.sender?.profilePic?.url || "/vite.svg";
+  const senderPic = notification.sender?.profilePic?.url || "/icon-192.png";
 
   const typeConfig: Record<string, { title: string; body: string }> = {
     like: { title: senderName, body: "liked your post" },
@@ -124,6 +129,9 @@ export function buildPushPayload(notification: any): {
     icon: senderPic,
     tag: `orbit-${notification._id || notification.type}`,
     requireInteraction: notification.type === "follow_request" || notification.type === "collab_invite",
+    timestamp: notification.createdAt
+      ? new Date(notification.createdAt).toISOString()
+      : new Date().toISOString(),
     data: {
       url: notification.post?.slug
         ? `/post/${notification.post.slug}`
@@ -134,6 +142,7 @@ export function buildPushPayload(notification: any): {
             : "/notifications",
       type: notification.type,
       notificationId: notification._id,
+      unreadCount: extra?.unreadCount ?? 0,
     },
   };
 }

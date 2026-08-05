@@ -407,7 +407,7 @@ export default function CommunitySettingsPage({
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Community name"
                 maxLength={50}
-                className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all"
+                className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all"
               />
               <p className="text-[10px] text-zinc-600 mt-1 text-right">{name.length}/50</p>
             </div>

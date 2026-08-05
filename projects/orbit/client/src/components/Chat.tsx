@@ -23,6 +23,7 @@ import {
 	Phone,
 	Video,
 	ChevronDown,
+	MoreVertical,
 } from "lucide-react";
 import ImageCropModal from "./ImageCropModal";
 import { Socket } from "socket.io-client";
@@ -151,6 +152,8 @@ export default function Chat({
 
 	// Clear confirmation dialog state
 	const [showClearConfirm, setShowClearConfirm] = useState(false);
+	const [showChatMenu, setShowChatMenu] = useState(false);
+	const chatMenuRef = useRef<HTMLDivElement>(null);
 
 	// Delete conversation confirmation state
 	const [deleteConvConfirmId, setDeleteConvConfirmId] = useState<string | null>(null);
@@ -338,6 +341,25 @@ export default function Chat({
 		return () => window.removeEventListener("click", handleClick);
 	}, []);
 
+	// Close the header chat-options menu when clicking outside it or pressing Escape
+	useEffect(() => {
+		if (!showChatMenu) return;
+		const handleClick = (e: MouseEvent) => {
+			if (chatMenuRef.current && !chatMenuRef.current.contains(e.target as Node)) {
+				setShowChatMenu(false);
+			}
+		};
+		const handleKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setShowChatMenu(false);
+		};
+		document.addEventListener("mousedown", handleClick);
+		document.addEventListener("keydown", handleKey);
+		return () => {
+			document.removeEventListener("mousedown", handleClick);
+			document.removeEventListener("keydown", handleKey);
+		};
+	}, [showChatMenu]);
+
 	// ─── Context Menu Viewport Clamping ────────────────────────────
 	// After the context menu renders, measure its actual dimensions and
 	// adjust position if it overflows the viewport (prevents off-screen cuts).
@@ -442,28 +464,30 @@ export default function Chat({
 			}
 
 			// Update conversations list to show last message and re-sort.
-			// For the active conversation, keep unread at 0 (already set by chat:join).
-			// For other conversations, do NOT increment unreadCounts here — let the
-			// `chat:notification` event (server-authoritative) handle badge counts.
-			// This prevents race conditions where multiple handlers increment the same
-			// count, causing badge desync that reappears on page refresh.
+			// For the ACTIVE conversation, keep unread at 0 (already set by chat:join).
+			// For OTHER conversations, do NOT touch unreadCounts at all here — the
+			// `chat:notification` event (server-authoritative, carries the exact count)
+			// handles badge counts. Writing back a stale value here would race with
+			// chat:notification and could clobber the server count with an outdated 0
+			// (badge disappears) or double-count (badge shows +1).
 			setConversations((prev) => {
 				return prev
 					.map((c) => {
 						if (c._id === message.conversation) {
-							const updatedUnread =
-								currentConv && currentConv._id === c._id
-									? 0
-									: c.unreadCounts?.[currentUser._id] || 0;
-
-							return {
-								...c,
-								lastMessage: message,
-								unreadCounts: {
-									...c.unreadCounts,
-									[currentUser._id]: updatedUnread,
-								},
-							};
+							if (currentConv && currentConv._id === c._id) {
+								return {
+									...c,
+									lastMessage: message,
+									lastAction: null,
+									unreadCounts: {
+										...c.unreadCounts,
+										[currentUser._id]: 0,
+									},
+								};
+							}
+							// Non-active conversation — only update lastMessage,
+							// leave unreadCounts to chat:notification.
+							return { ...c, lastMessage: message, lastAction: null };
 						}
 						return c;
 					})
@@ -617,8 +641,41 @@ export default function Chat({
 						return m;
 					}),
 				);
-			},
-		);
+
+					// Keep the conversations-list preview in sync: a reaction added
+					// to the newest message becomes the "last action" preview
+					// (e.g. "reacted ❤️ to your message"); removing one falls back
+					// to the last message preview.
+					setConversations((prev) =>
+						prev.map((c) => {
+							if (c.lastMessage?._id !== payload.messageId) return c;
+							if (payload.type !== "add" || !payload.reaction) {
+								return { ...c, lastAction: null };
+							}
+							const sender = payload.reaction.sender;
+							const actor =
+								typeof sender === "string"
+									? { _id: sender }
+									: {
+											_id: sender?._id || "",
+											fullName: sender?.fullName || "",
+											username: sender?.username || "",
+									  };
+							return {
+								...c,
+								lastAction: {
+									type: "reaction" as const,
+									emoji: payload.reaction.emoji || "",
+									messageId: payload.messageId,
+									messageSenderId: c.lastMessage.sender?._id || "",
+									actor,
+									createdAt: new Date().toISOString(),
+								},
+							};
+						}),
+					);
+				},
+			);
 
 		// Listen for conversation deletions
 		s.on(
@@ -653,7 +710,7 @@ export default function Chat({
 				setConversations((prev) =>
 					prev.map((c) =>
 						c._id === conversationId
-							? { ...c, lastMessage: undefined }
+							? { ...c, lastMessage: undefined, lastAction: null }
 							: c,
 					),
 				);
@@ -674,7 +731,7 @@ export default function Chat({
 				setConversations((prev) =>
 					prev.map((c) =>
 						c._id === conversationId
-							? { ...c, lastMessage: undefined }
+							? { ...c, lastMessage: undefined, lastAction: null }
 							: c,
 					),
 				);
@@ -2341,7 +2398,7 @@ export default function Chat({
 							transition={{ duration: 0 }}
 							className="w-full h-full flex flex-col">
 							<div className="p-3 pb-0 flex items-center gap-3 shrink-0 sm:p-4">
-								<h3 className="text-label-sm font-semibold text-white">
+								<h3 className="text-display-xs text-white">
 									Messages
 								</h3>
 							</div>
@@ -2531,28 +2588,64 @@ export default function Chat({
 								<div className="flex items-center gap-1.5">
 									<button
 										onClick={() => handleStartCall("audio")}
-										className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200/10 hover:border-green-500/20 bg-white/5 hover:bg-green-500/10 text-zinc-400 hover:text-green-400 transition-all cursor-pointer shadow-sm"
+										className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200/10 hover:border-white/30 bg-white/5 hover:bg-white/15 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm"
 										title="Audio Call">
 										<Phone className="h-3.5 w-3.5" />
 									</button>
 									<button
 										onClick={() => handleStartCall("video")}
-										className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200/10 hover:border-sky-500/20 bg-white/5 hover:bg-sky-500/10 text-zinc-400 hover:text-sky-400 transition-all cursor-pointer shadow-sm"
+										className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200/10 hover:border-white/30 bg-white/5 hover:bg-white/15 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm"
 										title="Video Call">
 									<Video className="h-3.5 w-3.5" />
 									</button>
 									<button
 										onClick={() => setShowMessageSearch((prev) => !prev)}
-										className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200/10 hover:border-blue-500/20 bg-white/5 hover:bg-blue-500/10 text-zinc-400 hover:text-blue-400 transition-all cursor-pointer shadow-sm"
+										className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200/10 hover:border-white/30 bg-white/5 hover:bg-white/15 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm"
 										title="Search messages">
 										<Search className="h-3.5 w-3.5" />
 									</button>
-									<button
-										onClick={(e) => handleClearChat(e)}
-										className="flex h-7 px-2.5 items-center gap-1.5 rounded-full border border-zinc-200/10 hover:border-red-500/20 bg-white/5 hover:bg-red-500/10 text-zinc-400 hover:text-red-400 transition-all cursor-pointer shadow-sm text-[12px] md:text-sm font-black uppercase tracking-wider"
-										title="Clear All Chat History">
-										<Trash2 className="h-3.5 w-3.5" />
-									</button>
+									<div className="relative" ref={chatMenuRef}>
+										<button
+											onClick={(e) => {
+												e.stopPropagation();
+												setShowChatMenu((prev) => !prev);
+											}}
+											className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200/10 hover:border-white/30 bg-white/5 hover:bg-white/15 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm"
+											title="Chat options">
+											<MoreVertical className="h-3.5 w-3.5" />
+										</button>
+										<AnimatePresence>
+											{showChatMenu && (
+												<>
+													<motion.div
+														initial={{ opacity: 0, y: -6, scale: 0.97 }}
+														animate={{ opacity: 1, y: 0, scale: 1 }}
+														exit={{ opacity: 0, y: -6, scale: 0.97 }}
+														transition={{ duration: 0.12 }}
+														className="absolute right-0 top-9 z-[90] w-48 overflow-hidden rounded-xl border border-zinc-700/50 bg-zinc-900/95 backdrop-blur-xl shadow-2xl">
+														<button
+															onClick={() => {
+																setShowChatMenu(false);
+																setShowMessageSearch((prev) => !prev);
+															}}
+															className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-semibold text-zinc-200 hover:bg-white/10 transition-colors cursor-pointer text-left">
+															<Search className="h-3.5 w-3.5 text-zinc-400" />
+															Search messages
+														</button>
+														<button
+															onClick={(e) => {
+																setShowChatMenu(false);
+																handleClearChat(e);
+															}}
+															className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-semibold text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer text-left">
+															<Trash2 className="h-3.5 w-3.5" />
+															Clear chat history
+														</button>
+													</motion.div>
+												</>
+											)}
+										</AnimatePresence>
+									</div>
 								</div>
 							</div>
 
@@ -2578,7 +2671,7 @@ export default function Chat({
 													setMessageSearchResults([]);
 												}
 											}}
-											className="w-full rounded-full border border-zinc-800 bg-zinc-950/40 text-xs placeholder:text-xs text-slate-100 placeholder-zinc-500 outline-none focus:border-blue-500 focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-blue-500/50 px-3 py-2"
+											className="w-full rounded-full border border-zinc-800 bg-zinc-950/40 text-xs placeholder:text-xs text-slate-100 placeholder-zinc-500 outline-none focus:border-white focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-white/20 px-3 py-2"
 											autoFocus
 										/>
 										{searchingMessages && (
@@ -2733,10 +2826,11 @@ export default function Chat({
 													onCancelUpload={
 														handleCancelUpload
 													}
-													onRetrySend={
-														handleRetrySend
-													}
-												/>
+												onRetrySend={
+													handleRetrySend
+												}
+												hideReactionCount
+											/>
 											);
 										})}
 									</>
@@ -2812,9 +2906,9 @@ export default function Chat({
 								{replyToMessage &&
 									!replyToMessage.isDeleted && (
 										<div className="flex items-start gap-2.5 mb-3 bg-zinc-900/60 p-3 rounded-2xl border border-zinc-800/60 max-w-md">
-											<div className="w-0.5 h-full min-h-[2.5rem] rounded-full bg-blue-500/40 shrink-0" />
+											<div className="w-0.5 h-full min-h-[2.5rem] rounded-full bg-white/40 shrink-0" />
 											<div className="flex-1 min-w-0 text-left">
-												<p className="text-[11px] font-black text-blue-400 uppercase tracking-wider leading-tight">
+												<p className="text-[11px] font-black text-zinc-300 uppercase tracking-wider leading-tight">
 													Replying to{" "}
 													{
 														replyToMessage.sender
@@ -2903,7 +2997,7 @@ export default function Chat({
 													}
 												}
 											}}
-											className="h-9 w-9 rounded-full bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-300 hover:bg-indigo-500/30 transition-all cursor-pointer shrink-0">
+											className="h-9 w-9 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-zinc-200 hover:bg-white/20 transition-all cursor-pointer shrink-0">
 											{isPlayingPreview ? (
 												<Pause className="h-4 w-4" />
 											) : (
@@ -2913,7 +3007,7 @@ export default function Chat({
 										<div className="flex-1 flex items-center gap-2 min-w-0">
 											<div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
 												<div
-													className="h-full bg-indigo-500/60 rounded-full w-0"
+													className="h-full bg-white/60 rounded-full w-0"
 													id="voice-preview-progress"
 												/>
 											</div>
@@ -2970,10 +3064,10 @@ export default function Chat({
 										onDrop={handleDrop}
 										className="flex gap-2 items-center w-full relative">
 									{isDragActive && (
-										<div className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-sky-500/10 border-2 border-dashed border-sky-500/40 backdrop-blur-sm">
+										<div className="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-white/5 border-2 border-dashed border-white/25 backdrop-blur-sm">
 											<div className="text-center">
-												<ImageIcon className="h-8 w-8 text-sky-400 mx-auto mb-2" />
-												<p className="text-xs font-semibold text-sky-300">Drop files here</p>
+												<ImageIcon className="h-8 w-8 text-zinc-300 mx-auto mb-2" />
+												<p className="text-xs font-semibold text-zinc-200">Drop files here</p>
 											</div>
 										</div>
 									)}
@@ -3410,7 +3504,7 @@ export default function Chat({
 													}
 													className={`w-full flex items-center gap-2.5 p-2 rounded-xl transition-all border ${
 														isSelected
-															? "bg-indigo-500/10 border-indigo-500/30"
+															? "bg-white/10 border-white/30"
 															: "hover:bg-zinc-800/60 border-transparent"
 													} text-left`}>
 													<UserAvatar
@@ -3430,7 +3524,7 @@ export default function Chat({
 													</div>
 													<div className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ml-auto transition-all ${
 														isSelected
-															? "bg-indigo-500 border-transparent text-white"
+															? "bg-white border-transparent text-black"
 															: "border-zinc-700 text-transparent"
 													}`}>
 														{isSelected && (
@@ -3447,7 +3541,7 @@ export default function Chat({
 								<button
 									onClick={handleExecuteForward}
 									disabled={selectedForwardConvIds.length === 0}
-									className="w-full mt-3 py-2.5 bg-indigo-500 hover:bg-indigo-650 text-[10px] font-black uppercase tracking-wider text-white rounded-xl disabled:opacity-40 disabled:hover:bg-indigo-500 transition-all cursor-pointer shadow-md shrink-0">
+									className="w-full mt-3 py-2.5 bg-white hover:bg-zinc-200 text-[10px] font-black uppercase tracking-wider text-black rounded-xl disabled:opacity-40 disabled:hover:bg-white transition-all cursor-pointer shadow-md shrink-0">
 									Send ({selectedForwardConvIds.length}/5)
 								</button>
 
@@ -3524,7 +3618,7 @@ export default function Chat({
 														}
 														className={`w-full flex items-center gap-2.5 p-2 rounded-xl transition-all border ${
 															isSelected
-																? "bg-indigo-500/10 border-indigo-500/30"
+																? "bg-white/10 border-white/30"
 																: "hover:bg-zinc-800/60 border-transparent"
 														} text-left`}>
 														<UserAvatar
@@ -3544,7 +3638,7 @@ export default function Chat({
 														</div>
 														<div className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ml-auto transition-all ${
 															isSelected
-																? "bg-indigo-500 border-transparent text-white"
+																? "bg-white border-transparent text-black"
 																: "border-zinc-700 text-transparent"
 														}`}>
 															{isSelected && (
@@ -3561,7 +3655,7 @@ export default function Chat({
 									<button
 										onClick={handleExecuteForward}
 										disabled={selectedForwardConvIds.length === 0}
-										className="w-full mt-3 py-2.5 bg-indigo-500 hover:bg-indigo-650 text-[10px] font-black uppercase tracking-wider text-white rounded-xl disabled:opacity-40 disabled:hover:bg-indigo-500 transition-all cursor-pointer shadow-md shrink-0">
+										className="w-full mt-3 py-2.5 bg-white hover:bg-zinc-200 text-[10px] font-black uppercase tracking-wider text-black rounded-xl disabled:opacity-40 disabled:hover:bg-white transition-all cursor-pointer shadow-md shrink-0">
 										Send ({selectedForwardConvIds.length}/5)
 									</button>
 

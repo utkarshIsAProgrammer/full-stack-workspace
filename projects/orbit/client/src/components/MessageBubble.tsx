@@ -63,6 +63,8 @@ interface MessageBubbleProps {
   showTimeHeader?: boolean;
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
+  /** Personal chat shows reaction emojis without the count number. */
+  hideReactionCount?: boolean;
   onCancelUpload?: (pendingId: string) => void;
   onRetrySend?: (pendingId: string) => void;
 }
@@ -126,6 +128,7 @@ const MessageBubble = React.memo(function MessageBubble({
   showTimeHeader = false,
   isFirstInGroup = true,
   isLastInGroup = true,
+  hideReactionCount = false,
   onCancelUpload,
   onRetrySend,
 }: MessageBubbleProps) {
@@ -179,9 +182,10 @@ const MessageBubble = React.memo(function MessageBubble({
       swipeBarRef.current.style.opacity = '0';
     }
 
-    // Deleted messages (for everyone or for me) have no actions — never start
+    // Deleted messages (for everyone or for me) and UNSENT messages
+    // (_pending = sending, _failed = failed) have no actions — never start
     // the long-press menu timer or the swipe-to-reply gesture.
-    if (msg.isDeleted || deletedForMe) return;
+    if (msg.isDeleted || deletedForMe || unsent) return;
 
     touchTimerRef.current = setTimeout(() => {
       if (!isSwipingRef.current && touch) {
@@ -198,7 +202,7 @@ const MessageBubble = React.memo(function MessageBubble({
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (msg.isDeleted || deletedForMe) return;
+    if (msg.isDeleted || deletedForMe || unsent) return;
     const touch = e.touches[0];
     if (!touch) return;
     const deltaX = touch.clientX - touchStartXRef.current;
@@ -240,7 +244,7 @@ const MessageBubble = React.memo(function MessageBubble({
       touchTimerRef.current = null;
     }
 
-    if (isSwipingRef.current && swipeOffsetRef.current > 60 && onSwipeToReply && !(msg.isDeleted || deletedForMe)) {
+    if (isSwipingRef.current && swipeOffsetRef.current > 60 && onSwipeToReply && !(msg.isDeleted || deletedForMe || unsent)) {
       onSwipeToReply(msg);
     }
 
@@ -258,6 +262,9 @@ const MessageBubble = React.memo(function MessageBubble({
   const hasAttachments = msg.attachments && msg.attachments.length > 0;
   const hasOnlyAttachments = hasAttachments && !msg.text && !msg.replyTo;
   const deletedForMe = msg.deletedFor?.includes(userId);
+  // Messages still in-flight (optimistic send) or that failed to send have
+  // NO actions — long-press/context menus must not open for them.
+  const unsent = !!(msg as any)._pending || !!(msg as any)._failed;
 
   const bubbleRoundClass = isMe
     ? `${isFirstInGroup ? "rounded-tr-none" : "rounded-tr-md"} ${isLastInGroup ? "rounded-br-none" : "rounded-br-md"}`
@@ -287,9 +294,9 @@ const MessageBubble = React.memo(function MessageBubble({
           isMe ? "ml-auto flex-row-reverse" : "mr-auto"
         } ${isFirstInGroup ? "mt-2.5" : "mt-0.5"}`}
         onContextMenu={(e) => {
-          // Deleted messages have no actions — suppress both our custom menu
-          // and the native browser context menu.
-          if (msg.isDeleted || deletedForMe) {
+          // Deleted and unsent messages have no actions — suppress both our
+          // custom menu and the native browser context menu.
+          if (msg.isDeleted || deletedForMe || unsent) {
             e.preventDefault();
             return;
           }
@@ -301,16 +308,16 @@ const MessageBubble = React.memo(function MessageBubble({
       >
         <div
           ref={swipeBarRef}
-          className={`absolute inset-y-0 w-1.5 bg-indigo-500/50 pointer-events-none ${isMe ? "right-0 rounded-l-full rounded-r-none" : "left-0 rounded-r-full"}`}
+          className={`absolute inset-y-0 w-1.5 bg-white/30 pointer-events-none ${isMe ? "right-0 rounded-l-full rounded-r-none" : "left-0 rounded-r-full"}`}
           style={{ transform: isMe ? 'translateX(6px)' : 'translateX(-6px)', opacity: 0, transition: 'transform 200ms ease-out, opacity 200ms ease-out' }}
         />
         {showSwipeBadge && (
           <div
             className={`absolute top-1/2 -translate-y-1/2 z-10 pointer-events-none ${isMe ? "right-3" : "left-3"}`}
           >
-            <div className="flex items-center gap-1.5 bg-indigo-500/20 backdrop-blur-sm rounded-full px-2.5 py-1 border border-indigo-400/30">
-              <CornerDownLeft className="h-3 w-3 text-indigo-300" />
-              <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider">Reply</span>
+            <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-sm rounded-full px-2.5 py-1 border border-white/20">
+              <CornerDownLeft className="h-3 w-3 text-zinc-300" />
+              <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-wider">Reply</span>
             </div>
           </div>
         )}
@@ -338,7 +345,7 @@ const MessageBubble = React.memo(function MessageBubble({
           <div
             className={`rounded-2xl text-[12px] border relative select-text ${bubbleRoundClass} $                ${hasOnlyAttachments ? "p-1 pb-1 pt-3" : "px-3 py-1.5"} ${
               isMe
-                ? "bg-indigo-950/70 text-white border-indigo-800/40"
+                ? "bg-zinc-700/90 text-white border-zinc-600/60"
                 : "bg-zinc-900/80 text-zinc-100 border-zinc-800"
             }`}
           >
@@ -454,7 +461,7 @@ const MessageBubble = React.memo(function MessageBubble({
                             className={`flex items-center gap-2 p-2 bg-zinc-900 border border-zinc-800 rounded-xl text-xs max-w-xs shrink-0 select-none ${
                               isAttachmentDisabled
                                 ? "opacity-40 cursor-not-allowed pointer-events-none text-zinc-550"
-                                : "text-blue-400 hover:underline cursor-pointer"
+                                : "text-zinc-200 hover:text-white hover:underline cursor-pointer"
                             }`}
                           >
                             <FileText className="h-4 w-4 text-zinc-400 shrink-0" />
@@ -505,12 +512,14 @@ const MessageBubble = React.memo(function MessageBubble({
                   onClick={() => handleReaction(msg, emoji)}
                   className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[12px] md:text-sm border ${
                     data.hasReacted
-                      ? "bg-indigo-500/20 border-indigo-400/30"
+                      ? "bg-white/15 border-white/25"
                       : "bg-zinc-800/50 border-zinc-700/50"
                   }`}
                 >
                   <span>{emoji}</span>
-                  <span className="text-[12px] md:text-sm">{data.count}</span>
+                  {!hideReactionCount && (
+                    <span className="text-[12px] md:text-sm">{data.count}</span>
+                  )}
                 </button>
               ))}
             </div>
@@ -534,7 +543,7 @@ const MessageBubble = React.memo(function MessageBubble({
                   {(msg as any)._pending ? (
                     null
                   ) : msg.seen ? (
-                    <CustomCheckCheck className="h-4 w-5 text-sky-400" />
+                    <CustomCheckCheck className="h-4 w-5 text-white" />
                   ) : (
                     <CustomCheck className="h-4 w-4 text-zinc-550" />
                   )}
@@ -744,9 +753,9 @@ function VoiceNotePlayer({ url, isMe, initialDuration, disabled }: { url: string
         className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 transition-all ${
           disabled
             ? "bg-white/5 opacity-30 cursor-not-allowed pointer-events-none"
-            : playing
-              ? "bg-indigo-500/30 cursor-pointer"
-              : "bg-white/10 hover:bg-white/20 cursor-pointer"
+            :              playing
+                ? "bg-white/30 cursor-pointer"
+                : "bg-white/10 hover:bg-white/20 cursor-pointer"
         } disabled:opacity-40 disabled:cursor-not-allowed`}
       >
         {playing ? <Pause className="h-3.5 w-3.5 text-white" /> : <Play className="h-3.5 w-3.5 text-white ml-0.5" />}

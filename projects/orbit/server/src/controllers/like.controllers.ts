@@ -8,6 +8,7 @@ import {
   createNotification,
   deleteInteractionNotification,
 } from "../utilities/notification";
+import { areMutuallyBlocked } from "../utilities/blockCheck";
 import {
   emitPostLike,
   emitPostUnlike,
@@ -15,7 +16,7 @@ import {
   emitCommentUnlike
 } from "../configs/socket";
 import { logger } from "../utilities/logger";
-import { AppError, BadRequestError, NotFoundError, UnauthorizedError } from "../utilities/errors";
+import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenError } from "../utilities/errors";
 import { toggleLikeSchema, toggleCommentLikeSchema } from "../schemas/interaction.schema";
 import { clearFeedCache } from "../configs/cache";
 import { logInteraction } from "../services/affinityService";
@@ -52,6 +53,14 @@ export const togglePostLikes = async (req: Request<Params>, res: Response) => {
 
     if (!post) {
       throw new NotFoundError("Post not found!");
+    }
+
+    // Blocked users must not exist for each other — no likes on a
+    // blocked user's posts.
+    if (post.author.toString() !== author.toString()) {
+      if (await areMutuallyBlocked(author.toString(), post.author.toString())) {
+        throw new ForbiddenError("Cannot interact with this post!");
+      }
     }
 
     // check if already liked

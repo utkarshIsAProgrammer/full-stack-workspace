@@ -69,6 +69,7 @@ export interface Post {
   isQuoteRepost?: boolean;
   quoteContent?: string;
   isEdited?: boolean;
+  visibility?: "public" | "closeFriends";
   status?: "draft" | "scheduled" | "published";
   scheduledAt?: string | null;
   createdAt: string;
@@ -110,7 +111,7 @@ export interface Comment {
   reactions?: CommentReaction[];
 }
 
-export type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message_reply" | "community_message" | "glimpse_reaction" | "glimpse_reply" | "poll_vote" | "collab_invite" | "invite_accepted" | "follow_request" | "daily_reward" | "streak_reminder";
+export type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message" | "message_reply" | "community_message" | "glimpse_reaction" | "glimpse_reply" | "poll_vote" | "collab_invite" | "invite_accepted" | "follow_request" | "daily_reward" | "streak_reminder";
 
 export interface Notification {
   _id: string;
@@ -229,6 +230,7 @@ export interface Glance {
     createdAt?: string;
   }[];
   viewedByMe: boolean;
+  visibility?: "public" | "closeFriends";
   expiresAt: string;
   createdAt: string;
   highlighted?: boolean;
@@ -311,6 +313,19 @@ export interface CommunityMessage {
   updatedAt: string;
 }
 
+export interface ConversationLastAction {
+  type?: "reaction";
+  emoji?: string;
+  messageId?: string;
+  messageSenderId?: string;
+  actor?: {
+    _id: string;
+    fullName?: string;
+    username?: string;
+  } | null;
+  createdAt?: string;
+}
+
 export interface Conversation {
   _id: string;
   participants: {
@@ -320,6 +335,7 @@ export interface Conversation {
     profilePic?: CloudinaryImage;
   }[];
   lastMessage?: Message | null;
+  lastAction?: ConversationLastAction | null;
   unreadCounts?: Record<string, number>;
   createdAt: string;
   updatedAt: string;

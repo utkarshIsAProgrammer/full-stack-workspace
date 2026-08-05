@@ -37,6 +37,7 @@ import { useSwipeBack } from "./hooks/useSwipeBack";
 import { useOfflineSync } from "./hooks/useOfflineSync";
 import {
   requestNotificationPermission,
+  ensurePushSubscription,
   showBrowserNotification,
 } from "./utils/notifications";
 
@@ -139,8 +140,23 @@ export default function App() {
       return nextTab;
     });
   }, []);
-  const [badgeCount, setBadgeCount] = useState(0);
-  const [chatBadgeCount, setChatBadgeCount] = useState(0);
+  // Badge counts are hydrated from localStorage synchronously so a reload
+  // restores them INSTANTLY (zero network), then reconciled with the server
+  // in the background (stale-while-revalidate). Persisted in effects below.
+  const [badgeCount, setBadgeCount] = useState(() => {
+    if (typeof window === "undefined") return 0;
+    const saved = parseInt(localStorage.getItem("orbit_notif_badge") || "0", 10);
+    return Number.isFinite(saved) && saved > 0 ? saved : 0;
+  });
+  const [chatBadgeCount, setChatBadgeCount] = useState(() => {
+    if (typeof window === "undefined") return 0;
+    const saved = parseInt(localStorage.getItem("orbit_chat_badge") || "0", 10);
+    return Number.isFinite(saved) && saved > 0 ? saved : 0;
+  });
+  // Tracks whether the conversations list has been fetched from the server at
+  // least once — used to avoid clobbering the persisted chat badge with 0 while
+  // the (slower) network response is still in flight after a reload.
+  const conversationsFetchedRef = useRef(false);
   // Preload heavy screen components only when the browser is idle to reduce startup cost.
   useEffect(() => {
     const preloadComponents = async () => {
@@ -255,6 +271,7 @@ export default function App() {
       setBadgeCount(0);
       setChatBadgeCount(0);
       setConversations([]);
+      conversationsFetchedRef.current = false;
       // Release any active call media/peer resources on session expiry
       teardownActiveCall();
       if (socketRef.current) {
@@ -265,8 +282,10 @@ export default function App() {
       socketUserIdRef.current = null;
       // Stop background cache refreshes — no point fetching auth-required data
       stopCacheRefreshTimer();
-      // Wipe all cached API data so stale user-specific data isn't shown
-      clearAllCaches();
+      // NOTE: deliberately do NOT clearAllCaches() here. This handler can fire
+      // on a transient failure (e.g. free-tier backend cold start), and wiping
+      // CacheStorage + IndexedDB would erase all the offline-first data that
+      // makes reloads instant. Caches are only cleared on an explicit logout.
     };
     window.addEventListener("showToast", handleShowToast as EventListener);
     window.addEventListener("auth:expired", handleAuthExpired);
@@ -422,17 +441,41 @@ export default function App() {
         : `ORBIT | ${tabName}`;
   }, [currentTab, user]);
 
-  // Calculate total unread chat messages
+  // Calculate total unread chat messages.
+  // Gated on conversationsFetchedRef so the persisted badge value survives the
+  // brief window after a reload where `conversations` is still empty (network
+  // not yet returned). Once the server responds, this recomputes the true value.
+  // `wasLoggedInRef` guards the initial mount: on a fresh reload `user` is null
+  // until checkSession resolves, so we must NOT zero the restored badge then.
+  const wasLoggedInRef = useRef(false);
   useEffect(() => {
     if (!user) {
-      setChatBadgeCount(0);
+      // Only zero when this is a genuine logout (previously logged in), not on
+      // the very first render before the session check resolves.
+      if (wasLoggedInRef.current) setChatBadgeCount(0);
       return;
     }
+    wasLoggedInRef.current = true;
+    if (!conversationsFetchedRef.current) return;
     const total = conversations.reduce((sum, conv) => {
       return sum + (conv.unreadCounts?.[user._id] || 0);
     }, 0);
     setChatBadgeCount(total);
   }, [conversations, user]);
+
+  // Persist badge counts so a reload (or hard reload) restores them instantly.
+  // localStorage is synchronous — no network, no flash of zero.
+  useEffect(() => {
+    try {
+      localStorage.setItem("orbit_notif_badge", String(badgeCount));
+    } catch { /* storage unavailable — non-critical */ }
+  }, [badgeCount]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("orbit_chat_badge", String(chatBadgeCount));
+    } catch { /* storage unavailable — non-critical */ }
+  }, [chatBadgeCount]);
 
   // Deep Link States
   const [selectedUserUsername, setSelectedUserUsername] = useState("");
@@ -569,6 +612,9 @@ export default function App() {
       const data = await res.json();
       if (res.ok && data.success) {
         setConversations(data.conversations || []);
+        // Mark as fetched so the derived chat badge uses server data
+        // (not the persisted value) from now on.
+        conversationsFetchedRef.current = true;
       }
     } catch (err) {
       logger.error("Failed to load conversations", err);
@@ -582,9 +628,18 @@ export default function App() {
       if (res.ok && data.success) {
         setUser(data.user);
         connectSockets(data.user._id);
-        fetchBadgeCounts(); // fetch initial badge counts
-        fetchConversations();
+        // Bypass cache so fresh badge counts & unread counts replace the
+        // persisted (possibly stale) values immediately after a reload.
+        fetchBadgeCounts(true); // fetch initial badge counts
+        fetchConversations(true);
         fetchFollowing(data.user._id);
+        // Re-sync the device push subscription on reload (no prompt — only
+        // acts if permission was already granted), so returning users keep
+        // receiving real on-device notifications.
+        ensurePushSubscription();
+        // Handle notification deep links (e.g. the app was opened by tapping
+        // a device notification → navigate to the post / profile / tab).
+        handleDeepLink();
       }
     } catch (e) {
       logger.warn("Session check failed", e);
@@ -713,9 +768,14 @@ export default function App() {
   };
 
   // Get unread notification count from dedicated endpoint (cached server-side)
-  const fetchBadgeCounts = async () => {
+  // `bypass` forces a network fetch — used after reload/login so the persisted
+  // badge is reconciled with the server's authoritative count immediately.
+  const fetchBadgeCounts = async (bypass: boolean = false) => {
     try {
-      const res = await apiFetch("/api/notifications/unread-count");
+      const res = await apiFetch(
+        "/api/notifications/unread-count",
+        bypass ? { bypassCache: true } : undefined,
+      );
       const data = await res.json();
       if (res.ok && data.success) {
         setBadgeCount(data.unreadCount);
@@ -944,6 +1004,8 @@ export default function App() {
               return {
                 ...c,
                 lastMessage: message,
+                // A fresh message supersedes any stale "reacted" preview
+                lastAction: null,
               };
             }
             return c;
@@ -956,11 +1018,77 @@ export default function App() {
       });
     });
 
+    // ── Realtime message reactions → update the chat list preview ──
+    // When someone reacts to a message, the conversations list should show
+    // the ACTION ("reacted ❤️ to your message") instead of the stale last
+    // message. This handler lives in App.tsx because Chat.tsx unmounts when
+    // navigating away — without it, the list would only update on reload.
+    socket.on(
+      "message:reaction",
+      (payload: {
+        messageId: string;
+        reaction: any;
+        type: "add" | "remove";
+      }) => {
+        logger.info("App: Received message:reaction event", {
+          messageId: payload.messageId,
+          type: payload.type,
+        });
+        setConversations((prev) => {
+          let changed = false;
+          const next = prev.map((c) => {
+            if (c.lastMessage?._id !== payload.messageId) return c;
+            changed = true;
+            // Only reactions ADDED to the newest message become the preview;
+            // removing one reverts to the last message preview naturally.
+            if (payload.type !== "add" || !payload.reaction) {
+              return { ...c, lastAction: null };
+            }
+            const sender = payload.reaction.sender;
+            const actor =
+              typeof sender === "string"
+                ? { _id: sender }
+                : {
+                    _id: sender?._id || "",
+                    fullName: sender?.fullName || "",
+                    username: sender?.username || "",
+                  };
+            return {
+              ...c,
+              lastAction: {
+                type: "reaction" as const,
+                emoji: payload.reaction.emoji || "",
+                messageId: payload.messageId,
+                messageSenderId: c.lastMessage.sender?._id || "",
+                actor,
+                createdAt: new Date().toISOString(),
+              },
+            };
+          });
+          if (!changed) return prev;
+          // Bubble the reacted conversation to the top like any recent activity
+          return [...next].sort(
+            (a, b) =>
+              new Date(
+                b.lastAction?.createdAt ||
+                  b.lastMessage?.createdAt ||
+                  b.updatedAt,
+              ).getTime() -
+              new Date(
+                a.lastAction?.createdAt ||
+                  a.lastMessage?.createdAt ||
+                  a.updatedAt,
+              ).getTime(),
+          );
+        });
+      },
+    );
+
     // Helper to show native OS notification
     const showNativeNotif = (title: string, body: string) => {
       if (!("Notification" in window)) return;
       if (Notification.permission === "granted") {
-        new Notification(title, { body, icon: "/vite.svg" });
+        new Notification(title, { body, icon: "/icon-192.png", badge: "/icon-192.png" });
       }
     };
 
@@ -1015,6 +1143,7 @@ export default function App() {
               presence: "offline" as const,
               unreadCounts: { [userId]: payload.unreadCount },
               lastMessage: payload.message,
+              lastAction: null,
             };
             return [newConv, ...prev].sort(
               (a, b) =>
@@ -1027,6 +1156,7 @@ export default function App() {
               return {
                 ...c,
                 lastMessage: payload.message,
+                lastAction: null,
                 unreadCounts: {
                   ...c.unreadCounts,
                   [userId]: payload.unreadCount,
@@ -1062,8 +1192,11 @@ export default function App() {
         );
       }
 
-      // 3. Refresh unread count from server to ensure accuracy
-      fetchBadgeCounts();
+      // 3. Refresh unread count from server to ensure accuracy.
+      //    MUST bypass the cache — a stale cached { unreadCount: 0 } (e.g. from
+      //    a pre-login warm fetch) would otherwise overwrite the badge we just
+      //    incremented, making the bell badge appear to never update.
+      fetchBadgeCounts(true);
     });
 
     // ── Realtime post interaction sync (likes, saves, reposts) ──
@@ -1650,7 +1783,9 @@ export default function App() {
   const handleAuthSuccess = useCallback((authUser: User, _token?: string) => {
     setUser(authUser);
     connectSockets(authUser._id);
-    fetchBadgeCounts();
+    // Fresh authoritative badge + unread counts right after login.
+    fetchBadgeCounts(true);
+    fetchConversations(true);
     fetchFollowing(authUser._id);
     setTab("home");
 
@@ -2240,6 +2375,7 @@ export default function App() {
       setBadgeCount(0);
       setChatBadgeCount(0);
       setConversations([]);
+      conversationsFetchedRef.current = false;
       // Release any active call media/peer resources on logout
       teardownActiveCall();
       if (socketRef.current) {
@@ -2248,6 +2384,14 @@ export default function App() {
       }
       setSocket(null);
       socketUserIdRef.current = null;
+      // This is a REAL logout — clear persisted badge counts AND all cached
+      // user-specific data so the next account starts clean.
+      try {
+        localStorage.removeItem("orbit_notif_badge");
+        localStorage.removeItem("orbit_chat_badge");
+      } catch { /* non-critical */ }
+      stopCacheRefreshTimer();
+      clearAllCaches();
     } catch (e) {
       logger.error(e);
     }
@@ -2305,6 +2449,47 @@ export default function App() {
     },
     [navigateToTab],
   );
+
+  // ─── Deep-link router (device notification taps, share URLs) ───────
+  // The app is a tab-based SPA, so a tapped notification (or a shared URL)
+  // that loads the app at /u/<username>, /post/<slug>, /chat, /communities,
+  // /notifications or /profile must route to the right screen.
+  const handleDeepLink = useCallback(() => {
+    if (typeof window === "undefined") return;
+    let pathname: string;
+    try {
+      pathname = window.location.pathname;
+    } catch {
+      return;
+    }
+    if (!pathname || pathname === "/") return;
+
+    const clean = pathname.replace(/^\/+/, "").replace(/\/+$/, "");
+    const [first, second] = clean.split("/");
+
+    if (first === "u" && second) {
+      // /u/<username> → open that profile
+      setSelectedUserUsername(decodeURIComponent(second));
+      navigateToTab("profile");
+    } else if (first === "post" && second) {
+      // /post/<slug> → open that post with comments
+      setSinglePostSlug(decodeURIComponent(second));
+      setAutoOpenComments(true);
+      navigateToTab("home");
+    } else if (first === "chat" || first === "messages") {
+      navigateToTab("chat");
+    } else if (first === "communities" || first === "community") {
+      navigateToTab("communities");
+    } else if (first === "notifications") {
+      navigateToTab("notifications");
+    } else if (first === "profile") {
+      navigateToTab("profile");
+    } else if (first === "explore") {
+      navigateToTab("explore");
+    } else if (first === "settings") {
+      navigateToTab("settings");
+    }
+  }, [navigateToTab]);
 
   const handleFollowSuggestion = useCallback(
     async (userId: string) => {

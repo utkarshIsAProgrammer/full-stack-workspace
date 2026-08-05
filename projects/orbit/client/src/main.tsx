@@ -37,18 +37,11 @@ if (import.meta.env.PROD) {
 	setTimeout(reportWebVitals, 3000);
 }
 
-// Remove the old SW registration — vite-plugin-pwa handles it now
-if ("serviceWorker" in navigator && import.meta.env.PROD) {
-	// vite-plugin-pwa auto-registers via registerType: 'autoUpdate'
-	// Only unregister old manual SW to avoid conflicts
-	navigator.serviceWorker.getRegistrations().then((regs) => {
-		regs.forEach((reg) => {
-			if (reg.active?.scriptURL?.includes("/sw.js") && !reg.active?.scriptURL?.includes("workbox")) {
-				reg.unregister();
-			}
-		});
-	});
-}
+// Service worker is auto-registered by vite-plugin-pwa (registerType: 'autoUpdate').
+// IMPORTANT: we must NOT manually unregister any service worker here — the generated
+// /sw.js (workbox-based) does not contain "workbox" in its scriptURL, so an earlier
+// cleanup block here was unregistering the PWA's own push-capable service worker and
+// silently breaking web-push notifications.
 
 createRoot(document.getElementById("root")!).render(
 	<StrictMode>

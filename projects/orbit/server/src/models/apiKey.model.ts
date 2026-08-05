@@ -47,7 +47,8 @@ const apiKeySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-apiKeySchema.index({ keyHash: 1 });
+// keyHash already gets a unique index via `unique: true` on the field —
+// adding it here again would create a duplicate index.
 apiKeySchema.index({ user: 1, isActive: 1 });
 
 // Generate a new API key (static method)
