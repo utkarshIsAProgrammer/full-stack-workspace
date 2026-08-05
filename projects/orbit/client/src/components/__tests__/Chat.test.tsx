@@ -62,6 +62,7 @@ vi.mock("lucide-react", () => ({
   Copy: () => <span>Copy</span>,
   Share2: () => <span>Share2</span>,
   User: () => <span>User</span>,
+  MoreVertical: () => <span data-testid="icon-more-vertical">MoreVertical</span>,
 }));
 
 // Mock child components
@@ -172,8 +173,14 @@ const defaultProps = {
 // ── Tests ────────────────────────────────────────────────────────
 
 describe("Chat Voice Notes", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    // Default apiFetch response (component calls /api/blocks/.../check on mount)
+    const { apiFetch } = await import("../../utils/api");
+    (apiFetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true, isBlocked: false }),
+    });
     // Mock navigator.mediaDevices
     Object.defineProperty(navigator, "mediaDevices", {
       value: {

@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import type { Request, Response, NextFunction } from "express";
 import Comment from "../models/comment.model";
 import { BadRequestError, NotFoundError } from "../utilities/errors";
+import { canInteractWithPost } from "../utilities/postVisibility";
 import { emitCommentReaction } from "../configs/socket";
 import { createNotification } from "../utilities/notification";
 import { logger } from "../utilities/logger";
@@ -31,6 +32,17 @@ export const toggleCommentReaction = async (
     const comment = await Comment.findById(commentId);
     if (!comment) {
       return next(new NotFoundError("Comment not found!"));
+    }
+
+    // closeFriends posts are invisible to non-close-friends — their comment
+    // threads must be too. An outsider must not be able to react to (or even
+    // detect) comments on a closeFriends post.
+    const parentPostId = comment.post?.toString();
+    if (parentPostId) {
+      const { allowed } = await canInteractWithPost(parentPostId, currentUserId.toString());
+      if (!allowed) {
+        return next(new NotFoundError("Comment not found!"));
+      }
     }
 
     const userIdStr = currentUserId.toString();

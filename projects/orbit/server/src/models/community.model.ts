@@ -65,6 +65,75 @@ const communitySchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Snapshot of the community's last message — lets the community list show a
+    // live "last message" preview without having to query the messages table.
+    // Reset to null by clear-chat. Updated on every new/edited message.
+    lastMessage: {
+      messageId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "CommunityMessage",
+        default: null,
+      },
+      text: { type: String, default: "" },
+      attachmentType: { type: String, default: "" },
+      sender: {
+        _id: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+        fullName: { type: String, default: "" },
+        username: { type: String, default: "" },
+      },
+      createdAt: { type: Date, default: null },
+      isDeleted: { type: Boolean, default: false },
+    },
+    // Last NON-message action in the community (e.g. a reaction, pin, call).
+    // Mirrors the 1-on-1 conversation model so the community list can show
+    // "Name reacted ❤️ to your message", "Name pinned a message",
+    // "Voice call ended" etc. instead of the stale last message. Reset to null
+    // whenever a new message is sent.
+    lastAction: {
+      type: {
+        type: String,
+        enum: ["reaction", "pin", "unpin", "call", "message_edit"],
+        default: null,
+      },
+      emoji: { type: String, default: "" },
+      // For calls: "audio" | "video"
+      callType: {
+        type: String,
+        enum: ["audio", "video", ""],
+        default: "",
+      },
+      // For calls: "started" | "ended" — "ended" is what the list preview
+      // shows ("Voice call ended"); "started" is only transient.
+      callStatus: {
+        type: String,
+        enum: ["started", "ended", ""],
+        default: "",
+      },
+      messageId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "CommunityMessage",
+        default: null,
+      },
+      messageSenderId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+      },
+      actor: {
+        _id: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+        fullName: { type: String, default: "" },
+        username: { type: String, default: "" },
+      },
+      createdAt: { type: Date, default: null },
+    },
   },
   { timestamps: true }
 );

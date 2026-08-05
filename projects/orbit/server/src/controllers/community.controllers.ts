@@ -13,7 +13,13 @@ import {
 import { logger } from "../utilities/logger";
 import { sanitizePlainText } from "../configs/sanitize";
 import cloudinary from "../configs/cloudinary";
-import { getIO } from "../configs/socket";
+import {
+	getIO,
+	isUserOnline,
+	emitCommunityPresence,
+} from "../configs/socket";
+import { deleteCache } from "../configs/cache";
+import { getBlockedUserIds } from "../utilities/blockCheck";
 import { generateToken } from "../services/livekitService";
 import { sendPushToUser } from "../services/pushService";
 
@@ -23,6 +29,45 @@ type CommunityParams = {
 
 type MessageParams = {
 	messageId: string;
+};
+
+/**
+ * Shared helper — record a NON-message action on the community so the list
+ * preview shows it (e.g. "Name pinned a message"). Only surfaces in the list
+ * when there's no newer message; sendCommunityMessage resets it to null.
+ */
+const recordCommunityAction = async (
+	communityId: string,
+	action: {
+		type: "reaction" | "pin" | "unpin" | "call" | "message_edit";
+		emoji?: string;
+		callType?: "audio" | "video";
+		callStatus?: "started" | "ended";
+		messageId?: mongoose.Types.ObjectId | string;
+		messageSenderId?: mongoose.Types.ObjectId | string;
+		actor?: { _id: string; fullName?: string; username?: string };
+	},
+) => {
+	try {
+		await Community.findByIdAndUpdate(communityId, {
+			$set: {
+				lastAction: {
+					type: action.type,
+					emoji: action.emoji || "",
+					callType: action.callType || "",
+					callStatus: action.callStatus || "",
+					messageId: action.messageId || null,
+					messageSenderId: action.messageSenderId || null,
+					actor: action.actor || null,
+					createdAt: new Date(),
+				},
+			},
+		});
+	} catch (err: any) {
+		logger.error("Failed to record community lastAction", {
+			error: err.message,
+		});
+	}
 };
 
 // ─── Communities ───────────────────────────────────────────────────
@@ -153,6 +198,19 @@ export const pinCommunityMessage = async (
 		community.pinnedMessages.push(message._id);
 		await community.save();
 
+		// Record the pin as the community's last action so the list preview
+		// shows "Name pinned a message" until the next message arrives.
+		await recordCommunityAction(communityId, {
+			type: "pin",
+			messageId: message._id,
+			messageSenderId: message.sender,
+			actor: {
+				_id: currentUserId.toString(),
+				fullName: (req.user as any)?.fullName || "",
+				username: (req.user as any)?.username || "",
+			},
+		});
+
 		const pinnedMessages = await CommunityMessage.find({
 			_id: { $in: community.pinnedMessages },
 		})
@@ -164,6 +222,12 @@ export const pinCommunityMessage = async (
 		io.to(`community:${communityId}`).emit("community:message:pinned", {
 			communityId,
 			messageId,
+			messageSenderId: message.sender,
+			actor: {
+				_id: currentUserId,
+				fullName: (req.user as any)?.fullName || "",
+				username: (req.user as any)?.username || "",
+			},
 			pinnedMessages,
 		});
 
@@ -222,6 +286,17 @@ export const unpinCommunityMessage = async (
 
 		const communityId = community._id.toString();
 
+		// Record the unpin so the list preview shows "Name unpinned a message".
+		await recordCommunityAction(communityId, {
+			type: "unpin",
+			messageId,
+			actor: {
+				_id: currentUserId.toString(),
+				fullName: (req.user as any)?.fullName || "",
+				username: (req.user as any)?.username || "",
+			},
+		});
+
 		const pinnedMessages = await CommunityMessage.find({
 			_id: { $in: community.pinnedMessages },
 		})
@@ -233,6 +308,11 @@ export const unpinCommunityMessage = async (
 		io.to(`community:${communityId}`).emit("community:message:unpinned", {
 			communityId,
 			messageId,
+			actor: {
+				_id: currentUserId,
+				fullName: (req.user as any)?.fullName || "",
+				username: (req.user as any)?.username || "",
+			},
 			pinnedMessages,
 		});
 
@@ -538,6 +618,10 @@ export const joinCommunity = async (
 		community.memberCount = community.members.length;
 		await community.save();
 
+		// Invalidate the socket presence membership cache so the user's newly
+		// joined community is included in presence broadcasts immediately.
+		deleteCache(`user:communities:${userIdStr}`).catch(() => {});
+
 		// ── Rejoin handling: only see messages sent after this join ──
 		// If the user has left this community before (their ID exists in any
 		// message's clearedFor from the leave-time bulk update), hide every
@@ -561,6 +645,12 @@ export const joinCommunity = async (
 			userId: userIdStr,
 			memberCount: community.memberCount,
 		});
+
+		// Announce the new member's online status to the community room so
+		// other members' green dots update immediately (they're already online).
+		if (isUserOnline(userIdStr)) {
+			emitCommunityPresence(communityId, userIdStr, "online");
+		}
 
 		return res.status(200).json({
 			success: true,
@@ -631,6 +721,10 @@ export const leaveCommunity = async (
 		community.memberCount = community.members.length;
 		await community.save();
 
+		// Invalidate the socket presence membership cache so the left community
+		// is removed from presence broadcasts immediately.
+		deleteCache(`user:communities:${userIdStr}`).catch(() => {});
+
 		// ── Clear the leaving user's chat history (per-user soft delete) ──
 		// Every message in the community is marked clearedFor for this user so
 		// they can no longer see any of it after leaving (or after rejoining).
@@ -646,6 +740,10 @@ export const leaveCommunity = async (
 			userId: userIdStr,
 			memberCount: community.memberCount,
 		});
+
+		// Remove the leaving member from the community's online presence so
+		// their green dot disappears from other members' open community chats.
+		emitCommunityPresence(communityId, userIdStr, "offline");
 
 		return res.status(200).json({
 			success: true,
@@ -773,6 +871,23 @@ export const getCommunityMessages = async (
 			query._id = { $lt: cursor };
 		}
 
+		// Blocked users must not exist for each other — exclude messages from
+		// anyone with a mutual block relationship with the viewer (either
+		// direction) at the QUERY level so pagination stays accurate.
+		let blockedSet = new Set<string>();
+		try {
+			blockedSet = new Set(
+				await getBlockedUserIds(currentUserId.toString()),
+			);
+			if (blockedSet.size > 0) {
+				query.sender = { $nin: [...blockedSet] };
+			}
+		} catch (blockErr: any) {
+			logger.error("Blocked-message filter error in getCommunityMessages", {
+				error: blockErr.message,
+			});
+		}
+
 		const messages = await CommunityMessage.find(query)
 			.populate("sender", "username fullName profilePic")
 			.populate({
@@ -783,6 +898,16 @@ export const getCommunityMessages = async (
 			.sort({ _id: -1 })
 			.limit(limit + 1)
 			.lean();
+
+		// Also strip replies that quote a blocked user's message — the quote
+		// embeds the sender, so it must be removed even when the message
+		// itself is from an allowed sender.
+		for (const m of messages as any[]) {
+			const replySenderId = m.replyTo?.sender?._id?.toString();
+			if (replySenderId && blockedSet.has(replySenderId)) {
+				m.replyTo = null;
+			}
+		}
 
 		const hasMore = messages.length > limit;
 		if (hasMore) {
@@ -942,8 +1067,26 @@ export const sendCommunityMessage = async (
 
 		await message.save();
 
-		// Update community's updatedAt
-		await Community.findByIdAndUpdate(communityId, { updatedAt: new Date() });
+		// Update community's updatedAt + lastMessage snapshot (so the community
+		// list can show a live "last message" preview). lastAction is reset — a
+		// fresh message supersedes any stale "reacted" preview.
+		const firstAtt = attachments[0] || null;
+		await Community.findByIdAndUpdate(communityId, {
+			updatedAt: new Date(),
+			lastMessage: {
+				messageId: message._id,
+				text: sanitizedText,
+				attachmentType: firstAtt?.type || "",
+				sender: {
+					_id: currentUserId,
+					fullName: (req.user as any)?.fullName || "",
+					username: (req.user as any)?.username || "",
+				},
+				createdAt: new Date(),
+				isDeleted: false,
+			},
+			lastAction: null,
+		});
 
 		// Populate sender info
 		const populatedMessage = await CommunityMessage.findById(message._id)
@@ -955,9 +1098,35 @@ export const sendCommunityMessage = async (
 			})
 			.lean();
 
-		// Emit to community room
+		// Blocked users must not exist for each other — deliver the new message
+		// to each member's personal room (every authenticated socket is always
+		// in their own `user:` room), skipping the sender and any member with a
+		// mutual block relationship with the sender in EITHER direction. This
+		// keeps blocked users from receiving each other's messages in realtime.
 		const io = getIO();
-		io.to(`community:${communityId}`).emit("community:message:new", populatedMessage);
+		const senderIdStr = currentUserId.toString();
+		let blockedForSender = new Set<string>();
+		try {
+			blockedForSender = new Set(
+				await getBlockedUserIds(senderIdStr),
+			);
+		} catch (blockErr: any) {
+			logger.error("Blocked-member filter error in sendCommunityMessage", {
+				error: blockErr.message,
+			});
+		}
+		// Deliver to every member's personal room — INCLUDING the sender so
+		// their other devices/tabs stay in realtime sync (the client dedupes
+		// by message _id, so the sending device won't show it twice). Anyone
+		// with a mutual block relationship is never delivered the message.
+		for (const member of community.members) {
+			const memberId = member.user.toString();
+			if (blockedForSender.has(memberId)) continue;
+			io.to(`user:${memberId}`).emit(
+				"community:message:new",
+				populatedMessage,
+			);
+		}
 
 		// Determine message type from attachments for notification text
 		let messageType: "text" | "photo" | "video" | "voice_note" | "file" | "gif" | "sticker" = "text";
@@ -971,9 +1140,13 @@ export const sendCommunityMessage = async (
 			else if (firstAttach.type === "file") messageType = "file";
 		}
 
-		// Create notifications for all other members (not the sender)
+		// Create notifications for all other members (not the sender). Members
+		// with a mutual block relationship are excluded — a blocked user must
+		// not receive notifications, badges, or pushes from the blocker either.
 		const otherMembers = community.members.filter(
-			(m) => m.user.toString() !== currentUserId.toString()
+			(m) =>
+				m.user.toString() !== currentUserId.toString() &&
+				!blockedForSender.has(m.user.toString())
 		);
 
 		// Create notifications and populate sender for socket emission
@@ -1099,6 +1272,46 @@ export const editCommunityMessage = async (
 		message.isEdited = true;
 		await message.save();
 
+		// Keep the community's last-message snapshot in sync if the edited
+		// message is the one shown in the community list preview, and record
+		// the edit as an action so the list shows "Name edited a message".
+		try {
+			const isLastMessage =
+				(await Community.exists({
+					_id: message.community,
+					"lastMessage.messageId": message._id,
+				})) !== null;
+			if (isLastMessage) {
+				await Community.updateOne(
+					{
+						_id: message.community,
+						"lastMessage.messageId": message._id,
+					},
+					{
+						$set: {
+							"lastMessage.text": sanitizePlainText(text),
+							"lastMessage.attachmentType":
+								message.attachments?.[0]?.type || "",
+						},
+					},
+				);
+				await recordCommunityAction(message.community.toString(), {
+					type: "message_edit",
+					messageId: message._id,
+					messageSenderId: message.sender,
+					actor: {
+						_id: currentUserId.toString(),
+						fullName: (req.user as any)?.fullName || "",
+						username: (req.user as any)?.username || "",
+					},
+				});
+			}
+		} catch (snapshotErr: any) {
+			logger.error("Failed to update community lastMessage snapshot on edit", {
+				error: snapshotErr.message,
+			});
+		}
+
 		const populatedMessage = await CommunityMessage.findById(message._id)
 			.populate("sender", "username fullName profilePic")
 			.lean();
@@ -1193,6 +1406,30 @@ export const deleteCommunityMessage = async (
 		message.text = "This message was deleted";
 		message.attachments = [] as any;
 		await message.save();
+
+		// Keep the community list preview accurate: if the deleted message was
+		// the last message, mark the snapshot as deleted. lastAction can only
+		// ever point at the newest message, so unset it too.
+		try {
+			await Community.updateOne(
+				{
+					_id: message.community,
+					"lastMessage.messageId": message._id,
+				},
+				{
+					$set: {
+						"lastMessage.text": "This message was deleted",
+						"lastMessage.attachmentType": "",
+						"lastMessage.isDeleted": true,
+					},
+					$unset: { lastAction: 1 },
+				},
+			);
+		} catch (snapshotErr: any) {
+			logger.error("Failed to update community lastMessage snapshot on delete", {
+				error: snapshotErr.message,
+			});
+		}
 
 		const io = getIO();
 		io.to(`community:${message.community.toString()}`).emit(
@@ -1439,12 +1676,20 @@ export const searchCommunityMessages = async (
 		// Escape regex special characters in the search query
 		const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-		const messages = await CommunityMessage.find({
+		// Blocked users must not exist for each other — exclude messages from
+		// anyone with a mutual block relationship with the searcher.
+		const blockedIds = await getBlockedUserIds(currentUserId.toString());
+		const searchQuery: any = {
 			community: communityId,
 			isDeleted: { $ne: true },
 			clearedFor: { $nin: [currentUserId] },
 			text: { $regex: escapedQ, $options: "i" },
-		})
+		};
+		if (blockedIds.length > 0) {
+			searchQuery.sender = { $nin: blockedIds };
+		}
+
+		const messages = await CommunityMessage.find(searchQuery)
 			.populate("sender", "username fullName profilePic")
 			.populate({
 				path: "replyTo",
@@ -1788,6 +2033,12 @@ export const clearCommunityChat = async (
     community.pinnedMessages = [];
     await community.save();
 
+    // Clear the list preview so it doesn't show a stale last message
+    await Community.updateOne(
+      { _id: communityId },
+      { $unset: { lastMessage: 1, lastAction: 1 } },
+    );
+
     const io = getIO();
     io.to(`community:${communityId}`).emit("community:chat-cleared", {
       communityId,
@@ -1855,12 +2106,20 @@ export const getCommunityMedia = async (
 		// Query messages with attachments matching the requested type.
 		// Media is hidden for the user if they cleared the community history
 		// (clearedFor) OR deleted the message for themselves (deletedFor).
-		const messages = await CommunityMessage.find({
+		// Blocked users must not exist for each other — exclude media from
+		// anyone with a mutual block relationship with the viewer.
+		const blockedIds = await getBlockedUserIds(currentUserId.toString());
+		const mediaQuery: any = {
 			community: communityId,
 			isDeleted: { $ne: true },
 			"attachments.type": mediaType,
 			$nor: [{ clearedFor: currentUserId }, { deletedFor: currentUserId }],
-		})
+		};
+		if (blockedIds.length > 0) {
+			mediaQuery.sender = { $nin: blockedIds };
+		}
+
+		const messages = await CommunityMessage.find(mediaQuery)
 			.populate("sender", "username fullName profilePic")
 			.sort({ createdAt: -1 })
 			.skip(skip)
@@ -2022,6 +2281,51 @@ export const toggleCommunityMessageReaction = async (
 
 		await message.save();
 
+		// Record the last action on the community so the community list preview
+		// shows "Name reacted ❤️ to your message" instead of the stale last
+		// message. Only reactions on the community's NEWEST message are recorded
+		// (mirrors the 1-on-1 chat behavior); removing the matching reaction
+		// clears it again so a reload never shows a stale "reacted" preview.
+		try {
+			const community = await Community.findById(message.community).select(
+				"lastMessage lastAction",
+			);
+			const reactedMessageIsLast =
+				community?.lastMessage?.messageId?.toString() ===
+				message._id.toString();
+			const lastActionMatches =
+				(community?.lastAction as any)?.messageId?.toString() ===
+				message._id.toString();
+			const actorUser = (req.user as any) || {};
+
+			if (type === "add" && reactedMessageIsLast) {
+				await Community.findByIdAndUpdate(message.community, {
+					$set: {
+						lastAction: {
+							type: "reaction",
+							emoji: emoji.trim(),
+							messageId: message._id,
+							messageSenderId: message.sender,
+							actor: {
+								_id: currentUserId,
+								fullName: actorUser.fullName || "",
+								username: actorUser.username || "",
+							},
+							createdAt: new Date(),
+						},
+					},
+				});
+			} else if (type === "remove" && lastActionMatches) {
+				await Community.findByIdAndUpdate(message.community, {
+					$set: { lastAction: null },
+				});
+			}
+		} catch (lastActionErr: any) {
+			logger.error("Failed to update community lastAction", {
+				error: lastActionErr.message,
+			});
+		}
+
 		const populatedMessage = await CommunityMessage.findById(message._id)
 			.populate("sender", "username fullName profilePic")
 			.populate("reactions.sender", "username fullName profilePic")
@@ -2034,6 +2338,12 @@ export const toggleCommunityMessageReaction = async (
 				messageId: message._id.toString(),
 				message: populatedMessage,
 				type,
+				emoji: emoji.trim(),
+				actor: {
+					_id: currentUserId,
+					fullName: (req.user as any)?.fullName || "",
+					username: (req.user as any)?.username || "",
+				},
 			},
 		);
 

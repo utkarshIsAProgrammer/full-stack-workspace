@@ -71,13 +71,15 @@ export const getTrendingTopics = async (req: Request, res: Response) => {
 
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    // Aggregate hashtags from recent posts
+    // Aggregate hashtags from recent PUBLIC posts only — closeFriends posts
+    // must never surface their hashtags/topics to anyone outside the circle.
     const topics = await Post.aggregate([
       {
         $match: {
           createdAt: { $gte: sevenDaysAgo },
           hashtags: { $exists: true, $not: { $size: 0 } },
           status: "published",
+          visibility: "public",
         },
       },
       { $unwind: "$hashtags" },

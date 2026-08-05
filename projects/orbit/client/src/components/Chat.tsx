@@ -24,6 +24,7 @@ import {
 	Video,
 	ChevronDown,
 	MoreVertical,
+	ShieldAlert,
 } from "lucide-react";
 import ImageCropModal from "./ImageCropModal";
 import { Socket } from "socket.io-client";
@@ -39,6 +40,7 @@ import ChatGallery from "./ChatGallery";
 import Skeleton from "./Skeleton";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
+import { downscaleImageFile } from "../utils/imageCompression";
 import ValidationMessage from "./ValidationMessage";
 import TypingIndicator from "./TypingIndicator";
 import MessageBubble from "./MessageBubble";
@@ -71,6 +73,11 @@ export default function Chat({
 	onStartCall,
 }: ChatProps) {
 	const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
+	// True when the open conversation's partner has a mutual block
+	// relationship (either direction) — disables the composer entirely.
+	const [blockedPartner, setBlockedPartner] = useState(false);
+	// Ref for the WhatsApp-style auto-growing composer textarea
+	const composerRef = useRef<HTMLTextAreaElement>(null);
 	const [messages, setMessages] = useState<Message[]>([]);
 	const [loadingConvs] = useState(false);
 	const [loadingMsgs, setLoadingMsgs] = useState(false);
@@ -106,7 +113,7 @@ export default function Chat({
 	// Media attachments upload
 	const [attachments, setAttachments] = useState<File[]>([]);
 	const [attachmentPreviews, setAttachmentPreviews] = useState<string[]>([]);
-	const [, setSendingMessage] = useState(false);
+	const [sendingMessage, setSendingMessage] = useState(false);
 
 	// Crop modal state
 	const [cropModalOpen, setCropModalOpen] = useState(false);
@@ -260,6 +267,17 @@ export default function Chat({
 		onChatConversationChange?.(selectedConv !== null);
 	}, [selectedConv, onChatConversationChange]);
 
+	// WhatsApp-style composer: auto-grow the textarea to fit its content (up
+	// to a max height) so text wraps instead of scrolling sideways. Re-runs
+	// whenever the text changes or the composer remounts (recording / block
+	// notice toggles), keeping the box sized to what you're typing.
+	useEffect(() => {
+		const el = composerRef.current;
+		if (!el) return;
+		el.style.height = "auto";
+		el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+	}, [inputText, isRecording, blockedPartner]);
+
 	// Fetch messages when conversation is selected or socket becomes available
 	useEffect(() => {
 		if (!selectedConv) {
@@ -294,6 +312,29 @@ export default function Chat({
 		};
 
 		fetchMessages();
+
+		// Blocked users must not exist for each other — if this conversation's
+		// partner shares a block relationship (either direction), disable the
+		// composer and surface a notice. The server also hard-rejects sends,
+		// so this is UX plus a second layer of protection.
+		setBlockedPartner(false);
+		const partnerForBlockCheck = selectedConv.participants?.find(
+			(p: any) => p && p._id !== user._id,
+		);
+		if (partnerForBlockCheck?._id) {
+			apiFetch(`/api/blocks/${partnerForBlockCheck._id}/check`)
+				.then((res) => res.json())
+				.then((data) => {
+					if (data?.success) {
+						setBlockedPartner(
+							!!(data.iBlocked || data.blockedByThem),
+						);
+					}
+				})
+				.catch(() => {
+					/* non-critical — server enforces blocks anyway */
+				});
+		}
 
 		// Reset partner recording indicator when switching conversations
 		setPartnerRecording(false);
@@ -1203,6 +1244,9 @@ export default function Chat({
 		if (!selectedConv || !targetBlob || !targetUrl)
 			return;
 
+		// Guard against double-sends (e.g. the mic-toggle flow firing twice)
+		if (sendingMessage) return;
+
 		const partner = getPartner(selectedConv);
 		const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 		const optimisticMessage: any = {
@@ -1460,7 +1504,14 @@ export default function Chat({
 				formData.append("replyTo", replyMsg._id);
 			}
 			if (file) {
-				formData.append("files", file);
+				// Downscale photos before upload (shared util) — keeps the
+				// optimistic send fast on slow networks. Non-images pass through.
+				formData.append(
+					"files",
+					file.type.startsWith("image/")
+						? await downscaleImageFile(file)
+						: file,
+				);
 			}
 
 			const res = await apiFetch(
@@ -1639,9 +1690,14 @@ export default function Chat({
 				if (payload.replyToId) {
 					formData.append("replyTo", payload.replyToId);
 				}
-				payload.files.forEach((file) => {
-					formData.append("files", file);
-				});
+				for (const file of payload.files) {
+					formData.append(
+						"files",
+						file.type.startsWith("image/")
+							? await downscaleImageFile(file)
+							: file,
+					);
+				}
 
 				const res = await apiFetch(
 					`/api/chats/conversations/${selectedConv?._id}/messages`,
@@ -2692,7 +2748,7 @@ export default function Chat({
 														document.getElementById(`msg-${msg._id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
 													}}
 													className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800/60 rounded-lg transition-colors truncate">
-													{msg.text || (msg.attachments?.[0]?.type === "voice_note" ? "🎤 Voice note" : msg.attachments?.[0]?.type === "image" ? "📷 Photo" : msg.attachments?.[0]?.type === "video" ? "🎬 Video" : "📎 File")}
+													{msg.text || (msg.attachments?.[0]?.type === "voice_note" ? "Voice note" : msg.attachments?.[0]?.type === "image" ? "Photo" : msg.attachments?.[0]?.type === "video" ? "Video" : "File")}
 												</button>
 											))}
 										</div>
@@ -2921,7 +2977,7 @@ export default function Chat({
 														replyToMessage
 															.attachments
 															.length > 0
-															? "📎 Attachment"
+															? "Attachment"
 															: "")}
 												</p>
 											</div>
@@ -3056,6 +3112,16 @@ export default function Chat({
 											}}
 										/>
 									</div>
+								) : blockedPartner ? (
+									<div className="flex flex-col items-center justify-center gap-1.5 px-4 py-5 text-center border border-zinc-800/60 rounded-2xl bg-zinc-900/40">
+										<ShieldAlert className="h-5 w-5 text-zinc-500" />
+										<p className="text-[11px] md:text-xs font-semibold text-zinc-300">
+											You can't message this user
+										</p>
+										<p className="text-[10px] text-zinc-600">
+											This chat is unavailable due to a block.
+										</p>
+									</div>
 								) : (
 									<form
 										onSubmit={handleSendMessage}
@@ -3071,8 +3137,8 @@ export default function Chat({
 											</div>
 										</div>
 									)}
-										<div className="grow relative flex items-center">
-											{/* Media Send Icon inside left corner */}												<div className="absolute left-1.5 z-20 flex items-center gap-1">
+										<div className="grow relative flex items-end">
+											{/* Media Send Icon inside left corner */}												<div className="absolute left-1.5 top-1/2 -translate-y-1/2 z-20 flex items-center gap-1">
 												<div className="w-8 h-8 flex items-center justify-center relative">
 												<input
 													type="file"
@@ -3095,8 +3161,10 @@ export default function Chat({
 
 											</div>
 
-											<input
-												type="text"
+											<textarea
+												ref={composerRef}
+												rows={1}
+												wrap="soft"
 												placeholder="Type a message..."
 												value={inputText}
 												onChange={(e) => {
@@ -3106,7 +3174,18 @@ export default function Chat({
 													clearFieldError("message");
 													handleTyping();
 												}}
-												className={`w-full rounded-full border border-zinc-800 bg-zinc-950/40 text-[12px] md:text-sm placeholder:text-[12px] md:placeholder:text-sm text-slate-100 placeholder-zinc-500 outline-none focus:border-white focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-zinc-700 pl-10.5 ${
+												onKeyDown={(e) => {
+													// WhatsApp-style: Enter sends, Shift+Enter inserts a
+													// real line break that is preserved in the message.
+													if (
+														e.key === "Enter" &&
+														!e.shiftKey
+													) {
+														e.preventDefault();
+														e.currentTarget.form?.requestSubmit();
+													}
+												}}
+												className={`w-full !rounded-2xl border border-zinc-800 bg-zinc-950/40 text-[12px] md:text-sm placeholder:text-[12px] md:placeholder:text-sm text-slate-100 placeholder-zinc-500 outline-none focus:border-white focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-zinc-700 pl-10.5 resize-none max-h-[120px] overflow-y-auto leading-relaxed ${
 													isKeyboardOpen
 														? "py-2 pr-3"
 														: "py-2.5 pr-10"
@@ -3116,7 +3195,7 @@ export default function Chat({
 												message={fieldErrors.message}
 											/>
 
-											{!isKeyboardOpen && (
+											{!isKeyboardOpen && !inputText && (
 												<span className="absolute right-3.5 top-3.5 text-[9px] text-zinc-650 hidden md:flex items-center gap-0.5 border border-zinc-800 px-1 rounded bg-zinc-950 select-none">
 													<CornerDownLeft className="h-2 w-2" />{" "}
 													Enter
@@ -3481,7 +3560,7 @@ export default function Chat({
 
 								<div className="mx-6 mb-3 p-2.5 rounded-xl bg-zinc-800/50 border border-zinc-700 max-h-24 overflow-y-auto">
 									<p className="text-[10px] text-zinc-300 leading-relaxed break-words">
-										{forwardModal.message.text || (forwardModal.message.attachments && forwardModal.message.attachments.length > 0 ? "📎 Attachment" : "")}
+										{forwardModal.message.text || (forwardModal.message.attachments && forwardModal.message.attachments.length > 0 ? "Attachment" : "")}
 									</p>
 								</div>
 
@@ -3595,7 +3674,7 @@ export default function Chat({
 
 									<div className="mb-3 p-2.5 rounded-xl bg-zinc-800/50 border border-zinc-700 max-h-24 overflow-y-auto">
 										<p className="text-[10px] text-zinc-300 leading-relaxed break-words">
-											{forwardModal.message.text || (forwardModal.message.attachments && forwardModal.message.attachments.length > 0 ? "📎 Attachment" : "")}
+											{forwardModal.message.text || (forwardModal.message.attachments && forwardModal.message.attachments.length > 0 ? "Attachment" : "")}
 										</p>
 									</div>
 

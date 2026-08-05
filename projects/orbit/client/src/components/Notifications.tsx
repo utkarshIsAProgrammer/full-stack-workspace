@@ -61,6 +61,12 @@ export default function Notifications({
 	const [error, setError] = useState<string | null>(null);
 	const [activeFilter, setActiveFilter] = useState<string>("all");
 
+	// ── Tab labels ──
+	// On non-desktop devices each tab is an icon pill and only the active
+	// tab also shows its label (so tapping an icon reveals its name while
+	// the previous tab collapses back to just the icon). On desktop (lg+)
+	// there's enough room for every label, so they all show.
+
 	const filteredNotifications = activeFilter === "all"
 		? notifications
 		: notifications.filter((n) => n.type === activeFilter);
@@ -115,6 +121,23 @@ export default function Notifications({
 	// When the background cache timer refreshes notifications, re-fetch
 	// so the list stays up-to-date without manual refresh.
 	useCacheRefresh("/api/notifications", () => fetchNotifications());
+
+	// Blocked users must vanish from the notification list immediately —
+	// when a block/unblock is announced in realtime (App.tsx wipes caches
+	// and fires this event), re-fetch so mounted list updates without reload.
+	useEffect(() => {
+		const handleNotificationsRefresh = () =>
+			fetchNotifications(true);
+		window.addEventListener(
+			"notificationsRefresh",
+			handleNotificationsRefresh,
+		);
+		return () =>
+			window.removeEventListener(
+				"notificationsRefresh",
+				handleNotificationsRefresh,
+			);
+	}, []);
 
 	// Listen for real-time notifications via socket
 	useEffect(() => {
@@ -231,6 +254,11 @@ export default function Notifications({
 	const swipeTouchStartXRef = useRef(0);
 	const swipeTouchStartYRef = useRef(0);
 	const isSwipingNotifRef = useRef(false);
+	// True for the rest of a touch interaction when the user performed a
+	// swipe-to-open gesture — the browser fires a trailing `click` after
+	// touchend, and without this guard that click would also trigger the
+	// row's navigation onClick (accidental redirect while swiping).
+	const didSwipeRef = useRef(false);
 
 	const handleContextMenuOpen = (
 		e:
@@ -265,6 +293,7 @@ export default function Notifications({
 		swipeTouchStartXRef.current = touch.clientX;
 		swipeTouchStartYRef.current = touch.clientY;
 		isSwipingNotifRef.current = false;
+		didSwipeRef.current = false;
 		swipeOffsetRef.current = 0;
 		setShowSwipeBadge(false);
 		if (swipeBarRef.current) {
@@ -334,6 +363,7 @@ export default function Notifications({
 			touchNotifRef
 		) {
 			const notif = touchNotifRef;
+			didSwipeRef.current = true;
 			if (notif.post) {
 				onPostClick(notif.post.slug);
 			} else if (notif.sender) {
@@ -462,6 +492,46 @@ export default function Notifications({
 		}
 	};
 
+	// Shared tab button. Below lg the label only shows for the active tab
+	// (icon pills otherwise); at lg+ every label is visible.
+	const renderTabButton = (tab: (typeof FILTER_TABS)[number]) => {
+		const TabIcon = tab.icon;
+		const isActive = activeFilter === tab.key;
+		const count =
+			tab.key === "all"
+				? notifications.length
+				: notifications.filter((n) => n.type === tab.key).length;
+		return (
+			<button
+				key={tab.key}
+				onClick={() => setActiveFilter(tab.key)}
+				title={tab.label}
+				aria-label={tab.label}
+				className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-[11px] font-bold transition-all cursor-pointer ${
+					isActive
+						? "bg-zinc-900 text-white dark:bg-white dark:text-black shadow-sm"
+						: "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40"
+				}`}
+			>
+				<TabIcon className="h-3.5 w-3.5 shrink-0" />
+				<span
+					className={`${isActive ? "inline" : "hidden"} lg:inline`}
+				>
+					{tab.label}
+				</span>
+				{count > 0 && (
+					<span
+						className={`ml-0.5 text-[10px] ${
+							isActive ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-500"
+						}`}
+					>
+						{count}
+					</span>
+				)}
+			</button>
+		);
+	};
+
 	const getRelativeTime = (isoString: string) => {
 		const stamp = new Date(isoString).getTime();
 		const diff = Date.now() - stamp;
@@ -503,56 +573,28 @@ export default function Notifications({
 				</div>
 
 				{notifications.length > 0 && (
-					<div className="flex items-center gap-2">
+					<div className="flex items-center gap-1.5">
 						<button
 							onClick={handleMarkAllRead}
-							className="rounded-full border border-zinc-800 bg-zinc-900 px-4 py-1.5 text-[12px] md:text-sm font-semibold text-slate-700 dark:text-zinc-300 transition-all hover:bg-slate-50 dark:hover:bg-zinc-800 hover:text-slate-900 dark:hover:text-zinc-100 cursor-pointer">
+							className="flex items-center gap-1 rounded-full border border-zinc-800/80 bg-zinc-900/50 px-2.5 py-1 text-[11px] font-semibold text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white cursor-pointer">
+							<Check className="h-3 w-3" />
 							Mark all read
 						</button>
 						<button
 							onClick={handleClearAll}
-							className="rounded-full border border-red-900/30 bg-red-950/20 px-4 py-1.5 text-[12px] md:text-sm font-semibold text-red-600 dark:text-red-400 transition-all hover:bg-red-100 dark:hover:bg-red-900/40 cursor-pointer">
+							className="flex items-center gap-1 rounded-full border border-zinc-800/60 px-2.5 py-1 text-[11px] font-semibold text-zinc-500 transition-colors hover:border-red-900/40 hover:bg-red-950/20 hover:text-red-400 cursor-pointer">
+							<Trash2 className="h-3 w-3" />
 							Clear all
 						</button>
 					</div>
 				)}
 			</div>
 
-			{/* Filter tabs — labels + icons when there's room, compact icon pills when not. "All" always shows its label.
-			   Tabs always wrap (never scroll) so they fit beautifully on every device size. */}
-			<div className="mb-5 flex flex-wrap items-center gap-1.5">
-				{FILTER_TABS.map((tab) => {
-					const TabIcon = tab.icon;
-					const isActive = activeFilter === tab.key;
-					const count = tab.key === "all"
-						? notifications.length
-						: notifications.filter((n) => n.type === tab.key).length;
-					return (
-						<button
-							key={tab.key}
-							onClick={() => setActiveFilter(tab.key)}
-							title={tab.label}
-							aria-label={tab.label}
-							className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-2 text-[11px] font-bold transition-all cursor-pointer ${
-								isActive
-									? "bg-zinc-900 text-white dark:bg-white dark:text-black shadow-sm"
-									: "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40"
-							}`}
-						>
-							<TabIcon className="h-3.5 w-3.5 shrink-0" />
-							{tab.key === "all" ? (
-								<span>{tab.label}</span>
-							) : (
-								<span className="hidden sm:inline">{tab.label}</span>
-							)}
-							{count > 0 && (
-								<span className={`ml-0.5 text-[10px] ${isActive ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-500"}`}>
-									{count}
-								</span>
-							)}
-						</button>
-					);
-				})}
+			{/* Filter tabs — below lg each tab is an icon pill and only the active
+			   one also shows its label (tap an icon to reveal its name); at lg+
+			   every label is shown. Single line, no scroll, no wrap. */}
+			<div className="mb-5 flex items-center gap-1.5">
+				{FILTER_TABS.map((tab) => renderTabButton(tab))}
 			</div>
 
 			{error && (
@@ -616,18 +658,40 @@ export default function Notifications({
 											</div>
 										</div>
 									)}
-									<GlassCard
-										animate={true}
+									<div
+										role="button"
+										tabIndex={0}
 										onClick={() => {
+											// Ignore the trailing click that follows a
+											// swipe-to-open gesture (already navigated).
+											if (didSwipeRef.current) return;
 											if (!notif.isRead)
 												handleMarkSingleRead(notif._id);
+											// Whole-row tap opens the exact place the
+											// notification happened.
+											if (notif.post?.slug) {
+												onPostClick(notif.post.slug);
+											} else if (notif.sender?.username) {
+												onUserClick(notif.sender.username);
+											}
 										}}
-										className={`group relative flex items-start justify-between gap-3 p-3 sm:p-3.5 transition-all cursor-pointer ${
+										onKeyDown={(e) => {
+											if (e.key === "Enter" || e.key === " ") {
+												e.preventDefault();
+												if (!notif.isRead)
+													handleMarkSingleRead(notif._id);
+												if (notif.post?.slug) {
+													onPostClick(notif.post.slug);
+												} else if (notif.sender?.username) {
+													onUserClick(notif.sender.username);
+												}
+											}
+										}}
+										className={`group relative flex items-start justify-between gap-3 rounded-2xl border px-3 py-2.5 transition-colors cursor-pointer ${
 											notif.isRead
-												? "opacity-85 hover:opacity-100"
-												: "ring-1 ring-zinc-500/10 border-white/20 dark:border-white/20"
-										}`}
-										showMacControls={false}>
+												? "border-transparent hover:bg-white/[0.04]"
+												: "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
+										}`}>
 										<div className="flex gap-3">
 											{/* Floating Bubble Type Indicator */}
 											<div className="relative shrink-0">
@@ -636,30 +700,22 @@ export default function Notifications({
 														notif.sender?.profilePic
 															?.url
 													}
-													alt={notif.sender?.fullName}															className="h-9 w-9 cursor-pointer rounded-full object-cover border border-zinc-800"
-													onClick={() =>
-														onUserClick(
-															notif.sender!
-																.username,
-														)
-													}
+													alt={notif.sender?.fullName}
+														className="h-8 w-8 pointer-events-none border border-zinc-800"
 												/>
+												{!notif.isRead && (
+													<span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-zinc-100 shadow-[0_0_6px_rgba(255,255,255,0.6)]" />
+												)}
 												<span
-													className={`absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border text-[9px] ${details.color}`}>
-													<NotifIcon className="h-2.5 w-2.5" />
+													className={`absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border ${details.color}`}>
+													<NotifIcon className="h-2 w-2" />
 												</span>
 											</div>
 
 											<div className="space-y-1">
 												<p className="text-[13px] leading-snug text-slate-700 dark:text-zinc-200">
 													<span
-														onClick={() =>
-															onUserClick(
-																notif.sender!
-																	.username,
-															)
-														}
-														className="font-bold text-slate-900 dark:text-zinc-100 cursor-pointer hover:underline hover:text-black dark:hover:text-white">
+														className="font-bold text-slate-900 dark:text-white cursor-pointer hover:underline">
 														{notif.sender
 															?.fullName ||
 															"Anonymous User"}
@@ -669,35 +725,24 @@ export default function Notifications({
 													</span>
 												</p>
 
-												{/* Brief text contents of contextual items (comment content or post title) */}
-												{notif.post && (
-													<div
-														onClick={() =>
-															onPostClick(
-																notif.post!
-																	.slug,
-															)
-														}
-														className="mt-2 inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-zinc-800 px-3.5 py-1.5 text-[12px] md:text-sm font-semibold text-zinc-200 border border-zinc-750 hover:bg-zinc-700 hover:text-white font-sans whitespace-nowrap shadow-sm">
-														{notif.post.title
-															.length > 50
-															? notif.post.title.slice(
-																	0,
-																	50,
-																) + "..."
+												{/* Brief context — post title / comment content */}
+												{notif.post?.title && (
+													<p className="mt-0.5 truncate text-[12px] font-medium text-slate-500 dark:text-zinc-400">
+														{notif.post.title.length > 60
+															? notif.post.title.slice(0, 60) +
+																"..."
 															: notif.post.title}
-													</div>
-												)}
-
-												{notif.comment && (
-													<p className="mt-1.5 border-l-2 border-zinc-700 pl-2 text-sm italic text-zinc-400 leading-relaxed line-clamp-2">
-														"{notif.comment.content}
-														"
 													</p>
 												)}
 
-												<div className="flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-zinc-500 pt-1">
-													<Clock className="h-3.5 w-3.5" />
+												{notif.comment?.content && (
+													<p className="mt-0.5 truncate pl-2 text-[12px] italic text-slate-400 dark:text-zinc-500">
+														"{notif.comment.content}"
+													</p>
+												)}
+
+												<div className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400 dark:text-zinc-500">
+													<Clock className="h-2.5 w-2.5" />
 													<span>
 														{getRelativeTime(
 															notif.createdAt,
@@ -707,11 +752,8 @@ export default function Notifications({
 											</div>
 										</div>
 
-										{/* Actions / Read Indicator — close (X) pinned to the top-right, unread dot beside the time */}
-										<div className="flex items-start gap-2 shrink-0">
-											{!notif.isRead && (
-												<span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-zinc-900 dark:bg-zinc-100 shadow-[0_0_8px_rgba(255,255,255,0.4)]" />
-											)}
+										{/* Delete — subtle X pinned to the top-right */}
+										<div className="flex items-start shrink-0">
 											<button
 												onClick={(e) => {
 													e.stopPropagation();
@@ -719,11 +761,12 @@ export default function Notifications({
 														notif._id,
 													);
 												}}
-												className="p-1 rounded-full text-zinc-500 hover:text-red-400 hover:bg-white/10 dark:hover:bg-zinc-800 transition-all focus:outline-none">
-												<X className="h-4 w-4" />
+												aria-label="Delete notification"
+												className="rounded-full p-1 text-zinc-600 hover:text-red-400 hover:bg-white/10 dark:hover:bg-zinc-800 transition-colors focus:outline-none cursor-pointer">
+												<X className="h-3.5 w-3.5" />
 											</button>
 										</div>
-									</GlassCard>
+									</div>
 								</div>
 							);
 						})}

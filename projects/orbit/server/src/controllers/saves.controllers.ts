@@ -2,12 +2,14 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import Post from "../models/post.model";
 import Save from "../models/saves.model";
+import { User } from "../models/user.model";
 import { getCache, setCache, clearSavesCache, clearFeedCache } from "../configs/cache";
 import {
   createNotification,
   deleteInteractionNotification,
 } from "../utilities/notification";
 import { areMutuallyBlocked } from "../utilities/blockCheck";
+import { canInteractWithPost } from "../utilities/postVisibility";
 import { emitPostSave, emitPostUnsave } from "../configs/socket";
 import { logger } from "../utilities/logger";
 import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenError } from "../utilities/errors";
@@ -37,7 +39,7 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
     }
 
     // check post exists
-    const post = await Post.findById(postId).select("_id author").lean();
+    const post = await Post.findById(postId).select("_id author visibility").lean();
     if (!post) {
       throw new NotFoundError("Post not found!");
     }
@@ -47,6 +49,12 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
       if (await areMutuallyBlocked(userId.toString(), post.author.toString())) {
         throw new ForbiddenError("Cannot save this post!");
       }
+    }
+
+    // closeFriends posts are invisible to non-close-friends — they must not
+    // be able to save them (which would bump savesCount + notify the author)
+    if (!(await canInteractWithPost(postId, userId.toString())).allowed) {
+      throw new NotFoundError("Post not found!");
     }
 
     // check user already saved this post
@@ -207,6 +215,44 @@ export const getSavedPosts = async (req: Request, res: Response) => {
       })
       .lean();
 
+    // Filter out closeFriends posts the viewer can no longer see (e.g. the
+    // author removed them from closeFriends after the save, or the save
+    // predates the closeFriends guard). The cache is per-user here so this
+    // is purely defensive, but it prevents stale content from leaking.
+    const currentUserIdStr = userId.toString();
+    const cfPostIds = savedPosts
+      .map((s: any) => s.post)
+      .filter((p: any) => p && (p as any).visibility === "closeFriends")
+      .map((p: any) => p._id.toString());
+    if (cfPostIds.length > 0) {
+      const cfPosts = await Post.find({ _id: { $in: cfPostIds } })
+        .select("_id author")
+        .lean();
+      const authorIds = [...new Set(cfPosts.map((p: any) => p.author.toString()))];
+      const authors = await User.find({ _id: { $in: authorIds } })
+        .select("closeFriends")
+        .lean();
+      const visibleCfIds = new Set<string>();
+      for (const p of cfPosts) {
+        const author = authors.find((a: any) => a._id.toString() === p.author.toString());
+        const isAuthor = p.author.toString() === currentUserIdStr;
+        const isCf = (author?.closeFriends || []).some(
+          (id: any) => id.toString() === currentUserIdStr,
+        );
+        if (isAuthor || isCf) visibleCfIds.add(p._id.toString());
+      }
+      const before = savedPosts.length;
+      const filtered = (savedPosts as any[]).filter(
+        (s: any) =>
+          !s.post ||
+          (s.post as any).visibility !== "closeFriends" ||
+          visibleCfIds.has(s.post._id.toString()),
+      );
+      if (filtered.length !== before) {
+        savedPosts.splice(0, savedPosts.length, ...filtered);
+      }
+    }
+
     // Map saved posts to post data with folder info and savedByMe flag
     const mappedPosts = savedPosts.map((save: any) => ({
       ...save.post,
@@ -219,12 +265,22 @@ export const getSavedPosts = async (req: Request, res: Response) => {
 
     // no posts saved
     if (posts.length === 0) {
-      return res.status(200).json({
+      // Cache the empty result too — a user with no saves shouldn't pay the
+      // DB + Upstash cost on every visit to the Saved tab.
+      const emptyData = {
         success: true,
         message: "No saved posts!",
         posts: [],
         folders: [],
-      });
+        nextCursor: null,
+        hasMore: false,
+      };
+      try {
+        await setCache(cacheKey, emptyData, 60);
+      } catch (err: any) {
+        logger.error(`Cache set error in getSavedPosts (empty)!`, { error: err.message });
+      }
+      return res.status(200).json(emptyData);
     }
 
     // check has more

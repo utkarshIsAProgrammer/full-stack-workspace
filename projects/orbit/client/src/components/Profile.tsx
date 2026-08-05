@@ -20,6 +20,7 @@ import {
 	Clock,
 } from "lucide-react";
 import { User as UserType, Post } from "../types";
+import { downscaleImageFile } from "../utils/imageCompression";
 import GlassCard from "./GlassCard";
 import ImageCropModal from "./ImageCropModal";
 import UserAvatar from "./UserAvatar";
@@ -32,13 +33,21 @@ import CloseFriendButton from "./CloseFriendButton";
 import ReputationDisplay from "./ReputationDisplay";
 import PollCard from "./PollCard";
 import { apiFetch } from "../utils/api";
-import { getCachedResponse, prependPostToCachedFeeds } from "../utils/apiCache";
+import {
+	getCachedResponse,
+	prependPostToCachedFeeds,
+	evictCachedResponse,
+} from "../utils/apiCache";
 import { useCacheRefresh } from "../hooks/useCacheRefresh";
 import { logger } from "../utils/logger";
 
 // Stable RegExp for matching profile/posts cache refresh events
 // — module-level to prevent React effect re-attachment on every render.
 const MATCHER_PROFILE = /\/api\/users\/(username\/|[a-f0-9]{24}\/posts)/;
+// Stable matchers for the Saved / Reposts / Drafts background refreshes
+// (same module-level pattern — avoids re-attaching window listeners).
+const MATCHER_SAVES = /\/api\/saves/;
+const MATCHER_REPOSTS = /\/api\/reposts/;
 
 interface ProfileProps {
 	user: UserType | null; // Auth User
@@ -167,9 +176,9 @@ export default function Profile({
 			}
 
 			// Append new image files
-			editPostNewFiles.forEach((file) => {
-				formData.append("images", file);
-			});
+			for (const file of editPostNewFiles) {
+				formData.append("images", await downscaleImageFile(file));
+			}
 
 			const res = await apiFetch(`/api/posts/${editPostId}`, {
 				method: "PUT",
@@ -251,6 +260,14 @@ export default function Profile({
 		if (editPostCropSrc) URL.revokeObjectURL(editPostCropSrc);
 		setEditPostCropSrc("");
 	};
+
+	// Guards the in-flight race between a stale `loadProfile` (started BEFORE
+	// the user followed/unfollowed) and the fresh follow action. Such a stale
+	// load would otherwise call onProfileLoaded(oldState) AFTER the toggle and
+	// overwrite followingStates — flipping the button back. Bumped whenever a
+	// follow action begins; loadProfile only applies its result if it started
+	// after the last action (its server data is then guaranteed fresh).
+	const lastFollowActionAtRef = useRef(0);
 
 	// Pull-to-refresh state
 	const [pullDistance, setPullDistance] = useState(0);
@@ -352,11 +369,33 @@ export default function Profile({
 	// re-fetch so the profile page stays up-to-date automatically.
 	useCacheRefresh(MATCHER_PROFILE, () => loadProfile());
 
+	// Keep the Saved / Reposts / Drafts tabs fresh when the background timer
+	// refreshes those endpoints. Silent mode avoids flashing a spinner over
+	// data that's already on screen (cache-first revalidate).
+	useCacheRefresh(MATCHER_SAVES, () => {
+		void fetchSavedPosts(undefined, { silent: true });
+	});
+	useCacheRefresh(MATCHER_REPOSTS, () => {
+		void fetchRepostedPosts(undefined, { silent: true });
+	});
+	useCacheRefresh("/api/posts/drafts", () => {
+		void fetchDrafts({ silent: true });
+	});
+
 	const loadProfile = async () => {
 		setLoading(true);
+		// Snapshot when this fetch STARTS so a stale in-flight response that
+		// began before a follow/unfollow action can't overwrite its result.
+		const fetchStartedAt = Date.now();
 		try {
-			// 1. Fetch profile user
-			const res = await apiFetch(`/api/users/username/${targetUsername}`);
+			// 1. Fetch profile user — ALWAYS bypass the HTTP cache. The cached
+			// profile embeds the viewer's `followingByMe` flag, and a stale
+			// cached copy (pre-follow) would overwrite the fresh follow state
+			// via onProfileLoaded, flipping the button back to "Follow".
+			// Instant first paint still comes from the mount cache-read effect.
+			const res = await apiFetch(`/api/users/username/${targetUsername}`, {
+				bypassCache: true,
+			});
 			const data = await res.json();
 			if (!res.ok || !data.success) {
 				setLoading(false);
@@ -369,8 +408,14 @@ export default function Profile({
 			setProfilePicPreview(data.user.profilePic?.url || "");
 			setBannerPicPreview(data.user.bannerImage?.url || "");
 
-			// Sync following state with server
-			if (onProfileLoaded && data.user._id) {
+			// Sync following state with server — but ONLY if this fetch started
+			// after the last follow action (otherwise its data predates the
+			// toggle and must not overwrite the fresh optimistic state).
+			if (
+				onProfileLoaded &&
+				data.user._id &&
+				fetchStartedAt >= lastFollowActionAtRef.current
+			) {
 				onProfileLoaded(data.user._id, !!data.user.followingByMe);
 			}
 
@@ -399,10 +444,13 @@ export default function Profile({
 				),
 			];
 
-			// 3. Fetch saved/reposted if viewing own profile (in parallel with posts)
+			// 3. Warm saved/reposted lists for own profile in the BACKGROUND.
+			// They're cache-first with instant render, so they don't need to
+			// block the profile page render (Promise.all above would otherwise
+			// wait for two extra network round-trips on every profile visit).
 			if (user && user.username === targetUsername) {
-				promises.push(fetchSavedPosts());
-				promises.push(fetchRepostedPosts());
+				void fetchSavedPosts();
+				void fetchRepostedPosts();
 			}
 
 			await Promise.all(promises);
@@ -1310,16 +1358,38 @@ export default function Profile({
 		}
 	};
 
-	const fetchSavedPosts = async (cursor?: string | null) => {
+	const fetchSavedPosts = async (
+		cursor?: string | null,
+		opts?: { silent?: boolean },
+	) => {
 		if (cursor) {
 			setLoadingMoreSaved(true);
-		} else {
+		} else if (!opts?.silent) {
 			setLoadingSaved(true);
 		}
 		try {
 			let endpoint = "/api/saves?limit=10";
 			if (cursor) {
 				endpoint += `&cursor=${cursor}`;
+			}
+			// Instant render from cache (stale-while-revalidate) — never show a
+			// blank spinner when we already have data for this list.
+			if (!cursor) {
+				try {
+					const cached = await getCachedResponse<{
+						posts: Post[];
+						success: boolean;
+						nextCursor: string | null;
+						hasMore: boolean;
+					}>(endpoint);
+					if (cached?.success && cached.posts?.length) {
+						setSavedPosts(cached.posts);
+						setSavedCursor(cached.nextCursor || null);
+						setSavedHasMore(cached.hasMore || false);
+					}
+				} catch {
+					// Non-critical — fall through to the network fetch below
+				}
 			}
 			const res = await apiFetch(endpoint);
 			const data = await res.json();
@@ -1349,16 +1419,37 @@ export default function Profile({
 		}
 	};
 
-	const fetchRepostedPosts = async (cursor?: string | null) => {
+	const fetchRepostedPosts = async (
+		cursor?: string | null,
+		opts?: { silent?: boolean },
+	) => {
 		if (cursor) {
 			setLoadingMoreReposts(true);
-		} else {
+		} else if (!opts?.silent) {
 			setLoadingReposts(true);
 		}
 		try {
 			let endpoint = "/api/reposts?limit=10";
 			if (cursor) {
 				endpoint += `&cursor=${cursor}`;
+			}
+			// Instant render from cache (stale-while-revalidate)
+			if (!cursor) {
+				try {
+					const cached = await getCachedResponse<{
+						posts: Post[];
+						success: boolean;
+						nextCursor: string | null;
+						hasMore: boolean;
+					}>(endpoint);
+					if (cached?.success && cached.posts?.length) {
+						setRepostedPosts(cached.posts);
+						setRepostsCursor(cached.nextCursor || null);
+						setRepostsHasMore(cached.hasMore || false);
+					}
+				} catch {
+					// Non-critical — fall through to the network fetch below
+				}
 			}
 			const res = await apiFetch(endpoint);
 			const data = await res.json();
@@ -1389,12 +1480,27 @@ export default function Profile({
 	};
 
 	// Fetch the current user's drafts + scheduled posts (self only)
-	const fetchDrafts = async () => {
-		setLoadingDrafts(true);
+	const fetchDrafts = async (opts?: { silent?: boolean }) => {
+		if (!opts?.silent) setLoadingDrafts(true);
 		try {
-			const res = await apiFetch("/api/posts/drafts", {
-				bypassCache: true,
-			});
+			// Instant render from cache (stale-while-revalidate)
+			try {
+				const cached = await getCachedResponse<{
+					drafts: Post[];
+					scheduled: Post[];
+					success: boolean;
+				}>("/api/posts/drafts");
+				if (cached?.success) {
+					if (cached.drafts?.length) setDrafts(cached.drafts);
+					if (cached.scheduled?.length)
+						setScheduledPosts(cached.scheduled);
+				}
+			} catch {
+				// Non-critical — fall through to the network fetch below
+			}
+			// Cache-first: apiFetch serves a fresh cached copy instantly and
+			// only hits the network when the entry is stale/missing.
+			const res = await apiFetch("/api/posts/drafts");
 			const data = await res.json();
 			if (res.ok && data.success) {
 				setDrafts(data.drafts || []);
@@ -1417,6 +1523,9 @@ export default function Profile({
 			if (!res.ok) throw new Error(data.message || "Failed to publish.");
 			setDrafts((prev) => prev.filter((p) => p._id !== postId));
 			setScheduledPosts((prev) => prev.filter((p) => p._id !== postId));
+			// Evict the drafts cache so the published post isn't served from
+			// a stale cached list on the next Drafts-tab visit.
+			void evictCachedResponse("/api/posts/drafts");
 			if (data.post) {
 				// Seed the client-side feed cache so the home feed shows the
 				// published post INSTANTLY on next mount (the Feed component is
@@ -1469,6 +1578,9 @@ export default function Profile({
 			if (!res.ok) throw new Error(data.message || "Failed to delete.");
 			setDrafts((prev) => prev.filter((p) => p._id !== postId));
 			setScheduledPosts((prev) => prev.filter((p) => p._id !== postId));
+			// Evict the drafts cache so the deleted draft isn't served from a
+			// stale cached list on the next Drafts-tab visit.
+			void evictCachedResponse("/api/posts/drafts");
 			window.dispatchEvent(
 				new CustomEvent("showToast", {
 					detail: { message: "Post deleted.", type: "success" },
@@ -1494,6 +1606,10 @@ export default function Profile({
 			(profile as any).followingByMe ??
 			(profile as any).isFollowing ??
 			false;
+
+		// Any loadProfile already in flight is now stale relative to this
+		// action — its onProfileLoaded must not overwrite the new state.
+		lastFollowActionAtRef.current = Date.now();
 
 		// 1. Optimistic Update local profile state instantly
 		setProfile((prev) =>
@@ -1561,12 +1677,12 @@ export default function Profile({
 		formData.append("bio", bio);
 
 		if (profilePicFile) {
-			formData.append("profilePic", profilePicFile);
+			formData.append("profilePic", await downscaleImageFile(profilePicFile));
 		} else if (!profilePicPreview && profile?.profilePic?.url) {
 			formData.append("removeProfilePic", "true");
 		}
 		if (bannerPicFile) {
-			formData.append("bannerImage", bannerPicFile);
+			formData.append("bannerImage", await downscaleImageFile(bannerPicFile));
 		} else if (!bannerPicPreview && profile?.bannerImage?.url) {
 			formData.append("removeBannerImage", "true");
 		}
@@ -1897,7 +2013,7 @@ export default function Profile({
 												<>
 													{user?._id ===
 														profile?._id && (
-														<div className="absolute top-4 right-4 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center gap-1.5 z-20">
+														<div className="absolute top-4 right-4 opacity-100 transition-opacity flex items-center gap-1.5 z-20">
 															<div className="relative">
 																																								<button
 																																									onClick={(e) => {
@@ -2872,7 +2988,7 @@ export default function Profile({
 													setBio(e.target.value)
 												}
 												placeholder="Write something about yourself..."
-												className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white focus:outline-none focus:border-zinc-600 focus:bg-zinc-900 transition-all resize-none font-medium"
+												className="w-full !rounded-lg border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all resize-none leading-relaxed"
 												maxLength={150}
 											/>
 										</div>
@@ -2949,7 +3065,7 @@ export default function Profile({
 									onChange={(e) => setEditPostContent(e.target.value)}
 									placeholder="Post content"
 									rows={5}
-									className="w-full rounded-lg border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white outline-none focus:border-zinc-600 transition-all resize-none"
+									className="w-full !rounded-lg border border-zinc-800 bg-zinc-900/55 py-3.5 px-5 text-[12px] md:text-sm text-white outline-none focus:border-white transition-all resize-none"
 								/>
 
 								{/* Existing images — show with remove button */}
@@ -3048,7 +3164,7 @@ export default function Profile({
 						}
 					}}
 					imageSrc={editPostCropSrc}
-					aspectRatio={undefined}
+					aspectRatio={1}
 					title="Crop Image"
 					onCropComplete={handleEditPostCropComplete}
 				/>

@@ -31,6 +31,7 @@ import {
   clearAllCaches,
   stopCacheRefreshTimer,
 } from "./utils/api";
+import { prependPostToCachedFeeds } from "./utils/apiCache";
 import { getNotificationText } from "./utils/notificationText";
 import { logger } from "./utils/logger";
 import { useSwipeBack } from "./hooks/useSwipeBack";
@@ -171,16 +172,12 @@ export default function App() {
       ];
       await Promise.all(imports);
 
-      // After components are loaded, warm the API cache for all major tabs
-      // so navigation feels instant on the first visit
-      const allTabEndpoints = [
-        ...getEndpointsForTab("home"),
-        ...getEndpointsForTab("explore"),
-        ...getEndpointsForTab("notifications"),
-        ...getEndpointsForTab("chat"),
-        ...getEndpointsForTab("communities"),
-      ];
-      warmCache(allTabEndpoints);
+      // NOTE: do NOT warm API caches here. This idle preload can run before a
+      // session exists (pre-login), and warmCache would fire auth-required
+      // requests (glimpses feed, conversations, communities…) that 401 on the
+      // backend — polluting the console with errors and wasting requests.
+      // Cache warming happens only after login, in handleAuthSuccess and the
+      // user-specific warm effect below, where a session is guaranteed.
     };
 
     const schedulePreload = (): (() => void) | void => {
@@ -203,20 +200,34 @@ export default function App() {
     return schedulePreload();
   }, []);
 
-  // After user logs in, warm additional user-specific caches
+  // After the user is known (fresh login OR session restored on reload), warm
+  // the API cache for every major tab + user-specific data so navigation is
+  // instant. This runs on BOTH paths — handleAuthSuccess only fires on a fresh
+  // login, so without this a returning user who reloads the page would lose all
+  // tab warming and the background-refresh registration until their first click.
   useEffect(() => {
     if (!user) return;
-    // Warm user-specific data: conversations, suggestions,
-    // own profile, saved posts, and reposts so ALL tabs load instantly
-    const userSpecificEndpoints = [
+    const allEndpoints = [
+      ...getEndpointsForTab("home"),
+      ...getEndpointsForTab("explore"),
+      ...getEndpointsForTab("notifications"),
+      ...getEndpointsForTab("chat"),
+      ...getEndpointsForTab("communities"),
+      ...getEndpointsForTab("saved"),
+      ...getEndpointsForTab("reposts"),
+      ...(user.isAdmin ? getEndpointsForTab("admin") : []),
       "/api/chats/conversations",
       "/api/users/suggestions",
       `/api/users/username/${user.username}`,
       `/api/users/${user._id}/posts?limit=10`,
-      "/api/saves",
-      "/api/reposts",
+      // NOTE: the ?limit=10 query string MUST match what Profile.tsx actually
+      // fetches — the client cache key includes the query string, so warming
+      // "/api/saves" would never be hit by Profile's "/api/saves?limit=10".
+      "/api/saves?limit=10",
+      "/api/reposts?limit=10",
+      "/api/posts/drafts",
     ];
-    warmCache(userSpecificEndpoints);
+    warmCache(allEndpoints);
   }, [user]);
 
   // WebRTC peer connection refs (shared between Chat initiation and CallUI display)
@@ -329,7 +340,7 @@ export default function App() {
           new CustomEvent("showToast", {
             detail: {
               message:
-                "⌨️ g+h Home · g+e Explore · g+n Notifications · g+c Chat · g+m Communities · g+p Profile · g+s Settings",
+                "g+h Home · g+e Explore · g+n Notifications · g+c Chat · g+m Communities · g+p Profile · g+s Settings",
               type: "success",
             },
           }),
@@ -660,7 +671,11 @@ export default function App() {
             if (followedUser._id) states[followedUser._id] = true;
           },
         );
-        setFollowingStates(states);
+        // MERGE (never replace): the server list is authoritative for the
+        // users it contains, but replacing the whole map would wipe
+        // optimistic/known states for everyone else (and drop anyone beyond
+        // the first 100), making Follow buttons flip back until a refetch.
+        setFollowingStates((prev) => ({ ...prev, ...states }));
       }
     } catch (err) {
       logger.warn("Failed retrieving following list", err);
@@ -1199,6 +1214,47 @@ export default function App() {
       fetchBadgeCounts(true);
     });
 
+    // ── Realtime block/unblock sync ──
+    // A blocked user must stop existing for the blocker (and vice versa)
+    // immediately — not after a cache TTL or a reload. When either user
+    // blocks or unblocks, wipe the local CacheStorage + IndexedDB caches
+    // and refetch everything so the other user's content vanishes (or
+    // reappears) instantly across feed, search, notifications, chats, etc.
+    const handleBlockStateChange = async () => {
+      try {
+        await clearAllCaches();
+      } catch (e) {
+        logger.error("Failed to clear caches on block state change", e);
+      }
+      // Refetch all user-specific data so UI reflects the new reality.
+      // Bypass cache (it was just wiped) to guarantee fresh server data.
+      fetchConversations(true);
+      fetchSuggestions();
+      fetchFollowing(userId);
+      fetchBadgeCounts(true);
+      // Force already-mounted views (Feed, Glances, Notifications) to
+      // re-fetch immediately — a cache wipe alone doesn't clear React
+      // state, so the blocked user's content would stay visible until
+      // the next navigation or reload without this signal.
+      window.dispatchEvent(new CustomEvent("forceFeedRefresh"));
+      window.dispatchEvent(new CustomEvent("glimpsesRefresh"));
+      window.dispatchEvent(new CustomEvent("notificationsRefresh"));
+    };
+    socket.on(
+      "user:blocked",
+      ({ targetUserId }: { targetUserId: string }) => {
+        logger.info("Received user:blocked event", { targetUserId });
+        void handleBlockStateChange();
+      },
+    );
+    socket.on(
+      "user:unblocked",
+      ({ targetUserId }: { targetUserId: string }) => {
+        logger.info("Received user:unblocked event", { targetUserId });
+        void handleBlockStateChange();
+      },
+    );
+
     // ── Realtime post interaction sync (likes, saves, reposts) ──
     // Dispatch with source="socket" and the absolute count from server so listeners can use exact values
     // Use the `userId` parameter (stable in closure) instead of `user` state (stale at setup time)
@@ -1344,14 +1400,23 @@ export default function App() {
     );
 
     // ── Realtime new posts in feed (prepend to home feed) ──
-    // Skip own posts since they're already in the local state from createPost response
+    // Dispatch for ALL posts including the current user's OWN posts. Manually
+    // created posts are also dispatched locally by PostModal, but Feed.tsx
+    // dedupes by _id so the duplicate event is harmless. The own-post case
+    // is essential for SCHEDULED posts: they're published by the server
+    // scheduler minutes/hours after creation, so the author's client has no
+    // local copy and would otherwise never see the post without a reload.
     socket.on("post:created", (post: any) => {
       logger.info("[ORBIT DIAG] post:created received", {
         postId: post._id,
         authorId: post.author?._id,
         uid,
       });
-      if (post.author?._id === uid) return;
+      // Seed the client-side feed cache so the post also survives navigation:
+      // if the user is on another tab when a SCHEDULED post auto-publishes,
+      // Feed.tsx reads the cached /api/posts list on mount — without this
+      // seed it would show a stale list without the new post.
+      void prependPostToCachedFeeds(post);
       window.dispatchEvent(
         new CustomEvent("newPostCreated", { detail: { post } }),
       );
@@ -1792,22 +1857,9 @@ export default function App() {
     // Request permission for native OS notifications using our utility
     requestNotificationPermission();
 
-    // Warm the API cache for all major tabs so navigation is instant
-    // Includes profile, saved, and reposts so those tabs also load instantly
-    const allTabEndpoints = [
-      ...getEndpointsForTab("home"),
-      ...getEndpointsForTab("explore"),
-      ...getEndpointsForTab("notifications"),
-      ...getEndpointsForTab("chat"),
-      ...getEndpointsForTab("communities"),
-      ...getEndpointsForTab("saved"),
-      ...getEndpointsForTab("reposts"),
-      ...getEndpointsForTab("admin"),
-      "/api/users/suggestions",
-      `/api/users/username/${authUser.username}`,
-      `/api/users/${authUser._id}/posts?limit=10`,
-    ];
-    warmCache(allTabEndpoints);
+    // NOTE: cache warming (all tabs + user-specific data) happens in the
+    // user-change effect below — it runs for BOTH fresh logins and session
+    // restores on reload, so it isn't duplicated here.
   }, []);
 
   // ─── OPUS Bitrate SDP Helper (Cross-Browser) ──────────────────────────
@@ -3379,7 +3431,6 @@ export default function App() {
                         <Dock
                           currentTab={currentTab}
                           setTab={handleTabChange}
-                          user={user}
                           badgeCount={badgeCount}
                           chatBadgeCount={chatBadgeCount}
                         />

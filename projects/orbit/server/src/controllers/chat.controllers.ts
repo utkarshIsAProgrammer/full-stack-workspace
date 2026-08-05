@@ -5,6 +5,7 @@ import { Message } from "../models/message.model";
 import { User } from "../models/user.model";
 import Block from "../models/block.model";
 import Notification from "../models/notification.model";
+import { getBlockedUserIds } from "../utilities/blockCheck";
 import { sendMessageSchema, editMessageSchema } from "../schemas/chat.schema";
 import {
 	BadRequestError,
@@ -227,25 +228,43 @@ export const getConversations = async (
 			.sort({ updatedAt: -1 })
 			.lean();
 
+		// Blocked users must not exist for each other — drop any conversation
+		// whose partner shares a block relationship (either direction). This is
+		// a safety net for edge cases where a block happened but the
+		// conversation wasn't deleted (legacy data, groups, races).
+		const blockedIds = await getBlockedUserIds(currentUserId.toString());
+		const blockedSet = new Set(blockedIds);
+
 		// Extract all other participants to do a single batch query for presence
 		const otherParticipantIds: string[] = [];
-		const preparedConversations = conversations.map((conv: any) => {
-			const activeParticipants = (conv.participants || []).filter(
-				(p: any) => p != null,
-			);
-			const otherParticipant = activeParticipants.find(
-				(p: any) =>
-					p._id && p._id.toString() !== currentUserId.toString(),
-			);
-			if (otherParticipant) {
-				otherParticipantIds.push(otherParticipant._id.toString());
-			}
-			return {
-				...conv,
-				activeParticipants,
-				otherParticipantId: otherParticipant?._id?.toString() || null,
-			};
-		});
+		const preparedConversations = conversations
+			.filter((conv: any) => {
+				const otherParticipant = (conv.participants || []).find(
+					(p: any) =>
+						p?._id && p._id.toString() !== currentUserId.toString(),
+				);
+				return !(
+					otherParticipant &&
+					blockedSet.has(otherParticipant._id.toString())
+				);
+			})
+			.map((conv: any) => {
+				const activeParticipants = (conv.participants || []).filter(
+					(p: any) => p != null,
+				);
+				const otherParticipant = activeParticipants.find(
+					(p: any) =>
+						p._id && p._id.toString() !== currentUserId.toString(),
+				);
+				if (otherParticipant) {
+					otherParticipantIds.push(otherParticipant._id.toString());
+				}
+				return {
+					...conv,
+					activeParticipants,
+					otherParticipantId: otherParticipant?._id?.toString() || null,
+				};
+			});
 
 		// Batch query presence statuses in one HTTP roundtrip via MGET
 		const uniqueOtherIds = [...new Set(otherParticipantIds)];

@@ -596,10 +596,14 @@ export const getUserByUsername = async (
 	try {
 		const cacheKey = `user:username:${username}`;
 		let user: unknown = null;
+		let fromCache = false;
 
 		try {
 			const cached = await getCache(cacheKey);
-			if (cached) user = cached;
+			if (cached) {
+				user = cached;
+				fromCache = true;
+			}
 		} catch (e) {
 			logger.error(`Cache get error in getUserByUsername!`, { error: e });
 		}
@@ -673,8 +677,13 @@ export const getUserPosts = async (
 	try {
 		const limit = Math.min(Number(req.query.limit) || 10, 20);
 		const cursor = req.query.cursor as string;
-		const cacheKey = `user:${userId}:posts:${cursor || "first"}:${limit}`;
 		const currentUserId = req.user?._id?.toString();
+		// The cache is shared across users but the post list differs per viewer:
+		// closeFriends posts are only visible to the author + their close friends,
+		// and blocked users must see nothing. Include the viewer in the key so a
+		// warm cache can never leak a closer view to an outsider / blocked user.
+		const cacheKey = `user:${userId}:posts:${cursor || "first"}:${limit}:${currentUserId || "anon"}`;
+
 
 		let postsData: any = null;
 

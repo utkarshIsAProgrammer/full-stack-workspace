@@ -168,11 +168,17 @@ export const markAsRead = async (req: Request, res: Response) => {
 			throw new UnauthorizedError("Unauthorized access!");
 		}
 
-		// Helper to clear all notification caches — both the list cache and the
-		// unread count cache (which has a different key pattern: `notifications:unread:userId`)
+		// Helper to clear all notification caches — the list cache, the unread
+		// count cache (`notifications:unread:userId`), AND the route-level
+		// cacheMiddleware keys (`api:<userId>:/unread-count:<query>` and
+		// `api:<userId>:/:<query>`). Without the middleware keys, the badge
+		// endpoint keeps serving the pre-read count for up to its TTL, so the
+		// bell badge stays stale after marking notifications read.
 		const clearNotificationCaches = async (uid: string) => {
 			await clearByPattern(`notifications:${uid}:*`);
 			await deleteCache(`notifications:unread:${uid}`);
+			await clearByPattern(`api:${uid}:/unread-count*`);
+			await clearByPattern(`api:${uid}:/:*`);
 		};
 
 		// if notificationId is provided, mark only that single notification as read
@@ -252,6 +258,10 @@ export const deleteNotification = async (req: Request, res: Response) => {
 
 		await clearByPattern(`notifications:${userId.toString()}:*`);
 		await deleteCache(`notifications:unread:${userId.toString()}`);
+		// Invalidate route-level cacheMiddleware keys so the badge + list
+		// reflect the deletion immediately (not after the middleware TTL).
+		await clearByPattern(`api:${userId.toString()}:/unread-count*`);
+		await clearByPattern(`api:${userId.toString()}:/:*`);
 
 		return res.status(200).json({
 			success: true,
@@ -280,6 +290,10 @@ export const clearAllNotifications = async (req: Request, res: Response) => {
 		// invalidate both caches (list + unread count)
 		await clearByPattern(`notifications:${userId.toString()}:*`);
 		await deleteCache(`notifications:unread:${userId.toString()}`);
+		// Invalidate route-level cacheMiddleware keys so the badge + list
+		// reflect the wipe immediately (not after the middleware TTL).
+		await clearByPattern(`api:${userId.toString()}:/unread-count*`);
+		await clearByPattern(`api:${userId.toString()}:/:*`);
 
 		return res.status(200).json({
 			success: true,

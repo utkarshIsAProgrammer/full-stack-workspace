@@ -18,6 +18,7 @@ import { awardXP } from "../services/xpService";
 import { progressMission } from "../services/dailyMissionService";
 import { logger } from "../utilities/logger";
 import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenError } from "../utilities/errors";
+import { canInteractWithPost } from "../utilities/postVisibility";
 
 type Params = {
   postId: string;
@@ -35,6 +36,13 @@ export const getAllCommentsForPost = async (req: Request<Params>, res: Response)
     // validate id
     if (!mongoose.Types.ObjectId.isValid(postId)) {
       throw new BadRequestError("Invalid post ID!");
+    }
+
+    // closeFriends posts are invisible to non-close-friends — their comment
+    // threads must be too (404 so outsiders can't even detect the post).
+    const { allowed } = await canInteractWithPost(postId, req.user?._id?.toString());
+    if (!allowed) {
+      throw new NotFoundError("Post not found!");
     }
 
     // Blocked users must not exist — filter out comments from anyone blocked
@@ -106,6 +114,12 @@ export const getComment = async (req: Request<Params>, res: Response) => {
     // validate id
     if (!mongoose.Types.ObjectId.isValid(postId)) {
       throw new BadRequestError("Invalid post ID!");
+    }
+
+    // closeFriends posts are invisible to non-close-friends — hide their threads
+    const { allowed } = await canInteractWithPost(postId, req.user?._id?.toString());
+    if (!allowed) {
+      throw new NotFoundError("Post not found!");
     }
     // pagination
     const limit = Math.min(Number(req.query.limit) || 10, 50);
@@ -189,8 +203,9 @@ export const getAllComments = async (req: Request, res: Response) => {
     const limit = Math.min(Number(req.query.limit) || 10, 50);
     const cursor = req.query.cursor as string;
 
-    // cache key
-    const cacheKey = `comments:all:${cursor || "first"}:${limit}`;
+    // cache key (per-viewer: closeFriends visibility depends on who asks)
+    const currentUserId = req.user?._id?.toString();
+    const cacheKey = `comments:all:${cursor || "first"}:${limit}:${currentUserId || "anon"}`;
     try {
       const cached = await getCache(cacheKey);
       if (cached) return res.status(200).json(cached);
@@ -209,16 +224,31 @@ export const getAllComments = async (req: Request, res: Response) => {
       .populate("author", "username email fullName profilePic")
       .lean();
 
-    const hasMore = comments.length > limit;
-    if (hasMore) {
-      comments.pop();
+    // closeFriends posts are invisible to non-close-friends — never expose
+    // their comment threads in the global list either.
+    let visibleComments = comments;
+    if (comments.length > 0) {
+      const postIds = [...new Set(comments.map((c: any) => c.post?.toString()).filter(Boolean))];
+      const visiblePostIds = new Set<string>();
+      for (const pid of postIds) {
+        const { allowed } = await canInteractWithPost(pid, currentUserId);
+        if (allowed) visiblePostIds.add(pid);
+      }
+      visibleComments = comments.filter((c: any) =>
+        !c.post || visiblePostIds.has(c.post.toString()),
+      );
     }
 
-    const nextCursor = comments.slice(-1).shift()?._id || null;
+    const hasMore = visibleComments.length > limit;
+    if (hasMore) {
+      visibleComments.pop();
+    }
+
+    const nextCursor = visibleComments.slice(-1).shift()?._id || null;
 
     const responseData = {
       success: true,
-      comments,
+      comments: visibleComments,
       nextCursor,
       hasMore,
     };
@@ -248,6 +278,15 @@ export const getCommentReplies = async (
   try {
     if (!mongoose.Types.ObjectId.isValid(commentId)) {
       throw new BadRequestError("Invalid comment ID!");
+    }
+
+    // Resolve the comment's parent post and enforce closeFriends visibility
+    const parentCommentDoc = await Comment.findById(commentId).select("post").lean();
+    if (parentCommentDoc?.post) {
+      const { allowed } = await canInteractWithPost(parentCommentDoc.post.toString(), req.user?._id?.toString());
+      if (!allowed) {
+        throw new NotFoundError("Comment not found!");
+      }
     }
 
     const limit = Math.min(Number(req.query.limit) || 10, 50);
@@ -348,10 +387,16 @@ export const addComment = async (req: Request<Params>, res: Response) => {
 
     // Blocked users must not exist for each other — no commenting on
     // a blocked user's post, and no replies under a blocked user's comment.
-    const postAuthorDoc = await Post.findById(postId).select("author").lean();
+    const postAuthorDoc = await Post.findById(postId).select("author visibility").lean();
     if (postAuthorDoc) {
       if (await areMutuallyBlocked(author.toString(), postAuthorDoc.author.toString())) {
         throw new ForbiddenError("Cannot comment on this post!");
+      }
+
+      // closeFriends posts can only be commented on by the author / close friends
+      const { allowed } = await canInteractWithPost(postId, author.toString());
+      if (!allowed) {
+        throw new NotFoundError("Post not found!");
       }
     }
     if (parentComment && parentComment.author?.toString() !== author.toString()) {

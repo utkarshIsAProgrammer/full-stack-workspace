@@ -137,7 +137,7 @@ export default function QuoteRepostModal({
 							placeholder="What's on your mind?"
 							maxLength={1000}
 							rows={3}
-							className="w-full bg-zinc-900/60 border border-zinc-800/60 rounded-lg px-3.5 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 outline-none resize-none focus:border-zinc-600/60 transition-colors"
+							className="w-full bg-zinc-900/60 border border-zinc-800/60 !rounded-lg px-3.5 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 outline-none resize-none focus:border-zinc-600/60 transition-colors"
 						/>
 						<div className="flex items-center justify-between mt-1.5">
 							<span className="text-[10px] text-zinc-500">

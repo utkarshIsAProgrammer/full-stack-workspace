@@ -10,11 +10,41 @@ import {
 } from "../utilities/notification";
 import { logger } from "../utilities/logger";
 import { emitFollowUser, emitUnfollowUser } from "../configs/socket";
+import { getBlockedUserIds } from "../utilities/blockCheck";
 import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenError } from "../utilities/errors";
 import { invalidateFeedCache } from "../services/feedService";
 
 type Params = {
   userId: string;
+};
+
+// Route-level cacheMiddleware keys are per-viewer and cached for 5 minutes.
+// A follow/unfollow MUST evict both users' cached views of each other's
+// profiles (they embed `followingByMe`) plus their per-viewer search results
+// — otherwise the Follow button silently flips back to "Follow" on the next
+// profile load (or anywhere a cached profile is served) until the TTL expires.
+const clearFollowRouteCaches = async (
+  followerId: string,
+  targetId: string,
+  targetUsername?: string,
+  followerUsername?: string,
+) => {
+  await Promise.all([
+    targetUsername
+      ? clearByPattern(`api:${followerId}:/api/users/username/${targetUsername}:*`)
+      : Promise.resolve(),
+    clearByPattern(`api:${followerId}:/api/users/${targetId}:*`),
+    followerUsername
+      ? clearByPattern(`api:${targetId}:/api/users/username/${followerUsername}:*`)
+      : Promise.resolve(),
+    clearByPattern(`api:${targetId}:/api/users/${followerId}:*`),
+    // Followers/Following list routes (cacheMiddleware TTL 120s) embed
+    // per-row isFollowing for the viewer — evict both users' views.
+    clearByPattern(`api:${followerId}:/api/follows/*`),
+    clearByPattern(`api:${targetId}:/api/follows/*`),
+    clearByPattern(`search:*${followerId}*`),
+    clearByPattern(`search:*${targetId}*`),
+  ]);
 };
 
 // toggle follow/unfollow user
@@ -101,6 +131,12 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
       if (followerUser?.username) await clearUserByUsernameCache(followerUser.username);
       await clearUserByIdCache(userId);
       await clearUserByIdCache(follower.toString());
+      await clearFollowRouteCaches(
+        follower.toString(),
+        userId,
+        targetUser?.username,
+        followerUser?.username,
+      );
       await clearByPattern(`users:suggested:${follower.toString()}:*`);
       await clearByPattern(`users:suggested:${userId}:*`);
 
@@ -151,6 +187,12 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
     if (followerUser?.username) await clearUserByUsernameCache(followerUser.username);
     await clearUserByIdCache(userId);
     await clearUserByIdCache(follower.toString());
+    await clearFollowRouteCaches(
+      follower.toString(),
+      userId,
+      targetUser?.username,
+      followerUser?.username,
+    );
 
     // emit unfollow event
     if (updatedTargetUser) {
@@ -250,6 +292,27 @@ export const getFollowers = async (req: Request<Params>, res: Response) => {
       } catch (err: any) {
         logger.error(`Cache set error in getFollowers!`, { error: err.message });
       }
+    }
+
+    // Blocked users must not exist for each other — hide anyone sharing a
+    // block relationship (either direction) with the VIEWER from the list.
+    // Filtered per-viewer AFTER cache retrieval so the shared cache stays
+    // viewer-agnostic.
+    try {
+      const blockedIds = await getBlockedUserIds(
+        currentUserId ? currentUserId.toString() : "",
+      );
+      if (blockedIds.length > 0) {
+        const blockedSet = new Set(blockedIds);
+        followers = followers.filter(
+          (f: any) =>
+            !(f.follower?._id && blockedSet.has(f.follower._id.toString())),
+        );
+      }
+    } catch (err: any) {
+      logger.error(`Blocked-user filter error in getFollowers!`, {
+        error: err.message,
+      });
     }
 
     // get follower ids to check if current user follows them
@@ -371,6 +434,30 @@ export const getFollowing = async (req: Request<Params>, res: Response) => {
       } catch (err: any) {
         logger.error(`Cache set error in getFollowing!`, { error: err.message });
       }
+    }
+
+    // Blocked users must not exist for each other — hide anyone sharing a
+    // block relationship (either direction) with the VIEWER from the list.
+    // Filtered per-viewer AFTER cache retrieval so the shared cache stays
+    // viewer-agnostic.
+    try {
+      const blockedIds = await getBlockedUserIds(
+        currentUserId ? currentUserId.toString() : "",
+      );
+      if (blockedIds.length > 0) {
+        const blockedSet = new Set(blockedIds);
+        following = following.filter(
+          (f: any) =>
+            !(
+              f.following?._id &&
+              blockedSet.has(f.following._id.toString())
+            ),
+        );
+      }
+    } catch (err: any) {
+      logger.error(`Blocked-user filter error in getFollowing!`, {
+        error: err.message,
+      });
     }
 
     // get following ids to check if current user follows them

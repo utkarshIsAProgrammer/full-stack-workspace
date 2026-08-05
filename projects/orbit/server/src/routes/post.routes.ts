@@ -46,14 +46,19 @@ const router = express.Router();
  *       200:
  *         description: List of trending hashtags
  */
-router.get("/trending/hashtags", optionalAuth, cacheMiddleware({ ttl: 300 }), getTrendingHashtags);
+// NOTE: getTrendingHashtags, getPostBySlug, getPost and getAllPosts all cache
+// their own responses in the controller (keyed `post:*` / `trending:hashtags`)
+// and invalidate those keys on writes — the route-level cacheMiddleware is a
+// redundant second cache layer that doubles Upstash latency on every miss.
+// It is only kept on /hashtag/:hashtag, whose controller has no cache.
+router.get("/trending/hashtags", optionalAuth, getTrendingHashtags);
 router.get("/archived", protect, getArchivedPosts);
 router.get("/hashtag/:hashtag", optionalAuth, searchLimiter, cacheMiddleware({ ttl: 300 }), getPostsByHashtag);
-router.get("/slug/:slug", optionalAuth, cacheMiddleware({ ttl: 300 }), getPostBySlug);
+router.get("/slug/:slug", optionalAuth, getPostBySlug);
 // IMPORTANT: /drafts MUST be declared BEFORE /:postId — otherwise
 // "drafts" is matched as a postId and the endpoint is unreachable.
 router.get("/drafts", protect, getDrafts);
-router.get("/:postId", optionalAuth, cacheMiddleware({ ttl: 300 }), getPost);
+router.get("/:postId", optionalAuth, getPost);
 
 /**
  * @openapi
@@ -104,7 +109,7 @@ router.get("/:postId", optionalAuth, cacheMiddleware({ ttl: 300 }), getPost);
  *                 success: { type: boolean }
  *                 post: { $ref: '#/components/schemas/Post' }
  */
-router.get("/", optionalAuth, cacheMiddleware({ ttl: 60 }), getAllPosts);
+router.get("/", optionalAuth, getAllPosts);
 router.post(
   "/",
   protect,

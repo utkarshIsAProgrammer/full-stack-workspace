@@ -27,6 +27,8 @@ vi.mock("motion/react", () => ({
 vi.mock("lucide-react", () => ({
   Plus: (props: any) => <span {...props}>Plus</span>,
   Loader2: (props: any) => <span {...props}>Loader2</span>,
+  Lock: (props: any) => <span {...props}>Lock</span>,
+  Globe: (props: any) => <span {...props}>Globe</span>,
 }));
 
 vi.mock("../GlanceViewer", () => ({

@@ -77,6 +77,22 @@ export const getForYouFeed = async (req: Request, res: Response) => {
       query.$or = orConditions;
     }
 
+    // closeFriends posts must never appear for non-close-friends. Compute the
+    // set of authors who have the viewer on their closeFriends list, then
+    // require: visibility public OR (closeFriends AND author in that set).
+    const closeFriendAuthors = await User.find({ closeFriends: currentUserId })
+      .select("_id")
+      .lean();
+    const cfAuthorIds = closeFriendAuthors.map((u: any) => u._id);
+    query.$and = [
+      {
+        $or: [
+          { visibility: "public" },
+          { visibility: "closeFriends", author: { $in: cfAuthorIds } },
+        ],
+      },
+    ];
+
     // Fetch candidate posts
     const candidates = await Post.find(query)
       .populate("author", "username email fullName profilePic")

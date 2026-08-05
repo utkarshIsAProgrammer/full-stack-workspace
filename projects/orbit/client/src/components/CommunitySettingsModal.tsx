@@ -4,6 +4,7 @@ import { X, Hash, Loader2, Camera, Settings, Trash2, MessageSquare, Phone, Video
 import ImageCropModal from "./ImageCropModal";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
+import { downscaleImageFile } from "../utils/imageCompression";
 import type { Community } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
 
@@ -96,7 +97,7 @@ export default function CommunitySettingsModal({
       formData.append("name", name.trim());
       formData.append("description", description.trim());
       if (imageFile) {
-        formData.append("image", imageFile);
+        formData.append("image", await downscaleImageFile(imageFile, 800));
       }
       if (removeCurrentImage && !imageFile) {
         formData.append("removeImage", "true");
@@ -404,7 +405,7 @@ export default function CommunitySettingsModal({
                   placeholder="What's this community about?"
                   maxLength={500}
                   rows={3}
-                  className="w-full bg-zinc-900/80 border border-zinc-800/60 rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all resize-none"
+                  className="w-full bg-zinc-900/80 border border-zinc-800/60 !rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all resize-none"
                 />
                 <p className="text-[10px] text-zinc-600 mt-1 text-right">
                   {description.length}/500

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Plus, Loader2, Lock, Globe } from "lucide-react";
+import { Plus, Loader2, Lock } from "lucide-react";
 import type { Glance, User } from "../types";
 import { apiFetch } from "../utils/api";
-import { evictCachedResponse } from "../utils/apiCache";
+import { evictCachedResponse, getCachedResponse } from "../utils/apiCache";
+import { useCacheRefresh } from "../hooks/useCacheRefresh";
 import { logger } from "../utils/logger";
 import GlanceViewer from "./GlanceViewer";
 import GlanceEditor from "./GlanceEditor";
@@ -19,9 +20,6 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
   const [viewerIndex, setViewerIndex] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
   const [editFile, setEditFile] = useState<File | null>(null);
-  const [glanceVisibility, setGlanceVisibility] = useState<
-    "public" | "closeFriends"
-  >("public");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Keep latest user in a ref so the socket listeners (registered once) can
@@ -51,15 +49,40 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
     }
   };
 
+  // When the background cache timer refreshes the glances feed, re-fetch so
+  // the rings stay up-to-date without the user lifting a finger.
+  useCacheRefresh("/api/glimpses/feed", () => fetchGlances(true));
+
+  // Blocked users must vanish from the glance strip immediately — when a
+  // block/unblock is announced in realtime (App.tsx wipes caches and fires
+  // this event), re-fetch the feed so mounted rings update without a reload.
   useEffect(() => {
-    // Clear cache for the feed endpoint on mount to ensure
-    // fresh data is fetched from the network (not stale cached data).
-    // The periodic refresh timer will keep the cache warm after that.
-    // Evict cache first, then fetch — prevents race where apiFetch
-    // reads stale cache before the eviction completes.
-    evictCachedResponse("/api/glimpses/feed").catch(() => {}).then(() => {
-      fetchGlances();
-    });
+    const handleGlancesRefresh = () => fetchGlances(true);
+    window.addEventListener("glimpsesRefresh", handleGlancesRefresh);
+    return () =>
+      window.removeEventListener("glimpsesRefresh", handleGlancesRefresh);
+  }, []);
+
+  // On mount, show cached glances instantly (stale-while-revalidate) — this
+  // makes repeat visits feel instant. `fetchGlances(true)` below then
+  // refreshes from the network in the background so fresh data (new glances,
+  // expirations) lands without a visible loading state.
+  useEffect(() => {
+    (async () => {
+      try {
+        const cached = await getCachedResponse<{
+          glimpses: Glance[];
+          success: boolean;
+        }>("/api/glimpses/feed");
+        if (cached?.success && cached.glimpses?.length) {
+          setGlances(cached.glimpses);
+          setLoading(false);
+        }
+      } catch {
+        // Cache read failures are non-critical
+      }
+    })();
+    fetchGlances(true);
   }, []);
 
   // Listen for real-time glance events
@@ -117,11 +140,15 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
   }, []);
 
   // Upload a glance media blob/file to the server
-  const uploadGlanceMedia = async (media: Blob, filename: string) => {
+  const uploadGlanceMedia = async (
+    media: Blob,
+    filename: string,
+    visibility: "public" | "closeFriends" = "public",
+  ) => {
     setIsCreating(true);
     const formData = new FormData();
     formData.append("media", media, filename);
-    formData.append("visibility", glanceVisibility);
+    formData.append("visibility", visibility);
 
     try {
       const res = await apiFetch("/api/glimpses", {
@@ -143,7 +170,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
           new CustomEvent("showToast", {
             detail: {
               message:
-                glanceVisibility === "closeFriends"
+                visibility === "closeFriends"
                   ? "Glance shared with close friends only"
                   : "Glance published to everyone",
               type: "success",
@@ -157,7 +184,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
       logger.error("Failed to create glance", err);
       window.dispatchEvent(
         new CustomEvent("showToast", {
-          detail: { message: "Failed to create glance. Image may be too large or unsupported.", type: "error" },
+          detail: { message: "Failed to create glance. Media may be too large or unsupported.", type: "error" },
         })
       );
     } finally {
@@ -191,17 +218,24 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
         );
         return;
       }
-    }
 
-    // Images go through the pre-publish editor (drag / zoom / rotate / free crop)
-    if (file.type.startsWith("image/")) {
-      setEditFile(file);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      return;
-    }
-
-    // Videos upload directly (client-side video cropping isn't feasible)
-    await uploadGlanceMedia(file, file.name);
+      // Server caps glance uploads at 30MB — reject oversized videos up front
+      if (file.size > 30 * 1024 * 1024) {
+        window.dispatchEvent(
+          new CustomEvent("showToast", {
+            detail: { message: "Video must be under 30MB.", type: "error" },
+          })
+        );
+        return;
+      }
+    }	// Both images and videos go through the pre-publish editor — images are
+	// auto-framed to 9:16, and the author picks the audience (public or close
+	// friends) there before publishing.
+	if (file.type.startsWith("image/") || file.type.startsWith("video/")) {
+		setEditFile(file);
+		if (fileInputRef.current) fileInputRef.current.value = "";
+		return;
+	}
   };
 
   // Open viewer for a specific glance
@@ -271,8 +305,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
     return (
       <div className="flex items-center gap-3 py-3 overflow-x-auto scrollbar-none">
         {[1, 2, 3].map((n) => (
-          <div key={n} className="flex flex-col items-center gap-1 shrink-0">
-            <div className="h-14 w-14 rounded-2xl bg-zinc-900 animate-pulse ring-1 ring-zinc-800 sm:h-20 sm:w-20" />
+          <div key={n} className="flex flex-col items-center gap-1 shrink-0">			<div className="h-14 w-14 rounded-full bg-zinc-900 animate-pulse ring-1 ring-zinc-800 sm:h-20 sm:w-20" />
             <div className="h-2 w-10 bg-zinc-900 animate-pulse rounded" />
           </div>
         ))}
@@ -290,63 +323,42 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
         >
           {/* Create glance button (only for authenticated users) */}
           {user && (
-            <div className="flex flex-col items-center gap-1 shrink-0">
-              <div className="relative">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isCreating}
-                  className={`relative flex h-14 w-14 items-center justify-center rounded-2xl border-2 border-dashed transition-all cursor-pointer disabled:opacity-50 sm:h-20 sm:w-20 ${
-                    glanceVisibility === "closeFriends"
-                      ? "border-emerald-500/60 hover:border-emerald-400"
-                      : "border-zinc-600 hover:border-white/50 bg-zinc-900/50 hover:bg-zinc-800/50"
-                  }`}
-                  title={
-                    glanceVisibility === "closeFriends"
-                      ? "Add a close-friends-only glance"
-                      : "Add a public glance"
-                  }
-                >
-                  {isCreating ? (
-                    <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
-                  ) : glanceVisibility === "closeFriends" ? (
-                    <Lock className="h-5 w-5 text-emerald-400/90" />
-                  ) : (
-                    <Plus className="h-5 w-5 text-zinc-400" />
-                  )}
-                </button>
+            <div className="flex flex-col items-center gap-1 shrink-0">				<div className="relative">
+				<button
+					onClick={() => fileInputRef.current?.click()}
+					disabled={isCreating}
+					className="relative h-14 w-14 rounded-full border-2 border-zinc-600 transition-all cursor-pointer hover:border-white/50 disabled:opacity-60 sm:h-20 sm:w-20"
+					title="Add a glance"
+				>
+					{/* The user's own profile picture fills the add button — like
+					    Instagram's "your story" ring. The + badge marks it as the
+					    place to add a new glance. */}
+					{user.profilePic?.url ? (
+						<img
+							src={user.profilePic.url}
+							alt={user.fullName}
+							className="h-full w-full rounded-full object-cover"
+						/>
+					) : (
+						<div className="flex h-full w-full items-center justify-center rounded-full bg-zinc-900/70">
+							<Plus className="h-5 w-5 text-zinc-400" />
+						</div>
+					)}
+					{/* + badge pinned to the corner */}
+					{!isCreating && user.profilePic?.url && (
+						<span className="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full border-2 border-zinc-950 bg-white text-zinc-950 sm:h-6 sm:w-6">
+							<Plus className="h-3 w-3 sm:h-3.5 sm:w-3.5" strokeWidth={3} />
+						</span>
+					)}
+					{/* Uploading spinner overlay — covers the picture so progress is visible */}
+					{isCreating && (
+						<span className="absolute inset-0 z-10 flex items-center justify-center rounded-full bg-black/60">
+							<Loader2 className="h-5 w-5 animate-spin text-white sm:h-6 sm:w-6" />
+						</span>
+					)}
+				</button>
 
-                {/* Audience toggle — Globe (public) by default, tap to switch to
-                    green Lock (close friends only). No dropdown, no overlap. */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setGlanceVisibility((v) =>
-                      v === "public" ? "closeFriends" : "public"
-                    );
-                  }}
-                  className={`absolute -top-1.5 -right-1.5 flex h-6 w-6 items-center justify-center rounded-full border shadow-md transition-all cursor-pointer ${
-                    glanceVisibility === "closeFriends"
-                      ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/25"
-                      : "bg-zinc-800/90 text-zinc-300 border-zinc-600 hover:bg-zinc-700 hover:text-white"
-                  }`}
-                  title={
-                    glanceVisibility === "closeFriends"
-                      ? "Close Friends only — tap for public"
-                      : "Public — tap for Close Friends only"
-                  }
-                  aria-label={
-                    glanceVisibility === "closeFriends"
-                      ? "Switch glance to public"
-                      : "Switch glance to close friends"
-                  }
-                >
-                  {glanceVisibility === "closeFriends" ? (
-                    <Lock className="h-3.5 w-3.5" />
-                  ) : (
-                    <Globe className="h-3.5 w-3.5" />
-                  )}
-                </button>
+
               </div>
               <span className="text-[9px] font-bold text-zinc-500">Add</span>
             </div>
@@ -379,10 +391,9 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
                         (g) => g._id === firstHighlight._id
                       );
                       if (idx >= 0) handleOpenViewer(idx);
-                    }}
-                    className="relative h-14 w-14 rounded-2xl transition-all bg-gradient-to-br from-amber-400 via-yellow-300 to-orange-400 hover:scale-105 active:scale-95 sm:h-20 sm:w-20"
-                  >
-                    <div className="relative h-full w-full rounded-2xl border-2 border-zinc-950 bg-zinc-900 flex items-center justify-center">
+                    }}					className="relative h-14 w-14 rounded-full transition-all bg-gradient-to-br from-amber-400 via-yellow-300 to-orange-400 hover:scale-105 active:scale-95 sm:h-20 sm:w-20"
+				  >
+					<div className="relative h-full w-full rounded-full border-2 border-zinc-950 bg-zinc-900 flex items-center justify-center">
                       <span className="text-lg">⭐</span>
                     </div>
                   </div>
@@ -422,21 +433,27 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
                       }}
                       className="flex flex-col items-center gap-1 shrink-0 group cursor-pointer"
                     >
-                      <div
-                        className={`relative h-14 w-14 rounded-2xl p-[2.5px] transition-all sm:h-20 sm:w-20 ${
+                      <div						className={`relative h-14 w-14 rounded-full p-[2.5px] transition-all sm:h-20 sm:w-20 ${
                           authorG.some((g) => g.visibility === "closeFriends")
                             ? "bg-gradient-to-br from-emerald-500/60 via-green-400/50 to-teal-500/60"
                             : allViewed
                               ? "bg-zinc-700"
                               : "bg-gradient-to-br from-violet-400 via-fuchsia-300 to-sky-400"
                         }`}
-                      >
-                        <div className="relative h-full w-full rounded-2xl overflow-hidden bg-zinc-900">
+                      >						<div className="relative h-full w-full rounded-full overflow-hidden bg-zinc-900">
+                        {author.profilePic?.url ? (
                         <img
-                          src={author.profilePic?.url || ""}
+                          src={author.profilePic.url}
                           alt={author.fullName}
                           className="relative h-full w-full object-cover"
                         />
+                        ) : (
+                          <div className="relative h-full w-full flex items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-900">
+                            <span className="text-lg sm:text-2xl font-bold text-zinc-400 select-none">
+                              {author.fullName?.charAt(0)?.toUpperCase() || "?"}
+                            </span>
+                          </div>
+                        )}
                         {authorG.some((g) => g.visibility === "closeFriends") && (
                           <span className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-zinc-950/70 backdrop-blur-sm border border-emerald-500/40 shadow-md">
                             <Lock className="h-3 w-3 text-emerald-400/90" />
@@ -482,11 +499,13 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
       {editFile && (
         <GlanceEditor
           file={editFile}
-          onClose={() => setEditFile(null)}
-          onApply={(blob) => {
-            setEditFile(null);
-            void uploadGlanceMedia(blob, "glance.jpg");
-          }}
+          onClose={() => setEditFile(null)}			onApply={(blob, visibility) => {
+				setEditFile(null);
+				const filename = editFile.type.startsWith("video/")
+					? "glance.mp4"
+					: "glance.jpg";
+				void uploadGlanceMedia(blob, filename, visibility);
+			}}
         />
       )}
     </>

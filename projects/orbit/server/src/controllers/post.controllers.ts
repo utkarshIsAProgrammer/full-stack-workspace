@@ -18,9 +18,11 @@ import {
   clearCommentsCache,
   clearSavesCache,
   clearUserPostsCache,
+  clearDraftsCache,
 } from "../configs/cache";
 import { User } from "../models/user.model";
 import { env } from "../configs/env";
+import { canViewCloseFriendsPost, canInteractWithPost } from "../utilities/postVisibility";
 import { createNotification, extractMentions } from "../utilities/notification";
 import { areMutuallyBlocked, getBlockedUserIds } from "../utilities/blockCheck";
 import { sanitizePlainText } from "../configs/sanitize";
@@ -77,30 +79,6 @@ function buildImages(files: UploadedFile[], alt: string): ImageMeta[] {
   }));
 }
 
-/**
- * Check whether the current user is allowed to view a closeFriends post.
- * The author can always see it. Other users must be on the author's closeFriends list.
- * Unauthenticated requests are always denied.
- */
-async function canViewCloseFriendsPost(
-  post: any,
-  currentUserId: string | undefined,
-): Promise<boolean> {
-  if (post.visibility !== "closeFriends") return true;
-  if (!currentUserId) return false;
-
-  // If the viewer is the author, they can always view
-  const authorId = post.author?._id?.toString() || post.author?.toString();
-  if (authorId === currentUserId) return true;
-
-  const author = await User.findById(authorId).select("closeFriends").lean();
-  if (!author) return false;
-
-  return author.closeFriends?.some(
-    (id: any) => id.toString() === currentUserId,
-  );
-}
-
 // get single post by id
 export const getPost = async (req: Request<Params>, res: Response) => {
   const { postId } = req.params;
@@ -117,6 +95,22 @@ export const getPost = async (req: Request<Params>, res: Response) => {
     try {
       const cached = await getCache<{ post: any }>(cacheKey);
       if (cached) {
+        // The cache is shared across users, so closeFriends visibility AND
+        // block status must be enforced on EVERY read — otherwise an
+        // authorized viewer's cache entry would let an outsider or a blocked
+        // user fetch the post until the TTL expires.
+        const cachedAuthorId = cached.post?.author?._id?.toString() || cached.post?.author?.toString();
+        if (
+          cachedAuthorId &&
+          currentUserId &&
+          cachedAuthorId !== currentUserId &&
+          (await areMutuallyBlocked(currentUserId, cachedAuthorId))
+        ) {
+          throw new NotFoundError("Post not found!");
+        }
+        if (!(await canViewCloseFriendsPost(cached.post, currentUserId))) {
+          throw new NotFoundError("Post not found!");
+        }
         // Re-attach user status (following state may have changed)
         const postsWithStatus = await addUserStatusToPosts([cached.post], currentUserId);
         return res.status(200).json({
@@ -126,6 +120,7 @@ export const getPost = async (req: Request<Params>, res: Response) => {
         });
       }
     } catch (err: any) {
+      if (err.statusCode && err.statusCode < 500) throw err;
       logger.error(`Cache error in getPost!`, { error: err?.message });
     }
 
@@ -266,10 +261,42 @@ export const getAllPosts = async (req: Request, res: Response) => {
         query.visibility = "public";
       }
     } else if (!authorId) {
-      // Global feed: only show public posts — closeFriends posts are hidden
-      // unless the viewer is in the author's close friends list (handled below)
-      // For the global feed, we only show public posts to keep queries simple
-      query.visibility = "public";
+      // Global feed: show public posts, PLUS closeFriends posts from any
+      // author who has the viewer on their closeFriends list (close friends
+      // must be able to see their friends' closeFriends posts here).
+      if (currentUserId) {
+        const closeFriendAuthors = await User.find({ closeFriends: currentUserId })
+          .select("_id")
+          .lean();
+        if (closeFriendAuthors.length > 0) {
+          const cfAuthorIds = closeFriendAuthors.map((u: any) => u._id);
+          query.$and = [
+            {
+              $or: [
+                { visibility: "public" },
+                // The author always sees their own closeFriends posts in
+                // their home feed too (matches how public posts behave).
+                { visibility: "closeFriends", author: currentUserId },
+                { visibility: "closeFriends", author: { $in: cfAuthorIds } },
+              ],
+            },
+          ];
+        } else {
+          // No author has this viewer as a close friend — but the viewer
+          // must still see their own closeFriends posts.
+          query.$and = [
+            {
+              $or: [
+                { visibility: "public" },
+                { visibility: "closeFriends", author: currentUserId },
+              ],
+            },
+          ];
+        }
+      } else {
+        // Unauthenticated global feed: public only
+        query.visibility = "public";
+      }
     }
     // Own profile: show everything (no filter needed)
 
@@ -794,6 +821,7 @@ export const deletePost = async (req: Request<Params>, res: Response) => {
     await deleteCache(`post:${postId}`);
     await deleteCache(`post:slug:${post.slug}`);
     await clearFeedCache();
+    await clearDraftsCache(userId.toString());
     await clearCommentsCache(postId);
     // clear saves caches only for users who saved this post
     const savedBy = await Save.find({ post: postId }).select("user").lean();
@@ -822,6 +850,12 @@ export const sharePost = async (req: Request<Params>, res: Response) => {
     // validate id
     if (!mongoose.Types.ObjectId.isValid(postId)) {
       throw new BadRequestError("Invalid post ID!");
+    }
+
+    // closeFriends posts can only be shared by the author / their close friends
+    const { allowed } = await canInteractWithPost(postId, req.user?._id?.toString());
+    if (!allowed) {
+      throw new NotFoundError("Post not found!");
     }
 
     // increment share count
@@ -895,6 +929,20 @@ export const getPostBySlug = async (req: Request<{ slug: string }>, res: Respons
       const cached = await getCache<{ success: boolean; message: string; post: any }>(cacheKey);
       if (cached?.post) {
         const currentUserId = req.user?._id?.toString();
+        // Cache is shared across users — enforce closeFriends visibility AND
+        // block status per viewer on every read.
+        const cachedAuthorId = cached.post?.author?._id?.toString() || cached.post?.author?.toString();
+        if (
+          cachedAuthorId &&
+          currentUserId &&
+          cachedAuthorId !== currentUserId &&
+          (await areMutuallyBlocked(currentUserId, cachedAuthorId))
+        ) {
+          throw new NotFoundError("Post not found!");
+        }
+        if (!(await canViewCloseFriendsPost(cached.post, currentUserId))) {
+          throw new NotFoundError("Post not found!");
+        }
         const postsWithStatus = await addUserStatusToPosts([cached.post], currentUserId);
         return res.status(200).json({
           success: true,
@@ -903,6 +951,7 @@ export const getPostBySlug = async (req: Request<{ slug: string }>, res: Respons
         });
       }
     } catch (cacheError: any) {
+      if (cacheError.statusCode && cacheError.statusCode < 500) throw cacheError;
       logger.error(`Cache error in getPostBySlug controller!`, { error: cacheError.message });
     }
 
@@ -1035,8 +1084,10 @@ export const getTrendingHashtags = async (req: Request, res: Response) => {
     // Aggregate hashtags from the last 7 days, sorted by frequency
     // Uses MongoDB aggregation pipeline for efficiency (avoid loading all posts into JS)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    // PUBLIC posts only — closeFriends hashtags must never surface in
+    // trending (they're invisible to non-close-friends everywhere else).
     const results = await Post.aggregate([
-      { $match: { hashtags: { $exists: true, $not: { $size: 0 } }, createdAt: { $gte: sevenDaysAgo } } },
+      { $match: { hashtags: { $exists: true, $not: { $size: 0 } }, createdAt: { $gte: sevenDaysAgo }, visibility: "public" } },
       { $unwind: "$hashtags" },
       { $group: { _id: "$hashtags", count: { $sum: 1 } } },
       { $sort: { count: -1 } },
@@ -1067,6 +1118,13 @@ export const viewsCount = async (req: Request<Params>, res: Response) => {
     const parsed = addViewSchema.safeParse({ postId });
     if (!parsed.success) {
       throw new BadRequestError(parsed.error.issues[0]?.message || "Invalid input");
+    }
+
+    // closeFriends posts are invisible to non-close-friends — never count
+    // (or reveal) their views to outsiders.
+    const { allowed } = await canInteractWithPost(postId, currentUser?.toString());
+    if (!allowed) {
+      throw new NotFoundError("Post not found!");
     }
 
     // fetch minimal fields
@@ -1194,6 +1252,10 @@ export const votePoll = async (req: Request<Params>, res: Response) => {
     if (!mongoose.Types.ObjectId.isValid(postId)) throw new BadRequestError("Invalid post ID!");
     if (typeof optionIndex !== "number" || optionIndex < 0) throw new BadRequestError("Valid optionIndex is required!");
 
+    // closeFriends polls are only votable by the author / their close friends
+    const { allowed } = await canInteractWithPost(postId, currentUserId.toString());
+    if (!allowed) throw new NotFoundError("Post not found!");
+
     const post = await Post.findById(postId);
     if (!post) throw new NotFoundError("Post not found!");
     if (!post.poll) throw new BadRequestError("This post does not have a poll!");
@@ -1303,6 +1365,10 @@ export const inviteCollab = async (req: Request<Params>, res: Response) => {
 
     const post = await Post.findById(postId);
     if (!post) throw new NotFoundError("Post not found!");
+    // closeFriends posts are invisible to non-close-friends — 404 so
+    // outsiders can't detect them via the collab endpoint either
+    const { allowed: canCollab } = await canInteractWithPost(postId, currentUserId.toString());
+    if (!canCollab) throw new NotFoundError("Post not found!");
     if (post.author.toString() !== currentUserId.toString()) {
       throw new ForbiddenError("Only the post author can invite collaborators!");
     }
@@ -1343,6 +1409,9 @@ export const acceptCollab = async (req: Request<Params>, res: Response) => {
 
     const post = await Post.findById(postId);
     if (!post) throw new NotFoundError("Post not found!");
+    // closeFriends posts are invisible to non-close-friends
+    const { allowed: canAccept } = await canInteractWithPost(postId, currentUserId.toString());
+    if (!canAccept) throw new NotFoundError("Post not found!");
     if (!post.collaborator || post.collaborator.toString() !== currentUserId.toString()) {
       throw new ForbiddenError("You haven't been invited to collaborate on this post!");
     }
@@ -1397,6 +1466,8 @@ export const publishDraft = async (req: Request<Params>, res: Response) => {
     // Also clear the author's profile posts cache so the newly published
     // post shows up on their profile tab immediately (not after TTL).
     await clearUserPostsCache(currentUserId.toString());
+    // The published post is no longer a draft — the Drafts tab must drop it.
+    await clearDraftsCache(currentUserId.toString());
 
     const populated = await Post.findById(post._id).populate("author", "username fullName profilePic").lean();
 
@@ -1429,8 +1500,12 @@ export const quoteRepost = async (req: Request<Params>, res: Response) => {
     }
 
     // Verify original post exists
-    const originalPost = await Post.findById(postId).select("_id author").lean();
+    const originalPost = await Post.findById(postId).select("_id author visibility").lean();
     if (!originalPost) throw new NotFoundError("Original post not found!");
+
+    // closeFriends posts can only be quoted by the author / their close friends
+    const { allowed: canQuote } = await canInteractWithPost(postId, currentUserId.toString());
+    if (!canQuote) throw new NotFoundError("Original post not found!");
 
     // Create a new post as the quote repost
     const sanitizedContent = sanitizePlainText(quoteContent.trim()).slice(0, 1000);
@@ -1445,11 +1520,19 @@ export const quoteRepost = async (req: Request<Params>, res: Response) => {
     });
     await newPost.save();
 
-    // Also create a Repost document to track the repost
-    await Repost.create({ user: currentUserId, post: postId });
-
-    // Increment repost count on the original post
-    await Post.findByIdAndUpdate(postId, { $inc: { repostsCount: 1 } });
+    // Also create a Repost document to track the repost. The { user, post }
+    // index is unique — if the user already reposted (or quote-reposted)
+    // this post, don't fail the whole request; just keep the existing repost.
+    const existingRepost = await Repost.findOne({
+      user: currentUserId,
+      post: postId,
+    });
+    if (!existingRepost) {
+      await Repost.create({ user: currentUserId, post: postId });
+      // Increment repost count on the original post (only when a new repost
+      // was actually created, to avoid double-counting)
+      await Post.findByIdAndUpdate(postId, { $inc: { repostsCount: 1 } });
+    }
 
     // Notify the original post author (if not reposting own post)
     if (originalPost.author.toString() !== currentUserId.toString()) {

@@ -98,7 +98,7 @@ export default function ImageCarousel({
               alt={img.alt || "post image"}
               onLoad={onImageLoad}
               onClick={() => onImageClick?.(img.url)}
-              className={`w-full object-cover aspect-4/5 max-h-200 transition-transform duration-500 ${
+              className={`w-full h-auto max-h-200 transition-transform duration-500 ${
                 onImageClick ? "cursor-pointer" : ""
               }`}
             />

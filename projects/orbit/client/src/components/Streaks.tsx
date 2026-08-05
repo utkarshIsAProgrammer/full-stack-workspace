@@ -77,7 +77,7 @@ export default function Streaks({ user: _user }: StreaksProps) {
 			const data = await res.json();
 			if (res.ok && data.success) {
 				setClaimed(true);
-				setClaimMessage(data.message || "Reward claimed! 🎉");
+				setClaimMessage(data.message || "Reward claimed!");
 				// Update streak from claim response directly (avoids stale cached data)
 				setStreak((prev) => {
 					if (!prev) return prev;
@@ -185,7 +185,7 @@ export default function Streaks({ user: _user }: StreaksProps) {
 						</motion.div>
 						<p className="text-[11px] text-zinc-400 mt-1 font-medium">
 							{isBroken ? (
-								<span className="text-red-400">Streak broken 💔</span>
+								<span className="text-red-400">Streak broken</span>
 							) : hasActiveStreak ? (
 								<>{streak?.currentStreak === 1 ? "day" : "days"} consecutive</>
 							) : (
@@ -215,7 +215,7 @@ export default function Streaks({ user: _user }: StreaksProps) {
 				{isBroken && (
 					<div className="mb-3 text-center">
 						<p className="text-[11px] text-zinc-500 font-medium">
-							Claim to start a new streak! 🔥
+							Claim to start a new streak!
 						</p>
 					</div>
 				)}

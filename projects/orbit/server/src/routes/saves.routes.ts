@@ -7,14 +7,17 @@ import {
 } from "../controllers/saves.controllers";
 import { protect } from "../middlewares/auth.middleware";
 import { interactionLimiter } from "../middlewares/ratelimit.middleware";
-import { cacheMiddleware } from "../middlewares/cache.middleware";
 
 const router = express.Router();
 
-// Cache GET endpoints for better performance
-router.get("/folders", protect, cacheMiddleware({ ttl: 300 }), getSaveFolders);
+// The controllers cache these lists themselves (getSavedPosts: 60s,
+// getSaveFolders: 300s, keyed `saves:<userId>:*`) and invalidate on save
+// toggles — the route-level cacheMiddleware was redundant, doubled Upstash
+// latency on cache misses, and served stale lists after a save toggle
+// (its `api:*` keys are never invalidated).
+router.get("/folders", protect, getSaveFolders);
 router.post("/:postId", protect, interactionLimiter, toggleSavePost);
 router.patch("/:postId/folder", protect, updateSaveFolder);
-router.get("/", protect, cacheMiddleware({ ttl: 60 }), getSavedPosts);
+router.get("/", protect, getSavedPosts);
 
 export { router as saveRoutes };

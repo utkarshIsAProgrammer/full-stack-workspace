@@ -19,6 +19,10 @@
 
 const API_CACHE_NAME = "orbit-api-v1";
 
+// Import lazily-cached Dexie bridge — populated on every background refresh
+// so the structured offline database stays in sync with CacheStorage.
+import { cacheIntoDexie } from "./dexieBridge";
+
 // ── Stale-While-Revalidate Timer ────────────────────────────────────────────
 //
 // Keeps frequently-used API endpoints fresh by periodically re-fetching them
@@ -345,6 +349,9 @@ export async function refreshCache(
 
 		if (data !== null) {
 			await setCachedResponse(url, data);
+			// Keep the Dexie structured layer fresh too — otherwise offline
+			// viewing would serve the very first fetch forever.
+			await cacheIntoDexie(url, data);
 			// Notify React so components can re-render with fresh data
 			window.dispatchEvent(
 				new CustomEvent("api:cache-refreshed", {

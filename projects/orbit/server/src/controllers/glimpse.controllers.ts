@@ -38,10 +38,14 @@ export const getGlimpseFeed = async (req: Request, res: Response) => {
       query.author = { $nin: blockedIds };
     }
 
-    // Fetch glimpses with cursor pagination
+    // Fetch glimpses with cursor pagination. NOTE: we deliberately do NOT
+    // populate `viewers.user` here — that would resolve a full user document
+    // for EVERY viewer of EVERY glimpse (dozens of lookups per request) and is
+    // the main reason the feed felt slow. The feed only needs `viewedByMe` and
+    // a count; full viewer details are fetched lazily by the viewer via
+    // GET /api/glimpses/:glimpseId when the author opens the "Viewed by" list.
     const glimpses = await Glimpse.find(query)
       .populate("author", "username fullName profilePic closeFriends")
-      .populate("viewers.user", "username fullName profilePic")
       .sort({ createdAt: -1 })
       .limit(limit + 1)
       .lean({ virtuals: true });
@@ -74,6 +78,7 @@ export const getGlimpseFeed = async (req: Request, res: Response) => {
             viewedByMe: (g.viewers || []).some(
               (v: any) => v.user?.toString() === currentUserId
             ),
+            viewerCount: (g.viewers || []).length,
           };
         }
         return {
@@ -81,6 +86,7 @@ export const getGlimpseFeed = async (req: Request, res: Response) => {
           viewedByMe: (g.viewers || []).some(
             (v: any) => v.user?.toString() === currentUserId
           ),
+          viewerCount: (g.viewers || []).length,
         };
       });
 
@@ -335,8 +341,11 @@ export const getGlimpse = async (req: Request, res: Response) => {
       throw new BadRequestError("Invalid glimpse ID!");
     }
 
+    // Single glimpse — cheap enough to populate viewers here (the feed no
+    // longer does). This powers the author's "Viewed by" popup.
     const glimpse = await Glimpse.findById(glimpseId)
       .populate("author", "username fullName profilePic")
+      .populate("viewers.user", "username fullName profilePic")
       .lean({ virtuals: true });
 
     if (!glimpse) {
@@ -351,7 +360,7 @@ export const getGlimpse = async (req: Request, res: Response) => {
       viewedByMe: (glimpse.viewers || []).some(
         (v: any) => v.user?.toString() === currentUserId
       ),
-
+      viewerCount: (glimpse.viewers || []).length,
     };
 
     return res.status(200).json({
@@ -567,16 +576,44 @@ export const replyToGlimpse = async (req: Request, res: Response) => {
       $inc: { [`unreadCounts.${authorId}`]: 1 },
     });
 
+    // Author's true unread count (they may already have unread messages in
+    // this conversation — don't overwrite it with a hardcoded 1 on their
+    // client, mirror the regular message flow instead).
+    const authorUnreadCount =
+      ((conversation.unreadCounts as Map<string, number> | undefined)?.get(authorId) || 0) + 1;
+
+    // Populate the full conversation (participants + lastMessage) so the
+    // chat:notification payload lets BOTH sides' clients add this conversation
+    // to their list instantly — even when it's brand-new (a first-ever reply
+    // creates a conversation the replier has never seen in their chat list).
+    const populatedConversation = await Conversation.findById(conversation._id)
+      .populate("participants", "username fullName profilePic")
+      .populate({
+        path: "lastMessage",
+        populate: { path: "sender", select: "username fullName profilePic" },
+      })
+      .lean();
+
     // Broadcast to conversation
     try {
       const io = getIO();
       io.to(`conversation:${conversation._id}`).emit("message:new", populatedMessage);
-      
-      // Also notify the author if they're not in the conversation
+
+      // Notify the glance author (recipient) — unreadCount reflects their real count.
       io.to(`user:${authorId}`).emit("chat:notification", {
         conversationId: conversation._id,
         message: populatedMessage,
-        unreadCount: 1,
+        unreadCount: authorUnreadCount,
+        conversation: populatedConversation,
+      });
+
+      // Also notify the replier's OWN room (unreadCount 0 — they sent it) so
+      // their chat list shows the new conversation without a page refresh.
+      io.to(`user:${currentUserId}`).emit("chat:notification", {
+        conversationId: conversation._id,
+        message: populatedMessage,
+        unreadCount: 0,
+        conversation: populatedConversation,
       });
     } catch (socketErr) {
       logger.warn("Failed to emit glimpse reply socket events", { error: (socketErr as Error).message });

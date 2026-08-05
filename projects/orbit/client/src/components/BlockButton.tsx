@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Shield, ShieldOff, Loader2 } from "lucide-react";
 import { apiFetch } from "../utils/api";
+import { evictCachedResponse } from "../utils/apiCache";
 import { logger } from "../utils/logger";
 
 interface BlockButtonProps {
@@ -50,6 +51,14 @@ export default function BlockButton({ targetUserId, onBlockChange }: BlockButton
         if (res.ok && data.success) {
           setIsBlocked(true);
           onBlockChange?.(true);
+          // The server deletes the 1:1 conversation — drop it from the
+          // client's API cache so the chat list can't resurrect it. The
+          // realtime conversation:delete socket event handles the live UI.
+          try {
+            evictCachedResponse("/api/chats/conversations");
+          } catch (cacheErr) {
+            // non-critical
+          }
         }
       }
     } catch (err) {

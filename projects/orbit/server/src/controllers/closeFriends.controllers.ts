@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import mongoose from "mongoose";
 import { User } from "../models/user.model";
 import { logger } from "../utilities/logger";
+import { getBlockedUserIds } from "../utilities/blockCheck";
+import { clearUserPostsCache, clearFeedCache } from "../configs/cache";
 
 /**
  * Add a user to close friends list.
@@ -29,6 +31,12 @@ export const addCloseFriend = async (req: Request, res: Response) => {
       $addToSet: { closeFriends: targetUserId },
     });
 
+    // The per-viewer profile cache encodes visibility at write time — a
+    // newly-added friend must see the author's closeFriends posts, so drop
+    // the cached profile lists + feeds for this author immediately.
+    await clearUserPostsCache(currentUserId);
+    await clearFeedCache();
+
     return res.status(200).json({ success: true, message: "Added to close friends" });
   } catch (err: any) {
     logger.error("Error in addCloseFriend", { error: err.message });
@@ -49,6 +57,12 @@ export const removeCloseFriend = async (req: Request, res: Response) => {
       $pull: { closeFriends: targetUserId },
     });
 
+    // Privacy-critical: a removed close friend must immediately stop seeing
+    // the author's closeFriends posts (including from the per-viewer profile
+    // cache, which is valid for up to 30 min). Drop the cached lists now.
+    await clearUserPostsCache(currentUserId);
+    await clearFeedCache();
+
     return res.status(200).json({ success: true, message: "Removed from close friends" });
   } catch (err: any) {
     logger.error("Error in removeCloseFriend", { error: err.message });
@@ -68,9 +82,29 @@ export const getCloseFriends = async (req: Request, res: Response) => {
       .populate("closeFriends", "_id username fullName profilePic")
       .lean();
 
+    // Blocked users must not exist for each other — drop any close friend
+    // with a mutual block relationship (either direction) from the list.
+    let closeFriends = user?.closeFriends || [];
+    try {
+      const blockedIds = new Set(await getBlockedUserIds(currentUserId));
+      if (blockedIds.size > 0) {
+        closeFriends = closeFriends.filter((cf: any) => {
+          const cfId =
+            typeof cf === "object"
+              ? cf?._id?.toString?.()
+              : cf?.toString?.();
+          return cfId ? !blockedIds.has(cfId) : true;
+        });
+      }
+    } catch (blockErr: any) {
+      logger.error("Blocked-close-friend filter error in getCloseFriends", {
+        error: blockErr.message,
+      });
+    }
+
     return res.status(200).json({
       success: true,
-      closeFriends: user?.closeFriends || [],
+      closeFriends,
     });
   } catch (err: any) {
     logger.error("Error in getCloseFriends", { error: err.message });

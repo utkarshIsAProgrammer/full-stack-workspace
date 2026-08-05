@@ -6,6 +6,7 @@ import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenE
 import { sanitizePlainText } from "../configs/sanitize";
 import { getIO } from "../configs/socket";
 import { logger } from "../utilities/logger";
+import { getBlockedUserIds } from "../utilities/blockCheck";
 
 /**
  * POST /api/chats/groups — Create a group chat.
@@ -212,6 +213,20 @@ export const getGroupMessages = async (req: Request, res: Response) => {
       query._id = { $lt: new mongoose.Types.ObjectId(cursor) };
     }
 
+    // Blocked users must not exist for each other — exclude messages sent by
+    // anyone with a mutual block relationship with the viewer (either
+    // direction), at the query level so pagination stays correct.
+    try {
+      const blockedIds = await getBlockedUserIds(currentUserId.toString());
+      if (blockedIds.length > 0) {
+        query.sender = { $nin: blockedIds };
+      }
+    } catch (blockErr: any) {
+      logger.error("Blocked-sender filter error in getGroupMessages", {
+        error: blockErr.message,
+      });
+    }
+
     const messages = await GroupMessage.find(query)
       .populate("sender", "username fullName profilePic")
       .sort({ _id: -1 })
@@ -269,11 +284,30 @@ export const sendGroupMessage = async (req: Request, res: Response) => {
     group.updatedAt = new Date();
     await group.save();
 
+    // Deliver realtime via each member's personal room, skipping anyone with
+    // a mutual block relationship with the sender — a blocked user must never
+    // receive the message (in-app or push) even though they share the group.
     const io = getIO();
+    let blockedForSender = new Set<string>();
+    try {
+      blockedForSender = new Set(
+        await getBlockedUserIds(currentUserId.toString()),
+      );
+    } catch (blockErr: any) {
+      logger.error("Blocked-member filter error in sendGroupMessage", {
+        error: blockErr.message,
+      });
+    }
     group.members.forEach((memberId) => {
-      if (memberId) {
-        io.to(`user:${memberId.toString()}`).emit("group:message:new", populated);
+      if (!memberId) return;
+      const memberStr = memberId.toString();
+      // Never skip the sender — their other devices still need the message.
+      if (memberStr === currentUserId.toString()) {
+        io.to(`user:${memberStr}`).emit("group:message:new", populated);
+        return;
       }
+      if (blockedForSender.has(memberStr)) return;
+      io.to(`user:${memberStr}`).emit("group:message:new", populated);
     });
 
     return res.status(201).json({ success: true, message: "Message sent!", sentMessage: populated });

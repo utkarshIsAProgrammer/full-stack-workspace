@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import Post from "../models/post.model";
 import { AppError, BadRequestError, UnauthorizedError } from "../utilities/errors";
 import { sanitizePlainText } from "../configs/sanitize";
-import { clearFeedCache, clearUserPostsCache } from "../configs/cache";
+import { getCache, setCache, clearDraftsCache } from "../configs/cache";
 import { logger } from "../utilities/logger";
 
 /**
@@ -16,6 +16,17 @@ export const getDrafts = async (req: Request, res: Response) => {
 
   try {
     if (!currentUserId) throw new UnauthorizedError("Unauthorized!");
+
+    // Cache the (drafts + scheduled) list for this user — drafts are edited
+    // rarely and any mutation clears the key below, so a short TTL keeps
+    // repeated visits to the Drafts tab instant.
+    const cacheKey = `drafts:${currentUserId.toString()}:all`;
+    try {
+      const cached = await getCache(cacheKey);
+      if (cached) return res.status(200).json(cached);
+    } catch (err: any) {
+      logger.error(`Cache read error in getDrafts`, { error: err.message });
+    }
 
     const posts = await Post.find({
       author: currentUserId,
@@ -30,7 +41,14 @@ export const getDrafts = async (req: Request, res: Response) => {
     const drafts = posts.filter((p) => p.status === "draft");
     const scheduled = posts.filter((p) => p.status === "scheduled");
 
-    return res.status(200).json({ success: true, drafts, scheduled });
+    const responseData = { success: true, drafts, scheduled };
+    try {
+      await setCache(cacheKey, responseData, 60);
+    } catch (err: any) {
+      logger.error(`Cache write error in getDrafts`, { error: err.message });
+    }
+
+    return res.status(200).json(responseData);
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
     logger.error("Error in getDrafts", { error: err.message });
@@ -66,6 +84,9 @@ export const createDraft = async (req: Request, res: Response) => {
 
     await post.save();
 
+    // A new draft must appear instantly in the Drafts tab
+    await clearDraftsCache(currentUserId.toString());
+
     return res.status(201).json({ success: true, message: "Draft saved!", post });
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
@@ -99,6 +120,9 @@ export const createScheduledPost = async (req: Request, res: Response) => {
     });
 
     await post.save();
+
+    // The scheduled post must appear instantly in the Scheduled section
+    await clearDraftsCache(currentUserId.toString());
 
     return res.status(201).json({ success: true, message: "Post scheduled!", post });
   } catch (err: any) {

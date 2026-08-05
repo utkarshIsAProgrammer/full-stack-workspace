@@ -112,17 +112,26 @@ export default function ImageCropModal({
 
 			// Ensure cropped dimensions are integers
 			const { x, y, width, height } = croppedAreaPixels;
-			canvas.width = width;
-			canvas.height = height;
+			// Downscale huge phone photos before upload — feeds render at most
+			// a few hundred px wide and the server caps post images at 800px.
+			// Capping the long side to 1600px (with auto quality on the server)
+			// keeps uploads light without any visible quality loss.
+			const MAX_DIM = 1600;
+			const scale = Math.min(1, MAX_DIM / Math.max(width, height));
+			const outW = Math.max(1, Math.round(width * scale));
+			const outH = Math.max(1, Math.round(height * scale));
+
+			canvas.width = outW;
+			canvas.height = outH;
 
 			// Handle translation for rotation if rotation is applied
 			if (rotation) {
-				ctx.translate(width / 2, height / 2);
+				ctx.translate(outW / 2, outH / 2);
 				ctx.rotate((rotation * Math.PI) / 180);
-				ctx.translate(-width / 2, -height / 2);
+				ctx.translate(-outW / 2, -outH / 2);
 			}
 
-			ctx.drawImage(image, x, y, width, height, 0, 0, width, height);
+			ctx.drawImage(image, x, y, width, height, 0, 0, outW, outH);
 
 			canvas.toBlob(
 				(blob) => {
@@ -132,7 +141,7 @@ export default function ImageCropModal({
 					}
 				},
 				"image/jpeg",
-				0.95,
+				0.85,
 			);
 		} catch (e) {
 			logger.error("Crop failed", e);
@@ -202,16 +211,7 @@ export default function ImageCropModal({
 							}`}>
 							1:1 Square
 						</button>
-						<button
-							type="button"
-							onClick={() => setAspect(4 / 5)}
-							className={`px-3 py-1 rounded-full text-[12px] md:text-sm font-bold tracking-tight transition cursor-pointer ${
-								aspect === 4 / 5
-									? "bg-black text-white dark:bg-white dark:text-black"
-									: "bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800"
-							}`}>
-							4:5 Post (X Style)
-						</button>
+
 						<button
 							type="button"
 							onClick={() => setAspect(16 / 9)}

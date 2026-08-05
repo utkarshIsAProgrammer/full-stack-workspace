@@ -1,51 +1,34 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
-import Cropper from "react-easy-crop";
-import { X, Check, Loader2, RotateCcw, ZoomIn, Smartphone, Crop } from "lucide-react";
+import { X, Check, Loader2, Smartphone, Globe, Lock } from "lucide-react";
 import { logger } from "../utils/logger";
 
-interface Point {
-	x: number;
-	y: number;
-}
-interface Area {
-	width: number;
-	height: number;
-	x: number;
-	y: number;
-}
-interface Size {
-	width: number;
-	height: number;
-}
+type GlanceVisibility = "public" | "closeFriends";
 
 interface GlanceEditorProps {
 	file: File;
 	onClose: () => void;
-	onApply: (blob: Blob) => void;
+	onApply: (blob: Blob, visibility: GlanceVisibility) => void;
 }
+
+const GLANCE_ASPECT = 9 / 16;
 
 /**
  * Pre-publish glance editor.
- * - Renders the image inside a strict 9:16 story frame (like WhatsApp / Instagram
- *   reels & status) so users see exactly how it will look.
- * - Drag to reposition, zoom with the slider (or pinch on touch), rotate freely,
- *   and switch to "Free Crop" to resize the crop window from any side / corner.
+ * - Renders the image inside a strict 9:16 glance frame so users see exactly
+ *   how it will look (whatsapp / instagram story style).
+ * - Cropping is fully automatic: the image is center-cropped to 9:16 and
+ *   downscaled before upload. No drag / zoom / rotate — publish is instant.
  * - Emits the final cropped image as a Blob via onApply.
  */
 export default function GlanceEditor({ file, onClose, onApply }: GlanceEditorProps) {
 	const [imageSrc, setImageSrc] = useState<string>("");
-	const [crop, setCrop] = useState<Point>({ x: 0, y: 0 });
-	const [zoom, setZoom] = useState(1);
-	const [rotation, setRotation] = useState(0);
-	const [aspect, setAspect] = useState<number | undefined>(9 / 16);
-	const [cropSize, setCropSize] = useState<Size>({ width: 320, height: 560 });
-	const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
 	const [applying, setApplying] = useState(false);
-	const [freeCrop, setFreeCrop] = useState(false);
+	// Public by default — tap the toggle to make it close-friends only.
+	const [visibility, setVisibility] = useState<GlanceVisibility>("public");
 	const modalRef = useRef<HTMLDivElement>(null);
-	const frameRef = useRef<HTMLDivElement>(null);
+	const isVideo = file.type.startsWith("video/");
 
 	// Create object URL for the selected file
 	useEffect(() => {
@@ -94,35 +77,6 @@ export default function GlanceEditor({ file, onClose, onApply }: GlanceEditorPro
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [imageSrc, onClose]);
 
-	const handleCropComplete = useCallback(
-		(_croppedArea: Area, croppedAreaPixels: Area) => {
-			setCroppedAreaPixels(croppedAreaPixels);
-		},
-		[],
-	);
-
-	const toggleFreeCrop = () => {
-		const next = !freeCrop;
-		setFreeCrop(next);
-		setAspect(next ? undefined : 9 / 16);
-		setCrop({ x: 0, y: 0 });
-		setZoom(1);
-		setRotation(0);
-		if (next) {
-			// Derive a crop window that always fits the preview frame
-			const frame = frameRef.current;
-			if (frame) {
-				const rect = frame.getBoundingClientRect();
-				const w = Math.max(80, Math.floor(rect.width * 0.7));
-				const h = Math.max(140, Math.floor(rect.height * 0.7));
-				setCropSize({ width: w, height: h });
-			}
-		} else {
-			// When switching back to story mode, restore a 9:16 crop size
-			setCropSize({ width: 320, height: 560 });
-		}
-	};
-
 	const createImage = (url: string): Promise<HTMLImageElement> =>
 		new Promise((resolve, reject) => {
 			const image = new Image();
@@ -132,8 +86,15 @@ export default function GlanceEditor({ file, onClose, onApply }: GlanceEditorPro
 		});
 
 	const createCrop = async () => {
-		if (!imageSrc || !croppedAreaPixels) return;
+		if (!imageSrc) return;
 		setApplying(true);
+
+		// Videos pass through untouched — no client-side re-encode. The parent
+		// uploads the original file with the chosen audience.
+		if (isVideo) {
+			onApply(file, visibility);
+			return;
+		}
 
 		try {
 			const image = await createImage(imageSrc);
@@ -141,30 +102,47 @@ export default function GlanceEditor({ file, onClose, onApply }: GlanceEditorPro
 			const ctx = canvas.getContext("2d");
 			if (!ctx) return;
 
-			const { x, y, width, height } = croppedAreaPixels;
-			canvas.width = width;
-			canvas.height = height;
-
-			// Handle translation for rotation if rotation is applied
-			if (rotation) {
-				ctx.translate(width / 2, height / 2);
-				ctx.rotate((rotation * Math.PI) / 180);
-				ctx.translate(-width / 2, -height / 2);
+			// Fixed centered 9:16 crop of the natural image — no user input.
+			const imgW = image.naturalWidth;
+			const imgH = image.naturalHeight;
+			let cropW: number, cropH: number, cx: number, cy: number;
+			if (imgW / imgH > GLANCE_ASPECT) {
+				// Image is wider than 9:16 → crop the left/right edges
+				cropH = imgH;
+				cropW = imgH * GLANCE_ASPECT;
+				cx = (imgW - cropW) / 2;
+				cy = 0;
+			} else {
+				// Image is taller than 9:16 → crop the top/bottom
+				cropW = imgW;
+				cropH = imgW / GLANCE_ASPECT;
+				cx = 0;
+				cy = (imgH - cropH) / 2;
 			}
 
-			ctx.drawImage(image, x, y, width, height, 0, 0, width, height);
+			// Downscale before upload — the glance frame renders at ≤ ~400px
+			// wide on screen, so 720×1280 is already 1.8× sharpness. This keeps
+			// the upload tiny and publishing feels instant.
+			const MAX_W = 720;
+			const MAX_H = 1280;
+			const scale = Math.min(1, MAX_W / cropW, MAX_H / cropH);
+			const outW = Math.max(1, Math.round(cropW * scale));
+			const outH = Math.max(1, Math.round(cropH * scale));
+
+			canvas.width = outW;
+			canvas.height = outH;
+			ctx.drawImage(image, cx, cy, cropW, cropH, 0, 0, outW, outH);
 
 			canvas.toBlob(
-				(blob) => {
-					setApplying(false);
-					if (blob) {
-						onApply(blob);
-					} else {
+				(blob) => {						setApplying(false);
+						if (blob) {
+							onApply(blob, visibility);
+						} else {
 						logger.error("Glance editor: canvas.toBlob returned null");
 					}
 				},
 				"image/jpeg",
-				0.95,
+				0.8,
 			);
 		} catch (e) {
 			setApplying(false);
@@ -188,7 +166,9 @@ export default function GlanceEditor({ file, onClose, onApply }: GlanceEditorPro
 								Edit Glance
 							</h3>
 							<p className="text-[11px] text-zinc-500 font-bold">
-								Drag to reposition · pinch/scroll to zoom · free crop from any side
+								{isVideo
+									? "Preview your glance — max 1 minute"
+									: "Auto-framed 9:16 — publish instantly"}
 							</p>
 						</div>
 						<button
@@ -198,114 +178,90 @@ export default function GlanceEditor({ file, onClose, onApply }: GlanceEditorPro
 						</button>
 					</div>
 
-					{/* Cropper — 9:16 story frame */}
+					{/* Preview — fixed 9:16 frame, center-cropped exactly as it will publish */}
 					<div className="relative flex-1 bg-black/90 flex items-center justify-center p-3 sm:p-4">
 						<div
-							ref={frameRef}
 							className="relative h-full max-h-[62vh] w-auto overflow-hidden rounded-2xl border border-white/10 shadow-2xl"
 							style={{ aspectRatio: "9 / 16" }}>
-							{imageSrc && (
-								<Cropper
-									image={imageSrc}
-									crop={crop}
-									zoom={zoom}
-									rotation={rotation}
-									aspect={aspect}
-									cropSize={freeCrop ? cropSize : undefined}
-									onCropChange={setCrop}
-									onCropComplete={handleCropComplete}
-									onZoomChange={setZoom}
-									onRotationChange={setRotation}
-									onCropSizeChange={freeCrop ? setCropSize : undefined}
-									objectFit="contain"
-								/>
-							)}
+							{imageSrc &&
+								(isVideo ? (
+									<video
+										src={imageSrc}
+										controls
+										autoPlay
+										muted
+										loop
+										playsInline
+										className="h-full w-full object-cover select-none"
+									/>
+								) : (
+									<img
+										src={imageSrc}
+										alt="Glance preview"
+										draggable={false}
+										className="h-full w-full object-cover select-none pointer-events-none"
+									/>
+								))}
 						</div>
 					</div>
 
-					{/* Mode selector: story preset vs free crop */}
+					{/* Glance format indicator — always a fixed 9:16 frame */}
 					<div className="flex items-center gap-2 border-t border-zinc-800 bg-zinc-900/60 p-3 relative z-10">
-						<button
-							type="button"
-							onClick={() => {
-								if (freeCrop) toggleFreeCrop();
-							}}
-							className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-all cursor-pointer ${
-								!freeCrop
-									? "bg-white text-black"
-									: "bg-zinc-900 border border-zinc-800 text-zinc-400 hover:bg-zinc-800"
-							}`}>
+						<span className="flex items-center gap-1.5 rounded-full bg-white text-black px-3 py-1.5 text-[11px] font-bold">
 							<Smartphone className="h-3.5 w-3.5" />
-							9:16 Story
-						</button>
-						<button
-							type="button"
-							onClick={toggleFreeCrop}
-							className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-all cursor-pointer ${
-								freeCrop
-									? "bg-white text-black"
-									: "bg-zinc-900 border border-zinc-800 text-zinc-400 hover:bg-zinc-800"
-							}`}>
-							<Crop className="h-3.5 w-3.5" />
-							Free Crop
-						</button>
+							{isVideo ? "Video Glance" : "9:16 Glance"}
+						</span>
 					</div>
 
 					{/* Controls Footer */}
-					<div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-zinc-800 bg-black p-4 sm:p-5 relative z-10">
-						<div className="flex flex-col w-full sm:w-1/2 gap-3">
-							{/* Zoom slider */}
-							<div className="flex items-center gap-3">
-								<ZoomIn className="h-4 w-4 text-zinc-500 shrink-0" />
-								<input
-									type="range"
-									value={zoom}
-									min={1}
-									max={3}
-									step={0.05}
-									aria-label="Zoom"
-									onChange={(e) => setZoom(Number(e.target.value))}
-									className="h-1.5 w-full appearance-none rounded-full bg-zinc-700 outline-none
-                    [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white"
-								/>
-							</div>
-							{/* Rotate slider */}
-							<div className="flex items-center gap-3">
-								<RotateCcw className="h-4 w-4 text-zinc-500 shrink-0" />
-								<input
-									type="range"
-									value={rotation}
-									min={0}
-									max={360}
-									step={1}
-									aria-label="Rotate"
-									onChange={(e) => setRotation(Number(e.target.value))}
-									className="h-1.5 w-full appearance-none rounded-full bg-zinc-700 outline-none
-                    [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white"
-								/>
-							</div>
-						</div>
-
-						<div className="flex items-center gap-3 w-full sm:w-auto">
+					<div className="flex items-center justify-between gap-3 border-t border-zinc-800 bg-black p-4 sm:p-5 relative z-10">
+						{/* Audience toggle — public by default, tap for close friends only */}
+						<div className="flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900/60 p-1">
 							<button
 								type="button"
-								onClick={onClose}
-								className="rounded-full border border-zinc-700 px-5 py-2.5 text-[12px] font-bold text-zinc-300 hover:bg-zinc-900 transition-all cursor-pointer">
-								Cancel
+								onClick={() => setVisibility("public")}
+								className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-all cursor-pointer ${
+									visibility === "public"
+										? "bg-white text-black"
+										: "text-zinc-400 hover:text-white"
+								}`}
+							>
+								<Globe className="h-3.5 w-3.5" />
+								Public
 							</button>
 							<button
-								onClick={createCrop}
-								disabled={applying}
-								className="flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-white px-6 py-2.5 text-[12px] md:text-sm font-bold text-black hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer">
-								{applying ? (
-									<Loader2 className="h-4 w-4 animate-spin" />
-								) : (
-									<>
-										<Check className="h-4 w-4" />
-										Post Glance
-									</>
-								)}
+								type="button"
+								onClick={() => setVisibility("closeFriends")}
+								className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-all cursor-pointer ${
+									visibility === "closeFriends"
+										? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
+										: "text-zinc-400 hover:text-white"
+								}`}
+							>
+								<Lock className="h-3.5 w-3.5" />
+								Close friends
 							</button>
+						</div>
+						<div className="flex items-center gap-3">
+						<button
+							type="button"
+							onClick={onClose}
+							className="rounded-full border border-zinc-700 px-5 py-2.5 text-[12px] font-bold text-zinc-300 hover:bg-zinc-900 transition-all cursor-pointer">
+							Cancel
+						</button>
+						<button
+							onClick={createCrop}
+							disabled={applying}
+							className="flex items-center justify-center gap-2 rounded-xl bg-white px-6 py-2.5 text-[12px] md:text-sm font-bold text-black hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer">
+							{applying ? (
+								<Loader2 className="h-4 w-4 animate-spin" />
+							) : (
+								<>
+									<Check className="h-4 w-4" />
+									Post Glance
+								</>
+							)}
+						</button>
 						</div>
 					</div>
 				</div>

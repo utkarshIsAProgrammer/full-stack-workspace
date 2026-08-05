@@ -15,19 +15,12 @@ import {
 	stopCacheRefreshTimer,
 } from "./apiCache";
 
-// Offline-first: Dexie structured storage + sync queue
+// Offline-first: Dexie structured storage + sync queue + bridge
+import { clearOfflineDB } from "./offlineDB";
 import {
-	cacheConversations,
-	cacheCommunityMessages,
-	cachePosts,
-	cacheNotifications,
-	cacheUsers,
-	getCachedConversationMessages,
-	getCachedCommunityMessages,
-	getCachedNotifications,
-	getCachedPosts,
-	clearOfflineDB,
-} from "./offlineDB";
+	cacheIntoDexie,
+	getOfflineFallback,
+} from "./dexieBridge";
 import {
 	addToSyncQueue,
 } from "./syncQueue";
@@ -323,8 +316,10 @@ const TAB_ENDPOINTS: Record<string, string[]> = {
 	communities: ["/api/communities?limit=50"],
 	profile: [] as string[],
 	settings: [] as string[],
-	saved: ["/api/saves"],
-	reposts: ["/api/reposts"],
+	// NOTE: the ?limit=10 query strings MUST match what Profile.tsx actually
+	// fetches — the client cache key includes the query string.
+	saved: ["/api/saves?limit=10"],
+	reposts: ["/api/reposts?limit=10"],
 	admin: ["/api/reports?status=pending&limit=20", "/api/admin/flags"],
 };
 
@@ -340,86 +335,8 @@ export function getEndpointsForTab(tabId: string): string[] {
  * Uses requestIdleCallback to avoid competing with critical rendering.
  * Fires-and-forgets — errors are silently ignored.
  */
-// ── Offline-first: Dexie helpers ─────────────────────────────────────────
-
-/**
- * Intelligently cache API response data into Dexie based on the URL pattern.
- * This enables offline structured querying (search, filter, sort) that
- * CacheStorage alone cannot provide.
- */
-async function cacheIntoDexie(url: string, data: unknown): Promise<void> {
-	try {
-		const path = url.split("?")[0];
-
-		if (path.includes("/api/posts") && Array.isArray(data)) {
-			await cachePosts(data as any);
-		} else if (path.includes("/api/notifications") && Array.isArray(data)) {
-			await cacheNotifications(data as any);
-		} else if (path.includes("/api/chats/conversations") && Array.isArray(data)) {
-			await cacheConversations(data as any);
-		} else if (path.includes("/api/communities/") && path.includes("/messages") && Array.isArray(data)) {
-			await cacheCommunityMessages(data as any);
-		} else if (path.includes("/api/users/") && !Array.isArray(data)) {
-			// Single user profile
-			const userData = (data as any)?.user || data;
-			if (userData?._id) {
-				await cacheUsers([userData]);
-			}
-		} else if (path.includes("/api/search/users") && Array.isArray(data)) {
-			await cacheUsers(data as any);
-		}
-	} catch {
-		// Non-critical — silently ignore Dexie cache errors
-	}
-}
-
-/**
- * When offline and CacheStorage has no hit, attempt to serve
- * structured data from Dexie IndexedDB.
- */
-async function getOfflineFallback(url: string): Promise<unknown> {
-	try {
-		const path = url.split("?")[0];
-		const urlObj = new URL(url, window.location.origin);
-		const limit = parseInt(urlObj.searchParams.get("limit") || "20", 10);
-
-		// Messages for a conversation
-		const msgMatch = path.match(
-			/\/api\/chats\/conversations\/([^/]+)\/messages/,
-		);
-		if (msgMatch) {
-			const convId = msgMatch[1];
-			const messages = await getCachedConversationMessages(convId, limit);
-			return { success: true, messages };
-		}
-
-		// Community messages
-		const commMsgMatch = path.match(
-			/\/api\/communities\/([^/]+)\/messages/,
-		);
-		if (commMsgMatch) {
-			const commId = commMsgMatch[1];
-			const messages = await getCachedCommunityMessages(commId, limit);
-			return { success: true, messages };
-		}
-
-		// Notifications
-		if (path.includes("/api/notifications")) {
-			const notifications = await getCachedNotifications("", limit);
-			return { success: true, notifications };
-		}
-
-		// Posts / Feed — only match list endpoints, not trending/hashtag/etc
-		if (/^\/api\/posts$|^\/api\/posts\?/.test(path)) {
-			const posts = await getCachedPosts(limit);
-			return { success: true, posts };
-		}
-
-		return null;
-	} catch {
-		return null;
-	}
-}
+// Offline-first Dexie helpers now live in ./dexieBridge (cacheIntoDexie,
+// getOfflineFallback) — imported above.
 
 export function warmCache(urls: string[], registerForRefresh = true): void {
 	if (urls.length === 0) return;

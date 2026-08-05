@@ -5,16 +5,16 @@ import type { Message } from "../types";
 
 // Helper to get a human-readable label for an attachment type
 const getAttachmentLabel = (attachments: any[]): string => {
-  if (!attachments || attachments.length === 0) return "📎 Attachment";
+  if (!attachments || attachments.length === 0) return "Attachment";
   const first = attachments[0];
   switch (first.type) {
-    case "image": return "📷 Image";
-    case "gif": return "🎬 GIF";
-    case "video": return "🎬 Video";
-    case "voice_note": return "🎵 Voice note";
-    case "file": return "📁 File";
-    case "sticker": return "🏷️ Sticker";
-    default: return "📎 Attachment";
+    case "image": return "Image";
+    case "gif": return "GIF";
+    case "video": return "Video";
+    case "voice_note": return "Voice note";
+    case "file": return "File";
+    case "sticker": return "Sticker";
+    default: return "Attachment";
   }
 };
 

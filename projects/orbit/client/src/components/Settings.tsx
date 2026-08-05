@@ -11,6 +11,12 @@ import {
 	Eye,
 	EyeOff,
 	X,
+	User,
+	UserCog,
+	Lock,
+	Users,
+	Mail,
+	Ban,
 } from "lucide-react";
 import { User as UserType } from "../types";
 import GlassCard from "./GlassCard";
@@ -25,6 +31,7 @@ import {
 	validatePasswordChange,
 	validateDeleteAccount,
 } from "../utils/validation";
+import { downscaleImageFile } from "../utils/imageCompression";
 
 interface SettingsProps {
 	user: UserType;
@@ -62,8 +69,10 @@ interface SettingsProps {
 		setFieldErrors({});
 	};
 
-	// Shared settings navigation config — rendered as a desktop sidebar and
-	// a single horizontal line for non-desktop devices (text only, slim).
+	// Shared settings navigation config — rendered as a desktop sidebar
+	// (icon + label) and as a single horizontal pill row on non-desktop
+	// devices (icons only, except the active section which also shows its
+	// label so it's always obvious what's selected).
 	const settingsNav: {
 		id:
 			| "profile"
@@ -74,14 +83,15 @@ interface SettingsProps {
 			| "invites"
 			| "logout";
 		label: string;
+		icon: React.ComponentType<{ className?: string }>;
 	}[] = [
-		{ id: "profile", label: "Profile" },
-		{ id: "password", label: "Password" },
-		{ id: "account", label: "Account" },
-		{ id: "close-friends", label: "Close Friends" },
-		{ id: "invites", label: "Invites" },
-		{ id: "blocked", label: "Blocked" },
-		{ id: "logout", label: "Log Out" },
+		{ id: "profile", label: "Profile", icon: User },
+		{ id: "password", label: "Password", icon: Lock },
+		{ id: "account", label: "Account", icon: UserCog },
+		{ id: "close-friends", label: "Close Friends", icon: Users },
+		{ id: "invites", label: "Invites", icon: Mail },
+		{ id: "blocked", label: "Blocked", icon: Ban },
+		{ id: "logout", label: "Log Out", icon: LogOut },
 	];
 
 	// Notify parent when edit profile tab opens/closes (for dock hiding)
@@ -191,12 +201,12 @@ interface SettingsProps {
 			formData.append("bio", bio.trim());
 
 			if (profilePicFile) {
-				formData.append("profilePic", profilePicFile);
+				formData.append("profilePic", await downscaleImageFile(profilePicFile));
 			} else if (!profilePicPreview && user.profilePic?.url) {
 				formData.append("removeProfilePic", "true");
 			}
 			if (bannerPicFile) {
-				formData.append("bannerImage", bannerPicFile);
+				formData.append("bannerImage", await downscaleImageFile(bannerPicFile));
 			} else if (!bannerPicPreview && user.bannerImage?.url) {
 				formData.append("removeBannerImage", "true");
 			}
@@ -339,13 +349,14 @@ interface SettingsProps {
 					<div className="flex flex-col gap-1 rounded-2xl border border-zinc-800/60 bg-zinc-950/55 backdrop-blur-xl p-1.5 shadow-xl">
 						{settingsNav.map((item) => {
 							const active = activeSubTab === item.id;
+							const ItemIcon = item.icon;
 							return (
 								<button
 									key={item.id}
 									type="button"
 									onClick={() => switchSubTab(item.id)}
 									aria-current={active ? "page" : undefined}
-									className={`flex w-full items-center rounded-xl px-3 py-2 text-[12.5px] font-semibold transition-all cursor-pointer ${
+									className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-[12.5px] font-semibold transition-all cursor-pointer ${
 										active
 											? item.id === "logout"
 												? "bg-red-600 text-white shadow-md"
@@ -354,6 +365,7 @@ interface SettingsProps {
 												? "text-red-500 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-500/10"
 												: "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900/60"
 									}`}>
+									<ItemIcon className="h-4 w-4 shrink-0" />
 									<span className="truncate">{item.label}</span>
 								</button>
 							);
@@ -362,22 +374,25 @@ interface SettingsProps {
 				</nav>
 
 				{/* Content column — tablet tab bar + cards + mobile dock */}
-				<div className="flex-1 min-w-0 w-full flex flex-col gap-6">
-
-					{/* Compact top nav — one horizontal line for all non-desktop
-					    devices (mobile + tablet). Text only, evenly spread, slim,
-					    no scroll. */}
+				<div className="flex-1 min-w-0 w-full flex flex-col gap-6">					{/* Compact top nav — one horizontal line for all non-desktop
+				    devices (mobile + tablet). Icons only, except the active section
+				    which also shows its label (so tapping a different icon reveals
+				    its name while the previous one collapses back to just the icon).
+				    Single line, no scroll, no wrap. */}
 					<div className="lg:hidden -mx-1 px-1">
 						<div className="flex items-center justify-between gap-0.5 rounded-full border border-zinc-800/60 bg-zinc-950/55 backdrop-blur-xl px-1 py-1 shadow-xl">
 							{settingsNav.map((item) => {
 								const active = activeSubTab === item.id;
+								const ItemIcon = item.icon;
 								return (
 									<button
 										key={item.id}
 										type="button"
 										onClick={() => switchSubTab(item.id)}
 										aria-current={active ? "page" : undefined}
-										className={`flex min-w-0 flex-1 items-center justify-center rounded-full px-2 py-1.5 text-[11px] font-semibold transition-all cursor-pointer sm:text-[12px] ${
+										aria-label={item.label}
+										title={item.label}
+										className={`flex min-w-0 flex-1 items-center justify-center gap-1 rounded-full px-1.5 py-1.5 text-[11px] font-semibold transition-all cursor-pointer sm:text-[12px] ${
 											active
 												? item.id === "logout"
 													? "bg-red-600 text-white shadow-sm"
@@ -386,7 +401,10 @@ interface SettingsProps {
 													? "text-red-500 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-500/10"
 													: "text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/60"
 										}`}>
-										<span className="w-full truncate text-center">{item.label}</span>
+										<ItemIcon className="h-4 w-4 shrink-0" />
+										{active && (
+											<span className="truncate whitespace-nowrap">{item.label}</span>
+										)}
 									</button>
 								);
 							})}
@@ -580,7 +598,7 @@ interface SettingsProps {
 									<label
 										htmlFor="settings-bio"
 										className="text-[12px] md:text-sm font-semibold text-zinc-300 pl-4">
-										Bio
+										About
 									</label>
 									<textarea
 										id="settings-bio"

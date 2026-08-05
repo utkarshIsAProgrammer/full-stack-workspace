@@ -43,6 +43,7 @@ import PollCard from "./PollCard";
 import { sharePostToExternal } from "../utils/shareToExternal";
 import { apiFetch } from "../utils/api";
 import { getCachedResponse } from "../utils/apiCache";
+import { downscaleImageFile } from "../utils/imageCompression";
 import { useCacheRefresh } from "../hooks/useCacheRefresh";
 import { logger } from "../utils/logger";
 import { validatePost, validateComment } from "../utils/validation";
@@ -241,6 +242,17 @@ export default function Feed({
     return () =>
       window.removeEventListener("closeComments", handleCloseComments);
   }, []);
+
+  // Escape closes the comments drawer — desktop users expect keyboard parity
+  // with every other modal/drawer in the app (backdrop click & X already work).
+  useEffect(() => {
+    if (!selectedPost) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectedPost(null);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [selectedPost]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [newCommentText, setNewCommentText] = useState("");
@@ -582,6 +594,11 @@ export default function Feed({
       setPosts((prev) =>
         prev.map((p) => (p._id === postId ? { ...p, commentsCount } : p)),
       );
+      // Keep the open comments drawer's post count live too (previously the
+      // drawer kept showing a stale count while the feed card updated).
+      setSelectedPost((prev) =>
+        prev && prev._id === postId ? { ...prev, commentsCount } : prev,
+      );
       // Read the latest selectedPost from the ref
       const currentSelectedPost = selectedPostRef.current;
       // If we have the full comment data and the comments drawer is open for this post, add the comment
@@ -717,6 +734,10 @@ export default function Feed({
       const { postId, commentsCount } = e.detail;
       setPosts((prev) =>
         prev.map((p) => (p._id === postId ? { ...p, commentsCount } : p)),
+      );
+      // Keep the open comments drawer's post count in sync with deletions
+      setSelectedPost((prev) =>
+        prev && prev._id === postId ? { ...prev, commentsCount } : prev,
       );
     };
     window.addEventListener(
@@ -1110,9 +1131,9 @@ export default function Feed({
     formData.append("title", title);
     formData.append("content", content);
     formData.append("visibility", postVisibility);
-    postImageFiles.forEach((file) => {
-      formData.append("images", file);
-    });
+    for (const file of postImageFiles) {
+      formData.append("images", await downscaleImageFile(file));
+    }
     if (postVideoFile) {
       formData.append("video", postVideoFile);
     }
@@ -2643,7 +2664,7 @@ export default function Feed({
                                   loading="lazy"
                                   src={post.image.url}
                                   alt="attachment media"
-                                  className="w-full object-cover aspect-4/5 max-h-200 transition-transform duration-500 group-hover/image:scale-[1.02]"
+                                  className="w-full h-auto max-h-200 transition-transform duration-500 group-hover/image:scale-[1.02]"
                                 />
                               </div>
                             ) : null}
@@ -3105,10 +3126,9 @@ export default function Feed({
                                 <img
                                   loading="lazy"
                                   src={post.image.url}
-                                  alt="attachment media"
-                                  onLoad={() => registerViewCount(post._id)}
-                                  className="w-full object-cover aspect-4/5 max-h-200 transition-transform duration-500 group-hover/image:scale-[1.02]"
-                                />
+                                  alt="attachment media"									  onLoad={() => registerViewCount(post._id)}
+									  className="w-full h-auto max-h-200 transition-transform duration-500 group-hover/image:scale-[1.02]"
+									/>
                               </PinchZoom>
                             </div>
                           ) : null}
@@ -3454,11 +3474,10 @@ export default function Feed({
           cropQueue.forEach((url) => URL.revokeObjectURL(url));
           if (currentCropSrc) URL.revokeObjectURL(currentCropSrc);
           setCurrentCropSrc("");
-        }}
-        imageSrc={currentCropSrc}
-        aspectRatio={undefined}
-        title="Crop Photo"
-        onCropComplete={handleCropComplete}
+        }}		imageSrc={currentCropSrc}
+		aspectRatio={1}
+		title="Crop Photo"
+		onCropComplete={handleCropComplete}
       />
 
       {/* Quote Repost Modal */}

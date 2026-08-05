@@ -13,7 +13,10 @@ import { Conversation } from "../models/conversation.model";
 import { CommunityMessage } from "../models/communityMessage.model";
 import { Community } from "../models/community.model";
 import { Message } from "../models/message.model";
+import Post from "../models/post.model";
+import Comment from "../models/comment.model";
 import Block from "../models/block.model";
+import { User } from "../models/user.model";
 
 // Extended socket type with auth properties
 type UserSocket = Socket & {
@@ -26,6 +29,61 @@ let io: SocketIOServer;
 
 // Track online users in-memory for reliable presence broadcasts
 const onlineUsers = new Set<string>();
+
+/**
+ * Returns the IDs of every community the user is a member of.
+ * Cached in Redis for 5 minutes so connect/disconnect (frequent on mobile)
+ * doesn't hit the DB every time. The join/leave controllers invalidate via
+ * a short TTL trade-off; join/leave also emit presence directly.
+ */
+const getUserCommunityIds = async (userId: string): Promise<string[]> => {
+  try {
+    const cached = await getCache<string[]>(`user:communities:${userId}`);
+    if (cached && cached.length > 0) return cached;
+    const communities = await Community.find({ "members.user": userId })
+      .select("_id")
+      .lean();
+    const ids = communities.map((c: any) => c._id.toString());
+    setCache(`user:communities:${userId}`, ids, 300).catch(() => {});
+    return ids;
+  } catch (error: any) {
+    logger.error("Failed to fetch user community IDs", {
+      error: error.message,
+      userId,
+    });
+    return [];
+  }
+};
+
+/**
+ * True when the user has an active socket connection (in-memory presence).
+ * Used by the community join/leave controllers to announce membership.
+ */
+export const isUserOnline = (userId: string): boolean => {
+  return onlineUsers.has(userId);
+};
+
+/**
+ * Broadcasts a member's online/offline status to a community room so every
+ * open community chat can show live green dots (like personal chat presence).
+ */
+export const emitCommunityPresence = (
+  communityId: string,
+  userId: string,
+  status: "online" | "offline",
+) => {
+  try {
+    getIO()
+      .to(`community:${communityId}`)
+      .emit("community:presence", { communityId, userId, status });
+  } catch (error: any) {
+    logger.error("Failed to emit community presence", {
+      error: error.message,
+      communityId,
+      userId,
+    });
+  }
+};
 
 // Track active community group calls (LiveKit) so other members can be
 // notified to join the same room. Map: communityId -> call info
@@ -316,6 +374,50 @@ export const initSocket = async (server: http.Server) => {
       // Fire immediately (no await — don't block connection for this)
       broadcastOnline();
 
+      // Broadcast presence to every community the user belongs to (live green
+      // dots for community chats), and sync the current online members back to
+      // the newly connected user so community chats show who's active without
+      // waiting for a community:join round-trip.
+      const broadcastCommunityPresence = async () => {
+        try {
+          const communityIds = await getUserCommunityIds(s.userId!);
+          if (communityIds.length === 0) return;
+          for (const cid of communityIds) {
+            io.to(`community:${cid}`).emit("community:presence", {
+              communityId: cid,
+              userId: s.userId,
+              status: "online",
+            });
+          }
+          // One query for all member lists, then send per-community sync
+          const communities = await Community.find({
+            _id: { $in: communityIds },
+          })
+            .select("members")
+            .lean();
+          for (const community of communities) {
+            const memberIds = ((community as any).members || [])
+              .map((m: any) => m.user?.toString())
+              .filter(Boolean) as string[];
+            const onlineIds = memberIds.filter(
+              (id: string) => id !== s.userId && onlineUsers.has(id),
+            );
+            if (onlineIds.length > 0) {
+              io.to(`user:${s.userId}`).emit("community:presence:sync", {
+                communityId: (community as any)._id.toString(),
+                onlineUserIds: onlineIds,
+              });
+            }
+          }
+        } catch (error: any) {
+          logger.error("Error broadcasting community online presence", {
+            error: error.message,
+            userId: s.userId,
+          });
+        }
+      };
+      broadcastCommunityPresence();
+
       // Redis: persist presence in background with short TTL (60s)
       setCache(`presence:user:${s.userId}`, "online", 60).catch(err => {
         logger.error("Failed to set user presence in Redis", { error: err instanceof Error ? err.message : String(err), userId: s.userId });
@@ -420,8 +522,15 @@ export const initSocket = async (server: http.Server) => {
             call.participants.delete(s.userId);
             if (call.participants.size === 0) {
               activeCommunityCalls.delete(communityId);
+              // Emit immediately (never delay the banner dismissal on a DB
+              // round-trip), then record the ended call in the background so
+              // the community list can show "Voice call ended".
               io.to(`community:${communityId}`).emit("community:call-ended", {
                 communityId,
+                type: call.type,
+              });
+              getCallActor(call.startedBy).then((actor) => {
+                void recordCommunityCallAction(communityId, call.type, actor, "ended");
               });
               logger.info("Community group call ended (participant disconnected)", { communityId });
             }
@@ -449,6 +558,27 @@ export const initSocket = async (server: http.Server) => {
         };
 
         broadcastOffline();
+
+        // Notify every community the user belongs to that they went offline
+        // (removes their green dot from open community chats in realtime).
+        const broadcastCommunityOffline = async () => {
+          try {
+            const communityIds = await getUserCommunityIds(s.userId!);
+            for (const cid of communityIds) {
+              io.to(`community:${cid}`).emit("community:presence", {
+                communityId: cid,
+                userId: s.userId,
+                status: "offline",
+              });
+            }
+          } catch (error: any) {
+            logger.error("Error broadcasting community offline presence", {
+              error: error.message,
+              userId: s.userId,
+            });
+          }
+        };
+        broadcastCommunityOffline();
 
         // Redis: clear presence in background (failure is non-critical)
         deleteCache(`presence:user:${s.userId}`).catch(err => {
@@ -562,6 +692,50 @@ export const initSocket = async (server: http.Server) => {
       }
     };
 
+    // Builds a lightweight actor snapshot (name + username) for a user so
+    // the community list preview can render "Name started a voice call".
+    const getCallActor = async (userId: string) => {
+      try {
+        const user = await User.findById(userId)
+          .select("fullName username")
+          .lean();
+        return {
+          _id: userId,
+          fullName: user?.fullName || "",
+          username: user?.username || "",
+        };
+      } catch {
+        return { _id: userId, fullName: "", username: "" };
+      }
+    };
+
+    // Records a call start/end as the community's lastAction so the list
+    // preview can show "Name started a voice call" / "Voice call ended".
+    const recordCommunityCallAction = async (
+      communityId: string,
+      type: "audio" | "video",
+      actor: { _id: string; fullName: string; username: string },
+      status: "started" | "ended",
+    ) => {
+      try {
+        await Community.findByIdAndUpdate(communityId, {
+          $set: {
+            lastAction: {
+              type: "call",
+              callType: type,
+              callStatus: status,
+              actor,
+              createdAt: new Date(),
+            },
+          },
+        });
+      } catch (err: any) {
+        logger.error("Failed to record community call lastAction", {
+          error: err.message,
+        });
+      }
+    };
+
     // Clears the call record if the caller is (or has become) the last
     // participant. Broadcasts community:call-ended so all members hide the
     // join banner. Safe to call for any participant, not just the starter.
@@ -572,8 +746,15 @@ export const initSocket = async (server: http.Server) => {
       // Only clear when truly empty (or the record has gone stale)
       if (call.participants.size === 0) {
         activeCommunityCalls.delete(communityId);
+        // Emit immediately (never delay the banner dismissal on a DB
+        // round-trip), then record the ended call in the background so the
+        // community list can show "Voice call ended".
         io.to(`community:${communityId}`).emit("community:call-ended", {
           communityId,
+          type: call.type,
+        });
+        getCallActor(call.startedBy).then((actor) => {
+          void recordCommunityCallAction(communityId, call.type, actor, "ended");
         });
         logger.info("Community group call ended (last participant left)", { communityId });
       }
@@ -610,12 +791,21 @@ export const initSocket = async (server: http.Server) => {
               type: data.type,
               startedBy: s.userId,
             });
+            // Record the call start so the list preview can show who started it
+            const actor = await getCallActor(s.userId);
+            await recordCommunityCallAction(
+              data.communityId,
+              data.type,
+              actor,
+              "started",
+            );
             // Notify everyone in the community room that a call is live
             io.to(`community:${data.communityId}`).emit("community:call-started", {
               communityId: data.communityId,
               roomName: data.roomName,
               type: data.type,
               startedBy: s.userId,
+              actor,
             });
           } else {
             // Existing call — just add this user as a participant.
@@ -636,16 +826,18 @@ export const initSocket = async (server: http.Server) => {
     });
 
     // A member wants to know if there's an active call they can join
-    socket.on("community:call-status", ({ communityId }) => {
+    socket.on("community:call-status", async ({ communityId }) => {
       if (!s.userId || !communityId) return;
       pruneStaleCommunityCalls();
       const call = activeCommunityCalls.get(communityId);
       if (call) {
+        const actor = await getCallActor(call.startedBy);
         io.to(`user:${s.userId}`).emit("community:call-started", {
           communityId,
           roomName: call.roomName,
           type: call.type,
           startedBy: call.startedBy,
+          actor,
         });
       }
     });
@@ -834,40 +1026,124 @@ export const emitPostUnrepost = (postId: string, userId: string, repostsCount: n
   }
 };
 
+/**
+ * Resolves the set of personal rooms that may see a given post in realtime.
+ * - public posts → everyone (room omitted → global broadcast)
+ * - closeFriends posts → only the author + their close friends
+ * Returns null when no rooms apply (post missing → caller should drop).
+ */
+const resolvePostAudienceRooms = async (post: any): Promise<string[] | null> => {
+  if (!post) return null;
+  if (post.visibility !== "closeFriends") return [];
+  const authorId = post.author?._id?.toString() || post.author?.toString();
+  if (!authorId) return null;
+  const author = await User.findById(authorId).select("closeFriends").lean();
+  const rooms = new Set<string>([`user:${authorId}`]);
+  (author?.closeFriends || []).forEach((id: any) => rooms.add(`user:${id.toString()}`));
+  return Array.from(rooms);
+};
+
+/**
+ * Routes an event to the audience of a post (by postId). closeFriends posts
+ * never leak to non-close-friends in realtime.
+ */
+const emitToPostAudience = (event: string, postId: string, data: any) => {
+  void (async () => {
+    try {
+      const post = await Post.findById(postId).select("author visibility").lean();
+      const rooms = await resolvePostAudienceRooms(post);
+      if (rooms === null) return;
+      if (rooms.length === 0) {
+        batchEmit(event, data);
+      } else {
+        rooms.forEach((room) => batchEmit(event, data, room));
+      }
+    } catch (error: any) {
+      logger.error(`Failed to route ${event} to post audience`, { error: error.message, postId });
+    }
+  })();
+};
+
+/**
+ * Routes an event to the audience of the post that owns a comment.
+ */
+const emitToCommentAudience = (event: string, commentId: string, data: any) => {
+  void (async () => {
+    try {
+      const comment = await Comment.findById(commentId).select("post").lean();
+      const postId = comment?.post?.toString();
+      if (!postId) {
+        batchEmit(event, data);
+        return;
+      }
+      await emitToPostAudience(event, postId, data);
+    } catch (error: any) {
+      logger.error(`Failed to route ${event} to comment audience`, { error: error.message, commentId });
+    }
+  })();
+};
+
+/**
+ * Invokes emitFn for every personal room allowed to see a post, or with an
+ * empty room list for public posts (global broadcast).
+ */
+const routeToPostRooms = (post: any, emitFn: (room: string) => void) => {
+  void (async () => {
+    try {
+      const rooms = await resolvePostAudienceRooms(post);
+      if (rooms === null) return;
+      if (rooms.length === 0) {
+        emitFn("");
+      } else {
+        rooms.forEach(emitFn);
+      }
+    } catch (error: any) {
+      logger.error("Failed to route post to rooms", { error: (error as Error).message });
+    }
+  })();
+};
+
 export const emitPostComment = (postId: string, comment: any, userId: string, commentsCount: number) => {
-  try {
-    batchEmit("post:comment", { postId, comment, userId, commentsCount });
-  } catch (error: any) {
-    logger.error("Failed to emit post:comment", { error: error.message });
-  }
+  emitToPostAudience("post:comment", postId, { postId, comment, userId, commentsCount });
 };
 
 export const emitCommentReply = (postId: string, commentId: string, reply: any, userId: string, commentsCount: number, repliesCount: number) => {
-  try {
-    batchEmit("comment:reply", { postId, commentId, reply, userId, commentsCount, repliesCount });
-  } catch (error: any) {
-    logger.error("Failed to emit comment:reply", { error: error.message });
-  }
+  emitToPostAudience("comment:reply", postId, { postId, commentId, reply, userId, commentsCount, repliesCount });
 };
 
 export const emitCommentLike = (commentId: string, userId: string, likesCount: number) => {
-  try {
-    batchEmit("comment:like", { commentId, userId, likesCount });
-  } catch (error: any) {
-    logger.error("Failed to emit comment:like", { error: error.message });
-  }
+  emitToCommentAudience("comment:like", commentId, { commentId, userId, likesCount });
 };
 
 export const emitCommentUnlike = (commentId: string, userId: string, likesCount: number) => {
-  try {
-    batchEmit("comment:unlike", { commentId, userId, likesCount });
-  } catch (error: any) {
-    logger.error("Failed to emit comment:unlike", { error: error.message });
-  }
+  emitToCommentAudience("comment:unlike", commentId, { commentId, userId, likesCount });
 };
 
 export const emitPostCreated = (post: any) => {
   try {
+    // closeFriends posts must NEVER reach non-close-friends in realtime — the
+    // GET feed filters them, but the socket broadcast used to leak the whole
+    // post payload to every connected client. Target only the author + their
+    // close friends' personal rooms instead of broadcasting to everyone.
+    if (post?.visibility === "closeFriends") {
+      void (async () => {
+        try {
+          const authorId = post.author?._id?.toString() || post.author?.toString();
+          if (!authorId) return;
+          const author = await User.findById(authorId).select("closeFriends").lean();
+          const recipientIds = new Set<string>([authorId]);
+          (author?.closeFriends || []).forEach((id: any) =>
+            recipientIds.add(id.toString()),
+          );
+          recipientIds.forEach((rid) => {
+            batchEmit("post:created", post, `user:${rid}`);
+          });
+        } catch (err) {
+          logger.error("Failed to route closeFriends post:created", { error: (err as Error).message });
+        }
+      })();
+      return;
+    }
     batchEmit("post:created", post);
   } catch (error: any) {
     logger.error("Failed to emit post:created", { error: error.message });
@@ -884,6 +1160,10 @@ export const emitPostDeleted = (postId: string) => {
 
 export const emitPostUpdated = (post: any) => {
   try {
+    if (post?.visibility === "closeFriends") {
+      void routeToPostRooms(post, (rid) => batchEmit("post:updated", post, `user:${rid}`));
+      return;
+    }
     batchEmit("post:updated", post);
   } catch (error: any) {
     logger.error("Failed to emit post:updated", { error: error.message });
@@ -891,27 +1171,24 @@ export const emitPostUpdated = (post: any) => {
 };
 
 export const emitPollUpdated = (postId: string, poll: any) => {
-  try {
-    batchEmit("poll:updated", { postId, poll });
-  } catch (error: any) {
-    logger.error("Failed to emit poll:updated", { error: error.message });
-  }
+  emitToPostAudience("poll:updated", postId, { postId, poll });
 };
 
 export const emitCommentUpdated = (comment: any) => {
-  try {
-    batchEmit("comment:updated", comment);
-  } catch (error: any) {
-    logger.error("Failed to emit comment:updated", { error: error.message });
+  const postId = comment?.post?.toString() || comment?.postId;
+  if (postId) {
+    emitToPostAudience("comment:updated", postId, comment);
+  } else {
+    try {
+      batchEmit("comment:updated", comment);
+    } catch (error: any) {
+      logger.error("Failed to emit comment:updated", { error: error.message });
+    }
   }
 };
 
 export const emitCommentDeleted = (postId: string, commentId: string, commentsCount: number) => {
-  try {
-    batchEmit("comment:deleted", { postId, commentId, commentsCount });
-  } catch (error: any) {
-    logger.error("Failed to emit comment:deleted", { error: error.message });
-  }
+  emitToPostAudience("comment:deleted", postId, { postId, commentId, commentsCount });
 };
 
 export const emitFollowUser = (targetUserId: string, followerId: string, followersCount: number) => {

@@ -57,11 +57,27 @@ class OrbitDB extends Dexie {
 			communityMessages: "_id, community, [community+createdAt], createdAt",
 			// Posts: primary key _id, index on createdAt for feed sorting
 			posts: "_id, createdAt, author._id",
-			// Notifications: primary key _id, index on recipient+createdAt
-			notifications: "_id, recipient, [recipient+createdAt]",
+			// Notifications: primary key _id, index on recipient+createdAt.
+			// NOTE: a standalone createdAt index is REQUIRED — pruneOldData() and
+			// the offline fallback both do orderBy("createdAt") / where("createdAt").
+			// Without it Dexie throws "KeyPath createdAt not indexed" at runtime.
+			notifications: "_id, recipient, createdAt, [recipient+createdAt]",
 			// Users: primary key _id, index on username for search
 			users: "_id, username",
 			// Sync queue: auto-increment primary key, index on createdAt
+			syncQueue: "++id, createdAt, retryCount",
+		});
+
+		// v2 — added the standalone createdAt index on notifications (v1 schema
+		// lacked it, which made offline notification queries throw). Dexie
+		// auto-migrates existing v1 databases; no data-loss upgrade fn needed.
+		this.version(2).stores({
+			conversations: "_id, updatedAt",
+			messages: "_id, conversation, [conversation+createdAt], createdAt",
+			communityMessages: "_id, community, [community+createdAt], createdAt",
+			posts: "_id, createdAt, author._id",
+			notifications: "_id, recipient, createdAt, [recipient+createdAt]",
+			users: "_id, username",
 			syncQueue: "++id, createdAt, retryCount",
 		});
 	}
@@ -178,6 +194,56 @@ export async function getCachedNotifications(
 /** Get cached posts, newest first. */
 export async function getCachedPosts(limit = 20): Promise<Post[]> {
 	return db.posts.orderBy("createdAt").reverse().limit(limit).toArray();
+}
+
+/** Get a single cached post by id. */
+export async function getCachedSinglePost(
+	postId: string,
+): Promise<Post | undefined> {
+	return db.posts.get(postId);
+}
+
+/** Get cached conversations, most recently active first. */
+export async function getCachedConversations(
+	limit = 50,
+): Promise<Conversation[]> {
+	return db.conversations
+		.orderBy("updatedAt")
+		.reverse()
+		.limit(limit)
+		.toArray();
+}
+
+/** Get a cached user by username (unique index). */
+export async function getCachedUserByUsername(
+	username: string,
+): Promise<User | undefined> {
+	return db.users.where("username").equals(username).first();
+}
+
+/**
+ * Lightweight full-text-ish search over cached post titles/content.
+ * Scans at most the newest 200 cached posts so it stays fast even
+ * when the local DB has grown large.
+ */
+export async function searchCachedPosts(
+	query: string,
+	limit = 20,
+): Promise<Post[]> {
+	const q = query.toLowerCase().trim();
+	if (!q) return [];
+	const recent = await db.posts
+		.orderBy("createdAt")
+		.reverse()
+		.limit(200)
+		.toArray();
+	return recent
+		.filter(
+			(p) =>
+				(p.title || "").toLowerCase().includes(q) ||
+				(p.content || "").toLowerCase().includes(q),
+		)
+		.slice(0, limit);
 }
 
 // ── Clear helpers ─────────────────────────────────────────────────────────

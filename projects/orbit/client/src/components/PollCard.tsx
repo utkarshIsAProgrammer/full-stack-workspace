@@ -110,8 +110,8 @@ export default function PollCard({
 						onClick={() => handleVote(idx)}
 						className={`relative w-full overflow-hidden rounded-xl border px-3 py-2.5 text-left transition-all ${
 							locked
-								? isMyVote
-									? "border-amber-400/70 bg-gradient-to-br from-white via-amber-50 to-amber-200/50 text-amber-950 shadow-[0_0_16px_-2px_rgba(251,191,36,0.28),inset_0_1px_0_rgba(255,255,255,0.9)] ring-1 ring-inset ring-amber-400/40"
+							? isMyVote
+								? "border-amber-100/70 bg-gradient-to-br from-white via-white to-amber-50/40 text-zinc-900 shadow-[0_0_10px_-6px_rgba(251,191,36,0.18),inset_0_1px_0_rgba(255,255,255,0.95)] ring-1 ring-inset ring-amber-200/25"
 									: "border-zinc-700/40 bg-zinc-900/30"
 								: "border-zinc-700/40 bg-zinc-900/30 hover:border-amber-400/50 hover:bg-zinc-800/50 active:scale-[0.99]"
 						} ${locked ? "cursor-default" : "cursor-pointer"}`}
@@ -120,10 +120,10 @@ export default function PollCard({
 						{showResults && pct > 0 && (
 							<span
 								className={`absolute inset-y-0 left-0 rounded-l-xl transition-all duration-500 ${
-									isMyVote
-										? "bg-gradient-to-r from-amber-300/40 to-amber-400/30"
+								isMyVote
+									? "bg-gradient-to-r from-amber-200/25 to-amber-300/15"
 										: isLeading
-											? "bg-amber-400/15"
+											? "bg-amber-400/10"
 											: "bg-zinc-700/20"
 								}`}
 								style={{ width: `${Math.max(pct, 3)}%` }}
@@ -132,7 +132,7 @@ export default function PollCard({
 						<span className="relative flex items-center justify-between gap-2">
 							<span className={`flex items-center gap-2 text-sm min-w-0 ${isMyVote ? "font-extrabold text-amber-950" : "font-semibold text-zinc-200"}`}>
 								{isMyVote && (
-									<Check className="h-4 w-4 shrink-0 text-amber-500 drop-shadow-[0_0_4px_rgba(251,191,36,0.35)]" strokeWidth={3} />
+									<Check className="h-4 w-4 shrink-0 text-amber-700/90 drop-shadow-[0_0_2px_rgba(251,191,36,0.2)]" strokeWidth={3} />
 								)}
 								<span className="truncate">{opt.text}</span>
 							</span>

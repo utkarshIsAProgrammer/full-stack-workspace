@@ -10,24 +10,19 @@ import {
 	Settings,
 	Hash,
 } from "lucide-react";
-import { User as UserType } from "../types";
-import { warmCache, getEndpointsForTab } from "../utils/api";
-
-interface DockItem {
-	id: string;
-	label: string;
-	icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
-	badge?: number;
-	specialPic?: boolean;
-	// Some icons (Hash, User, Settings) have thinner strokes or more empty space —
-	// bump strokeWidth to make them visually match the others.
-	strokeWidth?: number;
-}
+import { warmCache, getEndpointsForTab } from "../utils/api";	interface DockItem {
+		id: string;
+		label: string;
+		icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+		badge?: number;
+		// Some icons (Hash, User, Settings) have thinner strokes or more empty space —
+		// bump strokeWidth to make them visually match the others.
+		strokeWidth?: number;
+	}
 
 interface DockProps {
 	currentTab: string;
 	setTab: (tab: string) => void;
-	user: UserType | null;
 	badgeCount: number;
 	chatBadgeCount: number;
 }
@@ -37,18 +32,11 @@ interface DockProps {
 export default React.memo(function Dock({
 	currentTab,
 	setTab,
-	user,
 	badgeCount,
 	chatBadgeCount,
 }: Omit<DockProps, never>) {
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
-	const [profilePicError, setProfilePicError] = useState(false);
-
-	// Reset profile pic error state when user changes
-	useEffect(() => {
-		setProfilePicError(false);
-	}, [user?._id]);
 
 	// Detect mobile keyboard via visualViewport height drop
 	useEffect(() => {
@@ -86,7 +74,7 @@ export default React.memo(function Dock({
 			badge: chatBadgeCount,
 		},
 		{ id: "communities", label: "Communities", icon: Hash, strokeWidth: 3 },
-		{ id: "profile", label: "Profile", icon: User, specialPic: true, strokeWidth: 2.5 },
+		{ id: "profile", label: "Profile", icon: User, strokeWidth: 2.5 },
 		{ id: "settings", label: "Settings", icon: Settings, strokeWidth: 2.5 },
 	];
 
@@ -113,7 +101,7 @@ export default React.memo(function Dock({
 				}}
 				onMouseLeave={() => setHoveredIndex(null)}
 				aria-label={item.label}
-				className="group relative flex h-10 w-10 sm:h-11 sm:w-11 items-center justify-center rounded-xl sm:rounded-2xl text-zinc-500 dark:text-zinc-500 transition-colors">
+				className="group relative flex h-10 w-10 min-[400px]:h-11 min-[400px]:w-11 min-[500px]:h-12 min-[500px]:w-12 items-center justify-center rounded-xl sm:rounded-2xl text-zinc-500 dark:text-zinc-500 transition-colors">
 				{/* Active indicator glow */}
 				{isActive && (
 					<motion.div
@@ -133,30 +121,17 @@ export default React.memo(function Dock({
 					transition={{ type: "spring", stiffness: 300, damping: 18 }}
 					whileTap={{ scale: 0.85 }}
 					className="relative z-10 flex items-center justify-center gpu-accelerated">
-					{item.specialPic && user?.profilePic?.url && !profilePicError ? (
-						<img
-							loading="lazy"
-							src={user.profilePic.url}
-							alt={user.fullName}
-							onError={() => setProfilePicError(true)}
-							// NOTE: intentionally NO onClick here — the parent button already
-							// navigates to the Profile tab. Previously this opened the
-							// fullscreen image preview, which was wrong for a dock icon.
-							className={`h-6.5 w-6.5 sm:h-7 sm:w-7 aspect-square rounded-full object-cover border ${isActive ? "border-white" : "border-zinc-700"} shadow-sm select-none`}
-						/>
-					) : (
-						<Icon
-							strokeWidth={item.strokeWidth || 2}
-							className={`h-5 w-5 sm:h-5.5 sm:w-5.5 ${isActive ? "text-black dark:text-white" : "text-zinc-400 dark:text-zinc-450"}`}
-						/>
-					)}
+					<Icon
+						strokeWidth={item.strokeWidth || 2}
+						className={`h-5 w-5 min-[400px]:h-5.5 min-[400px]:w-5.5 min-[500px]:h-6 min-[500px]:w-6 ${isActive ? "text-black dark:text-white" : "text-zinc-400 dark:text-zinc-450"}`}
+					/>
 
 					{/* Badge */}
 					{item.badge && item.badge > 0 ? (
 						<motion.span
 							initial={{ scale: 0 }}
 							animate={{ scale: 1 }}
-							className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-0.5 text-[7px] font-black text-white shadow-md border-2 border-white dark:border-zinc-900">
+							className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 min-[500px]:h-4 min-[500px]:min-w-4 min-[500px]:text-[8px] items-center justify-center rounded-full bg-red-500 px-0.5 text-[7px] font-black text-white shadow-md border-2 border-white dark:border-zinc-900">
 							{item.badge > 99 ? "99+" : item.badge}
 						</motion.span>
 					) : null}
@@ -174,12 +149,12 @@ export default React.memo(function Dock({
 	return (
 		<>
 			<div
-				className={`fixed left-1/2 z-[120] w-[calc(100%-0.3rem)] max-w-[28rem] -translate-x-1/2 px-0.5 sm:max-w-[32rem] lg:max-w-[36rem] sm:hidden dock-force-hide transition-all duration-200 ${isKeyboardOpen ? "bottom-1" : "bottom-1.5 sm:bottom-2.5"}`}
+				className={`fixed left-1/2 z-[120] w-[calc(100%-0.3rem)] max-w-[28rem] -translate-x-1/2 px-0.5 min-[480px]:max-w-[31rem] min-[560px]:max-w-[33rem] sm:hidden dock-force-hide transition-all duration-200 ${isKeyboardOpen ? "bottom-1" : "bottom-1.5 sm:bottom-2.5"}`}
 				style={{
 					bottom: `calc(${isKeyboardOpen ? "0.2rem" : "0.3rem"} + env(safe-area-inset-bottom, 0px))`,
 				}}>
 				<div
-					className={`relative flex items-center justify-between rounded-3xl sm:rounded-4xl border border-white/20 dark:border-zinc-700/60 bg-white/70 dark:bg-zinc-900/85 backdrop-blur-xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.45)] transition-all duration-200 ${isKeyboardOpen ? "px-2 py-1.5 gap-0.5" : "px-2.5 py-3.5 gap-0.5 sm:gap-1.5 sm:px-3"}`}>
+					className={`relative flex items-center justify-between rounded-3xl sm:rounded-4xl border border-white/20 dark:border-zinc-700/60 bg-white/70 dark:bg-zinc-900/85 backdrop-blur-xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.45)] transition-all duration-200 ${isKeyboardOpen ? "px-2 py-1.5 gap-0.5" : "px-2.5 py-3.5 gap-0.5 min-[400px]:gap-1 min-[500px]:gap-1.5 min-[400px]:px-3 min-[500px]:py-4"}`}>
 
 
 					{leftItems.map((item, i) => renderDockItem(item, i))}
@@ -187,14 +162,14 @@ export default React.memo(function Dock({
 					{/* Center: Create Post button — same size as other dock items, no hover animation */}
 					<button
 						onClick={() => setTab("compose")}
-						className={`group relative flex h-10 w-10 sm:h-11 sm:w-11 items-center justify-center rounded-full gpu-accelerated ${
+						className={`group relative flex h-10 w-10 min-[400px]:h-11 min-[400px]:w-11 min-[500px]:h-12 min-[500px]:w-12 items-center justify-center rounded-full gpu-accelerated ${
 							currentTab === "compose"
 								? "bg-linear-to-br from-zinc-700 to-black dark:from-white dark:to-zinc-300 shadow-xl shadow-black/40 dark:shadow-white/30 border border-white/40 dark:border-zinc-800"
 								: "bg-linear-to-br from-zinc-800 to-black dark:from-white dark:to-zinc-200 shadow-xl shadow-black/30 dark:shadow-white/20 border border-zinc-700 dark:border-zinc-200"
 						} transition-all duration-200 hover:shadow-2xl cursor-pointer shrink-0 z-20`}
 						title="New Post">
 						<Plus
-							className={`h-4.5 w-4.5 sm:h-6 sm:w-6 gpu-accelerated ${
+							className={`h-4.5 w-4.5 min-[400px]:h-5 min-[400px]:w-5 min-[500px]:h-6 min-[500px]:w-6 gpu-accelerated ${
 								currentTab === "compose"
 									? "text-white scale-110 dark:text-black"
 									: "text-white dark:text-black"

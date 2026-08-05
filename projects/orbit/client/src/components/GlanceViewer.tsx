@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Eye, Heart, MessageSquare, Loader2, Trash2, MoreHorizontal, Send, Share2 } from "lucide-react";
-import type { Glance, User } from "../types";
+import { X, Eye, Heart, MessageSquare, Loader2, Trash2, MoreHorizontal, Send, Share2, Search } from "lucide-react";
+import type { Glance, User, Conversation } from "../types";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 
@@ -32,6 +32,10 @@ export default function GlanceViewer({
 	const [isPaused, setIsPaused] = useState(false);
 	const progressRef = useRef(0);
 
+	// Hoisted to the top so every effect below (frame measurement, media sync,
+	// progress) can reference it without a Temporal Dead Zone error.
+	const currentGlance = glimpses[currentIndex];
+
 	// ── Instagram-style features ──
 	const [slideDirection, setSlideDirection] = useState<"left" | "right">("right");
 	// Initialize reactedByMe from the initial glance's reaction data (avoids flash on mount)
@@ -50,9 +54,51 @@ export default function GlanceViewer({
 	const [showReplyInput, setShowReplyInput] = useState(false);
 	const [replyText, setReplyText] = useState("");
 
+	// ── Share-to-chat modal (people picker, mirroring the chat forward UX) ──
+	const [showShareModal, setShowShareModal] = useState(false);
+	const [shareConversations, setShareConversations] = useState<Conversation[]>([]);
+	const [selectedShareConvIds, setSelectedShareConvIds] = useState<string[]>([]);
+	const [shareSearch, setShareSearch] = useState("");
+	const [isSharing, setIsSharing] = useState(false);
+
 	// ── Smart media fit: fill the 9:16 frame exactly when the content matches;
 	// center it (no crop) when the content is smaller than the story canvas. ──
 	const [mediaFit, setMediaFit] = useState<"cover" | "contain">("cover");
+
+	// ── Broken-media guard ──
+	// Glances created by an older editor build can be degenerate 1×2-pixel
+	// images (or the CDN URL can fail). A broken image that still LOADS (tiny
+	// dimensions) doesn't fire onError, so we also check naturalWidth on load.
+	// When the media is unusable we show a graceful fallback instead of the
+	// confusing black frame.
+	const [mediaUnavailable, setMediaUnavailable] = useState(false);
+
+	// ── Media load resilience ──
+	// A freshly uploaded Cloudinary image can transiently 404 on the very
+	// first request (CDN propagation). Instead of showing a black frame until
+	// the user reloads, show a loading state and auto-retry a few times with
+	// a cache-busting query param before giving up.
+	const [mediaLoading, setMediaLoading] = useState(true);
+	const [mediaSrcKey, setMediaSrcKey] = useState(0);
+	const mediaErrorCountRef = useRef(0);
+
+	const resetMediaLoadState = () => {
+		setMediaLoading(true);
+		setMediaUnavailable(false);
+		mediaErrorCountRef.current = 0;
+	};
+
+	const handleMediaError = () => {
+		mediaErrorCountRef.current += 1;
+		if (mediaErrorCountRef.current <= 3) {
+			// Transient failure — retry with a cache-busting query param
+			setMediaLoading(true);
+			setMediaSrcKey((k) => k + 1);
+		} else {
+			setMediaUnavailable(true);
+			setMediaLoading(false);
+		}
+	};
 
 	const computeMediaFit = (w: number, h: number) => {
 		if (!w || !h) return;
@@ -65,11 +111,22 @@ export default function GlanceViewer({
 
 	const handleImgLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
 		const img = e.currentTarget;
+		setMediaLoading(false);
+		// Degenerate decode (1×2) or missing → treat as unavailable
+		if (img.naturalWidth < 50 || img.naturalHeight < 50) {
+			setMediaUnavailable(true);
+			return;
+		}
 		computeMediaFit(img.naturalWidth, img.naturalHeight);
 	};
 
 	const handleVideoMeta = (e: React.SyntheticEvent<HTMLVideoElement>) => {
 		const v = e.currentTarget;
+		setMediaLoading(false);
+		if (v.videoWidth < 50 || v.videoHeight < 50) {
+			setMediaUnavailable(true);
+			return;
+		}
 		computeMediaFit(v.videoWidth, v.videoHeight);
 	};
 	const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -77,11 +134,69 @@ export default function GlanceViewer({
 	const menuRef = useRef<HTMLDivElement>(null);
 	const replyInputRef = useRef<HTMLInputElement>(null);
 
+	// ── Story-frame sizing ──
+	// The frame must never collapse to 0×0. A percentage height (`height: 100%`)
+	// fails here because its flex parent's height is content-driven (the column
+	// only had `max-h-[90vh]`, which is NOT a definite height), so the media
+	// rendered at zero size — a black screen behind the Like/Reply buttons.
+	// We measure the available area in pixels and apply an explicit height.
+	const frameAreaRef = useRef<HTMLDivElement>(null);
+	const [frameHeight, setFrameHeight] = useState(0);
+
+	const measureFrameArea = useCallback(() => {
+		const el = frameAreaRef.current;
+		if (!el) return;
+		// Subtract the area's vertical padding (py-3 = 12px top + 12px bottom)
+		setFrameHeight(Math.max(0, el.clientHeight - 24));
+	}, []);
+
+	useEffect(() => {
+		measureFrameArea();
+		const ro = new ResizeObserver(measureFrameArea);
+		if (frameAreaRef.current) ro.observe(frameAreaRef.current);
+		window.addEventListener("resize", measureFrameArea);
+		return () => {
+			ro.disconnect();
+			window.removeEventListener("resize", measureFrameArea);
+		};
+	}, [measureFrameArea, currentGlance?._id, showViewersList, showReplyInput, showShareModal]);
+
 	// ── Local reactions (optimistically update for real-time heart in viewers list) ──
 	const [localReactions, setLocalReactions] = useState<Required<Glance>["reactions"]>([]);
 
-	// Hoisted before the sync useEffect to avoid Temporal Dead Zone
-	const currentGlance = glimpses[currentIndex];
+	// ── Lazy glimpse detail (populated viewers) ──
+	// The feed deliberately ships raw viewer ids (fast); the full "Viewed by"
+	// names are fetched lazily here via GET /api/glimpses/:id and merged in.
+	const [glimpseDetail, setGlimpseDetail] = useState<Glance | null>(null);
+	useEffect(() => {
+		if (!currentGlance) return;
+		let cancelled = false;
+		// Reset immediately so the previous glimpse's viewers are never shown
+		// for the new glimpse while its detail loads.
+		setGlimpseDetail(null);
+		(async () => {
+			try {
+				const res = await apiFetch(
+					`/api/glimpses/${currentGlance._id}`,
+					{ bypassCache: true },
+				);
+				const data = await res.json();
+				if (!cancelled && res.ok && data.success && data.glimpse) {
+					setGlimpseDetail(data.glimpse);
+				}
+			} catch {
+				// Non-critical — fall back to feed data
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [currentGlance?._id]);
+
+	// Prefer populated viewers from the detail fetch; fall back to raw ids.
+	const populatedViewers = glimpseDetail?.viewers?.length
+		? glimpseDetail.viewers
+		: currentGlance?.viewers || [];
 
 	const getAuthorId = () => {
 		if (!currentGlance || !currentGlance.author) return null;
@@ -108,6 +223,8 @@ export default function GlanceViewer({
 	// Sync localReactions when currentGlance changes
 	useEffect(() => {
 		setMediaFit("cover");
+		resetMediaLoadState();
+		setMediaSrcKey(0);
 		setLocalReactions(currentGlance?.reactions || []);
 		setReactedByMe(
 			currentGlance?.reactions?.some((r) => {
@@ -430,16 +547,118 @@ export default function GlanceViewer({
 		}
 	}, [currentGlance, isAuthor, onDeleteGlance, handleClose]);
 
-	// Handle share
-	const handleShare = useCallback(() => {
+	// Open the share-to-chat people picker (fetches conversations cache-first)
+	const openShareModal = useCallback(async () => {
 		setShowMenu(false);
-		const url = `${window.location.origin}/glimpse/${currentGlance?._id}`;
-		if (navigator.share) {
-			navigator.share({ url }).catch(() => {});
-		} else {
-			navigator.clipboard?.writeText(url).catch(() => {});
+		if (!currentGlance) return;
+		setSelectedShareConvIds([]);
+		setShareSearch("");
+		setShowShareModal(true);
+		try {
+			const res = await apiFetch("/api/chats/conversations");
+			const data = await res.json();
+			if (res.ok && data.success) {
+				setShareConversations(data.conversations || []);
+			}
+		} catch (err) {
+			logger.error("Failed to load conversations for share", err);
 		}
 	}, [currentGlance]);
+
+	// Find the other participant in a personal conversation
+	const getSharePartner = (conv: Conversation) => {
+		const uid = getCurrentUserId();
+		return (
+			conv.participants?.find((p) => p._id !== uid) ||
+			conv.participants?.[0] ||
+			null
+		);
+	};
+
+	const toggleShareConv = (convId: string) => {
+		setSelectedShareConvIds((prev) => {
+			if (prev.includes(convId)) return prev.filter((id) => id !== convId);
+			if (prev.length >= 5) {
+				window.dispatchEvent(
+					new CustomEvent("showToast", {
+						detail: {
+							message: "You can share with up to 5 conversations.",
+							type: "error",
+						},
+					})
+				);
+				return prev;
+			}
+			return [...prev, convId];
+		});
+	};
+
+	// Share the glance (media + caption) to every selected conversation
+	const handleExecuteShare = async () => {
+		if (!currentGlance || selectedShareConvIds.length === 0 || isSharing) return;
+		setIsSharing(true);
+		try {
+			// Only attach the media when the schema-required public_id exists
+			// (zod demands public_id min(1)); otherwise share the caption alone.
+			const media = currentGlance.media;
+			const attachments =
+				media?.url && media.public_id
+					? [
+							{
+								url: media.url,
+								public_id: media.public_id,
+								type: currentGlance.mediaType === "video" ? "video" : "image",
+							},
+					  ]
+					: undefined;
+			await Promise.all(
+				selectedShareConvIds.map(async (convId) => {
+					const formData = new FormData();
+					formData.append("text", "Shared a glance");
+					if (attachments) {
+						formData.append("attachments", JSON.stringify(attachments));
+					}
+					return apiFetch(`/api/chats/conversations/${convId}/messages`, {
+						method: "POST",
+						body: formData,
+					});
+				})
+			);
+			setShowShareModal(false);
+			setSelectedShareConvIds([]);
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: {
+						message:
+							selectedShareConvIds.length > 1
+								? `Glance shared with ${selectedShareConvIds.length} chats`
+								: "Glance shared!",
+						type: "success",
+					},
+				})
+			);
+		} catch (err) {
+			logger.error("Failed to share glance", err);
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: { message: "Failed to share. Please try again.", type: "error" },
+				})
+			);
+		} finally {
+			setIsSharing(false);
+		}
+	};
+
+	// Filter conversations for the share modal search box
+	const filteredShareConversations = shareConversations.filter((conv) => {
+		const q = shareSearch.trim().toLowerCase();
+		if (!q) return true;
+		const partner = getSharePartner(conv);
+		return (
+			(partner?.fullName || "").toLowerCase().includes(q) ||
+			(partner?.username || "").toLowerCase().includes(q)
+		);
+	});
 
 	// Send reply text
 	const handleSendReply = useCallback(async () => {
@@ -594,7 +813,7 @@ export default function GlanceViewer({
 
 		// Cross-reference with viewers to find display names
 		const viewerNameMap = new Map<string, string>();
-		(currentGlance?.viewers || []).forEach((v) => {
+		populatedViewers.forEach((v) => {
 			const viewerUser = typeof v.user === "object" ? v.user : null;
 			if (viewerUser && viewerUser._id && viewerUser.fullName) {
 				viewerNameMap.set(viewerUser._id.toString(), viewerUser.fullName);
@@ -624,9 +843,9 @@ export default function GlanceViewer({
 			return `Liked by you and ${othersCount} other${othersCount > 1 ? "s" : ""}`;
 		}
 		return `Liked by ${othersCount} people`;
-	}, [localReactions, currentGlance?.viewers, currentUserId]);
+	}, [localReactions, populatedViewers, currentUserId]);
 
-	const filteredViewers = (currentGlance?.viewers || []).filter((v) => {
+	const filteredViewers = populatedViewers.filter((v) => {
 		const viewerId = typeof v.user === "object" && v.user ? v.user._id : v.user;
 		return viewerId && currentUserId && viewerId.toString() !== currentUserId.toString();
 	});
@@ -648,13 +867,11 @@ export default function GlanceViewer({
 			</button>
 
 			<div
-				className="relative w-full max-w-2xl max-h-[90vh] mx-4"
+				className="relative w-full max-w-2xl h-[88dvh] sm:h-[90vh] mx-4 flex flex-col"
 				onClick={(e) => e.stopPropagation()}>
-				{/* Story frame + progress bars share one centered wrapper so the bars
-				    always sit exactly over the frame regardless of device size. */}
-				<div className="relative w-fit mx-auto">
-				{/* Progress bars row */}
-				<div className="absolute -top-8 left-0 right-0 flex gap-1.5 z-10">
+				{/* Progress bars — in normal flow at the top of the column so they
+				    can never be clipped on short/landscape screens. */}
+				<div className="shrink-0 flex gap-1.5 z-10 pt-4">
 					{glimpses.map((g, idx) => (
 						<div
 							key={g._id}
@@ -675,14 +892,20 @@ export default function GlanceViewer({
 					))}
 				</div>
 
-				{/* The glance media with slide animation — strict 9:16 story frame that
-				    always fits the viewport (width derived from height so the ratio is
-				    never broken, unlike aspect-ratio + max-height which conflict). */}
+				{/* Story frame area — flexes to fill whatever height remains after the
+				    bars and the bottom controls, so Like/Reply are never pushed off
+				    short/landscape screens. The frame derives its width from this
+				    definite height (never from a percentage against a fit-content
+				    ancestor, which resolves to ~0 and collapses the frame). */}
+				<div ref={frameAreaRef} className="flex-1 min-h-0 flex items-center justify-center py-3">
 				<div
 					className="relative overflow-hidden rounded-2xl border border-white/10 bg-black/40 shadow-2xl"
 					style={{
 						aspectRatio: "9 / 16",
-						width: "min(100%, calc(80vh * 9 / 16), 26rem)",
+						height: frameHeight > 0 ? `${frameHeight}px` : "100%",
+						width: "auto",
+						maxWidth: "100%",
+						maxHeight: "100%",
 					}}
 					onMouseDown={handleMouseDown}
 					onMouseUp={handleMouseUp}
@@ -698,11 +921,19 @@ export default function GlanceViewer({
 
 					{/* Author info overlay at top */}
 					<div className="absolute top-4 left-4 z-10 flex items-center gap-3">
+						{currentGlance.author.profilePic?.url ? (
 						<img
-							src={currentGlance.author.profilePic?.url || ""}
+							src={currentGlance.author.profilePic.url}
 							alt={currentGlance.author.fullName}
 							className="h-10 w-10 rounded-full object-cover border-2 border-white/30 shadow-lg"
 						/>
+						) : (
+						<div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-white/30 bg-zinc-800 shadow-lg">
+							<span className="text-sm font-bold text-zinc-400">
+								{currentGlance.author.fullName?.charAt(0)?.toUpperCase() || "?"}
+							</span>
+						</div>
+						)}
 						<div>
 							<p className="text-sm font-bold text-white drop-shadow-lg">
 								{currentGlance.author.fullName}
@@ -728,17 +959,16 @@ export default function GlanceViewer({
 
 						{showMenu && (
 							<div className="absolute top-10 right-0 min-w-[140px] bg-zinc-950 border border-white/10 rounded-xl p-1.5 shadow-2xl backdrop-blur-xl">
-								{/* Share option for everyone */}
-								<button
-									onClick={(e) => {
-										e.stopPropagation();
-										handleShare();
-									}}
-									className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-white hover:bg-white/10 transition-colors cursor-pointer"
-								>
-									<Share2 className="h-4 w-4 text-zinc-400" />
-									Share
-								</button>
+								{/* Share option for everyone */}									<button
+										onClick={(e) => {
+											e.stopPropagation();
+											openShareModal();
+										}}
+										className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-white hover:bg-white/10 transition-colors cursor-pointer"
+									>
+										<Share2 className="h-4 w-4 text-zinc-400" />
+										Share
+									</button>
 								{/* Delete option only for author */}
 								{isAuthor && (
 									<button
@@ -773,10 +1003,26 @@ export default function GlanceViewer({
 							}}
 							transition={{ duration: 0.2, ease: "easeOut" }}
 						>
-						{currentGlance.mediaType === "video" ? (
+						{mediaUnavailable ? (
+							<div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-950 px-6 text-center">
+								<div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-white/5">
+									<X className="h-6 w-6 text-zinc-400" />
+								</div>
+								<p className="text-sm font-bold text-white">Media unavailable</p>
+								<p className="text-[11px] text-zinc-500">
+									This glance's media can no longer be displayed. It may have been
+									removed or uploaded incorrectly.
+								</p>
+							</div>
+						) : currentGlance.mediaType === "video" ? (
 							<video
 								ref={videoRef}
-								src={currentGlance.media.url}
+								key={`v-${mediaSrcKey}`}
+								src={
+									mediaSrcKey
+										? `${currentGlance.media.url}?retry=${mediaSrcKey}`
+										: currentGlance.media.url
+								}
 								className={`w-full h-full ${mediaFit === "contain" ? "object-contain object-center" : "object-cover"}`}
 								autoPlay
 								muted
@@ -784,15 +1030,28 @@ export default function GlanceViewer({
 								draggable={false}
 								onEnded={handleVideoEnded}
 								onLoadedMetadata={handleVideoMeta}
+								onError={handleMediaError}
 							/>
 						) : (
 							<img
-								src={currentGlance.media.url}
+								key={`i-${mediaSrcKey}`}
+								src={
+									mediaSrcKey
+										? `${currentGlance.media.url}?retry=${mediaSrcKey}`
+										: currentGlance.media.url
+								}
 								alt=""
 								className={`w-full h-full ${mediaFit === "contain" ? "object-contain object-center" : "object-cover"}`}
 								draggable={false}
 								onLoad={handleImgLoad}
+								onError={handleMediaError}
 							/>
+						)}
+						{/* Loading shimmer so a slow/retrying media never looks like a black frame */}
+						{mediaLoading && !mediaUnavailable && (
+							<div className="absolute inset-0 z-[6] flex items-center justify-center bg-zinc-950/80">
+								<div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+							</div>
 						)}
 						</motion.div>
 					</AnimatePresence>
@@ -828,8 +1087,11 @@ export default function GlanceViewer({
 						</div>
 					)}
 				</div>
-				</div>{/* end story frame wrapper */}
+				</div>
 
+				{/* Bottom controls — shrink-0 so they always stay fully visible on
+				    short/landscape screens. */}
+				<div className="shrink-0">
 				{/* Liked by text */}
 				{(() => {
 					const likedBy = getLikedByText();
@@ -912,7 +1174,7 @@ export default function GlanceViewer({
 									handleSendReply();
 								}}
 								disabled={isReplying || !replyText.trim()}
-								className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-500 hover:bg-violet-600 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-all cursor-pointer"
+								className="flex h-8 w-8 items-center justify-center rounded-full bg-white hover:bg-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 transition-all cursor-pointer shadow-lg"
 								title="Send reply"
 							>
 								{isReplying ? (
@@ -931,9 +1193,119 @@ export default function GlanceViewer({
 						onClick={() => setShowViewersList(true)}
 						className="mt-4 mx-auto flex items-center gap-1.5 rounded-full bg-black/60 border border-white/10 px-4 py-2 text-[12px] md:text-sm font-bold text-white hover:bg-zinc-900 transition-all cursor-pointer shadow-lg w-fit"
 					>
-						<Eye className="h-4 w-4 text-violet-400" />
+						<Eye className="h-4 w-4 text-white/70" />
 						<span>{currentGlance.viewers.length} {currentGlance.viewers.length === 1 ? "view" : "views"}</span>
 					</button>
+				)}
+				</div>
+
+				{/* Share-to-chat people picker modal (mirrors the chat forward UX) */}
+				{showShareModal && (
+					<div
+						className="absolute inset-0 z-[330] flex items-center justify-center bg-black/80 p-4"
+						onClick={() => setShowShareModal(false)}
+					>
+						<div
+							className="flex w-full max-w-sm flex-col overflow-hidden rounded-3xl border border-white/10 bg-zinc-950 shadow-2xl"
+							onClick={(e) => e.stopPropagation()}
+						>
+							{/* Header */}
+							<div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-white/5">
+								<h4 className="font-bold text-sm text-white">Share Glance</h4>
+								<button
+									onClick={() => setShowShareModal(false)}
+									className="p-1 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
+								>
+									<X className="h-4 w-4 text-zinc-400" />
+								</button>
+							</div>
+
+							{/* Search box */}
+							<div className="px-5 pt-3">
+								<div className="relative">
+									<Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500" />
+									<input
+										value={shareSearch}
+										onChange={(e) => setShareSearch(e.target.value)}
+										placeholder="Search chats..."
+										className="w-full rounded-full border border-zinc-800 bg-black/40 py-2 pl-9 pr-4 text-xs font-bold text-white placeholder-zinc-500 outline-none focus:border-white/40 focus:bg-zinc-900/60 transition-all"
+									/>
+								</div>
+							</div>
+
+							{/* Conversation list */}
+							<div className="flex-1 overflow-y-auto px-3 py-2 space-y-0.5 max-h-[45vh]">
+								{shareConversations.length === 0 ? (
+									<p className="text-center text-[11px] text-zinc-500 py-6">
+										No chats yet — start a conversation first
+									</p>
+								) : filteredShareConversations.length === 0 ? (
+									<p className="text-center text-[11px] text-zinc-500 py-6">
+										No matching chats
+									</p>
+								) : (
+									filteredShareConversations.map((conv) => {
+										const partner = getSharePartner(conv);
+										const isSelected = selectedShareConvIds.includes(conv._id);
+										return (
+											<button
+												key={conv._id}
+												onClick={() => toggleShareConv(conv._id)}
+												className={`w-full flex items-center gap-2.5 p-2 rounded-xl transition-all border ${isSelected ? "bg-white/10 border-white/30" : "hover:bg-zinc-900/60 border-transparent"} text-left cursor-pointer`}
+											>
+												{partner?.profilePic?.url ? (
+													<img
+														src={partner.profilePic.url}
+														alt={partner.fullName}
+														className="h-8 w-8 rounded-full object-cover border border-zinc-800 shrink-0"
+													/>
+												) : (
+													<div className="flex h-8 w-8 items-center justify-center rounded-full border border-zinc-800 bg-zinc-800 shrink-0">
+														<span className="text-xs font-bold text-zinc-400">
+															{partner?.fullName?.charAt(0)?.toUpperCase() || "?"}
+														</span>
+													</div>
+												)}
+												<div className="min-w-0 flex-1">
+													<p className="text-xs font-bold text-white truncate">
+														{partner?.fullName || "Unknown"}
+													</p>
+													<p className="text-[11px] text-zinc-500 truncate">
+														@{partner?.username || ""}
+													</p>
+												</div>
+												<div
+													className={`h-5 w-5 rounded-full border flex items-center justify-center shrink-0 transition-all ${isSelected ? "bg-white border-transparent text-black" : "border-zinc-700 text-transparent"}`}
+												>
+													{isSelected && (
+														<svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+															<path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+														</svg>
+													)}
+												</div>
+											</button>
+										);
+									})
+								)}
+							</div>
+
+							{/* Send button */}
+							<div className="px-5 py-4 border-t border-white/5">
+								<button
+									onClick={handleExecuteShare}
+									disabled={selectedShareConvIds.length === 0 || isSharing}
+									className="w-full py-2.5 bg-white hover:bg-zinc-200 text-[11px] font-black uppercase tracking-wider text-black rounded-xl disabled:opacity-40 disabled:hover:bg-white transition-all cursor-pointer shadow-md flex items-center justify-center gap-2"
+								>
+									{isSharing ? (
+										<Loader2 className="h-3.5 w-3.5 animate-spin" />
+									) : (
+										<Send className="h-3.5 w-3.5" />
+									)}
+									Send ({selectedShareConvIds.length}/5)
+								</button>
+							</div>
+						</div>
+					</div>
 				)}
 
 				{/* Viewers list popup */}
@@ -954,13 +1326,20 @@ export default function GlanceViewer({
 										const viewerUser = typeof v.user === "object" ? v.user : null;
 										if (!viewerUser) return null;
 										const liked = hasReacted(viewerUser._id);
-										return (
-											<div key={idx} className="flex items-center gap-2.5">
-												<img
-													src={viewerUser.profilePic?.url || ""}
-													alt={viewerUser.fullName}
-													className="h-8 w-8 rounded-full object-cover border border-zinc-800"
-												/>
+										return (												<div key={idx} className="flex items-center gap-2.5">
+													{viewerUser.profilePic?.url ? (
+														<img
+															src={viewerUser.profilePic.url}
+															alt={viewerUser.fullName}
+															className="h-8 w-8 rounded-full object-cover border border-zinc-800"
+														/>
+													) : (
+														<div className="flex h-8 w-8 items-center justify-center rounded-full border border-zinc-800 bg-zinc-800">
+															<span className="text-xs font-bold text-zinc-400">
+																{viewerUser.fullName?.charAt(0)?.toUpperCase() || "?"}
+															</span>
+														</div>
+													)}
 												<div className="text-left min-w-0 flex-1">
 													<p className="text-xs font-bold text-white truncate">{viewerUser.fullName}</p>
 													<p className="text-[11px] text-zinc-500 truncate">@{viewerUser.username}</p>

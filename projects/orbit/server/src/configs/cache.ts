@@ -68,9 +68,23 @@ export const clearUsersCache = async () => {
 
 // clear comments list cache for a post
 export const clearCommentsCache = async (postId: string) => {
+  // Top-level paginated comment lists (controller-level keys)
   await clearByPattern(`comments:${postId}:*`);
-  await deleteCache(`comments:all:${postId}`); // Also clear the new all-comments cache!
-  await clearByPattern("api:*:*comments*");
+  // Per-post ALL-comments cache is keyed `comments:all:<postId>:<userId>`
+  // (note the trailing `:${userId}` — an exact delete never matched it)
+  await clearByPattern(`comments:all:${postId}:*`);
+  // Reply threads for any comment on this post (controller-level keys)
+  await clearByPattern("comments:replies:*");
+
+  // NOTE on the route-level cacheMiddleware (`api:<userId>:<path>:<query>`):
+  // it was removed from the comment routes in comment.routes.ts because the
+  // router-relative path here is `/<postId>` — indistinguishable from other
+  // routes' keys, so no pattern could ever reliably clear it. That un-cleared
+  // layer is exactly what served stale (empty) comment lists for up to 60s.
+  // The patterns below only clear the replies middleware keys (`/replies/<id>`
+  // is a unique router-relative prefix) plus any legacy keys.
+  await clearByPattern("api:*:/replies*");
+  await clearByPattern("api:*:*comments*"); // legacy keys (if any)
 };
 
 // clear followers and following list cache
@@ -82,6 +96,10 @@ export const clearFollowCache = async (userId: string, followerId: string) => {
 // clear saved posts list cache
 export const clearSavesCache = async (userId: string) => {
   await clearByPattern(`saves:${userId}:*`);
+};
+
+export const clearDraftsCache = async (userId: string) => {
+  await clearByPattern(`drafts:${userId}:*`);
 };
 
 // clear user posts cache

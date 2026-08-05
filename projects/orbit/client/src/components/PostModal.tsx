@@ -1,12 +1,12 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X, Image, Loader2, ListTodo, Calendar, Clock, UserPlus, Globe, Lock } from "lucide-react";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
+import { downscaleImageFile } from "../utils/imageCompression";
 import { validatePost } from "../utils/validation";
 import ValidationMessage from "./ValidationMessage";
 import CharCounter from "./CharCounter";
-import ImageCropModal from "./ImageCropModal";
 import { useAutoGrow } from "../hooks/useAutoGrow";
 
 interface PostModalProps {
@@ -53,49 +53,16 @@ export default function PostModal({
 	const [showCollabInvite, setShowCollabInvite] = useState(false);
 	const [collabUsername, setCollabUsername] = useState("");
 
-	// Crop queue for sequential multi-image cropping
-	const [cropQueue, setCropQueue] = useState<string[]>([]);
-	const [cropQueueNames, setCropQueueNames] = useState<string[]>([]);
-	const [cropModalOpen, setCropModalOpen] = useState(false);
-	const [currentCropSrc, setCurrentCropSrc] = useState("");
-
-	const processNextCrop = useCallback(() => {
-		setCropQueue((prev) => {
-			if (prev.length === 0) return prev;
-			const [nextSrc, ...rest] = prev;
-			setCurrentCropSrc(nextSrc);
-			setCropModalOpen(true);
-			setCropQueueNames((names) => {
-				const [, ...restNames] = names;
-				return restNames;
-			});
-			return rest;
-		});
-	}, []);
-
-	const handleCropComplete = useCallback(
-		(blob: Blob) => {
-			const fileName =
-				cropQueueNames[0] || `cropped_image_${Date.now()}.jpg`;
-			const file = new File([blob], fileName, { type: "image/jpeg" });
-			setPostImageFiles((prev) => [...prev, file]);
-			if (currentCropSrc) URL.revokeObjectURL(currentCropSrc);
-			setCropModalOpen(false);
-			setTimeout(() => processNextCrop(), 100);
-		},
-		[cropQueueNames, processNextCrop, currentCropSrc],
-	);
-
+	// Preview object URLs — recreated whenever the selected files change.
 	useEffect(() => {
-		if (
-			cropQueue.length === 0 &&
-			!cropModalOpen &&
-			postImageFiles.length > 0
-		) {
-			const previews = postImageFiles.map((f) => URL.createObjectURL(f));
-			setPostImagePreviews(previews);
-		}
-	}, [cropQueue, cropModalOpen, postImageFiles]);
+		const previews = postImageFiles.map((f) => URL.createObjectURL(f));
+		setPostImagePreviews((prev) => {
+			prev.forEach((u) => URL.revokeObjectURL(u));
+			return previews;
+		});
+		return () => previews.forEach((u) => URL.revokeObjectURL(u));
+	}, [postImageFiles]);
+
 
 	const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
@@ -206,6 +173,8 @@ export default function PostModal({
 				formData.append("status", "draft");
 			}
 
+			// Files are already downscaled at selection time — append as-is
+			// so the publish path stays fast (no re-decode on the critical path).
 			postImageFiles.forEach((file) => {
 				formData.append("images", file);
 			});
@@ -390,7 +359,7 @@ export default function PostModal({
 									clearFieldError("content");
 								}}
 								maxLength={5000}
-								className="w-full resize-none bg-transparent text-[12px] md:text-sm text-slate-800 dark:text-zinc-300 placeholder-slate-500 dark:placeholder-zinc-500 outline-none"
+								className="w-full !rounded-lg resize-none bg-transparent text-[12px] md:text-sm text-slate-800 dark:text-zinc-300 placeholder-slate-500 dark:placeholder-zinc-500 outline-none"
 							/>
 							<div className="flex items-center justify-end mt-1">
 								<CharCounter
@@ -569,7 +538,7 @@ export default function PostModal({
 											accept="image/*"
 											multiple
 											disabled={postImageFiles.length >= 5}
-											onChange={(e) => {
+											onChange={async (e) => {
 												const files = Array.from(
 													e.target.files || [],
 												);
@@ -579,52 +548,15 @@ export default function PostModal({
 													0,
 													remaining,
 												);
-												const gifFiles = toAdd.filter(
-													(f) => f.type === "image/gif",
+												// No forced crop box — images keep their natural
+												// aspect ratio and are auto-downscaled for fast uploads.
+												const processed = await Promise.all(
+													toAdd.map((f) => downscaleImageFile(f)),
 												);
-												const cropFiles = toAdd.filter(
-													(f) => f.type !== "image/gif",
-												);
-												if (gifFiles.length > 0) {
-													setPostImageFiles((prev) => [
-														...prev,
-														...gifFiles,
-													]);
-													const gifPreviews =
-														gifFiles.map((f) =>
-															URL.createObjectURL(f),
-														);
-													setPostImagePreviews((prev) => [
-														...prev,
-														...gifPreviews,
-													]);
-												}
-												const newUrls = cropFiles.map((f) =>
-													URL.createObjectURL(f),
-												);
-												const newNames = cropFiles.map(
-													(f) => f.name,
-												);
-												setCropQueue((prev) => [
+												setPostImageFiles((prev) => [
 													...prev,
-													...newUrls,
+													...processed,
 												]);
-												setCropQueueNames((prev) => [
-													...prev,
-													...newNames,
-												]);
-												if (
-													cropQueue.length === 0 &&
-													!cropModalOpen &&
-													newUrls.length > 0
-												) {
-													setCurrentCropSrc(newUrls[0]);
-													setCropModalOpen(true);
-													setCropQueue((prev) => {
-														const [, ...rest] = prev;
-														return rest;
-													});
-												}
 												e.target.value = "";
 											}}
 											className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
@@ -757,21 +689,6 @@ export default function PostModal({
 					</div>
 				</motion.div>
 			</div>
-			<ImageCropModal
-				isOpen={cropModalOpen}
-				onClose={() => {
-					setCropModalOpen(false);
-					setCropQueue([]);
-					setCropQueueNames([]);
-					cropQueue.forEach((url) => URL.revokeObjectURL(url));
-					if (currentCropSrc) URL.revokeObjectURL(currentCropSrc);
-					setCurrentCropSrc("");
-				}}
-				imageSrc={currentCropSrc}
-				aspectRatio={undefined}
-				title="Crop Photo"
-				onCropComplete={handleCropComplete}
-			/>
 		</AnimatePresence>
 	);
 }

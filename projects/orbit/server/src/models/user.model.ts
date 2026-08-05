@@ -291,6 +291,9 @@ userSchema.index({ createdAt: -1 });
 userSchema.index({ followersCount: -1 });
 userSchema.index({ followingCount: -1 });
 userSchema.index({ createdAt: -1, _id: -1 });
+// Multikey index so "who has this user on their closeFriends list" lookups
+// (feed visibility: User.find({ closeFriends: currentUserId })) stay fast.
+userSchema.index({ closeFriends: 1 });
 
 // password hashing
 userSchema.pre("save", async function () {

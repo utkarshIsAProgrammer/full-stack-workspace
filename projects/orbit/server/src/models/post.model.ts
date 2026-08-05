@@ -210,7 +210,10 @@ postSchema.index({ author: 1, createdAt: -1, _id: -1 });
 
 // slug generation
 postSchema.pre("validate", async function () {
-  if (!this.isModified("title")) return;
+  // Always regenerate the slug when the title changes OR when no slug exists
+  // yet (e.g. quote reposts created without a title). Without this, new
+  // posts without a title would fail validation because slug is required.
+  if (!this.isModified("title") && this.slug) return;
 
   const title = this.title?.trim();
   const baseSlug = title

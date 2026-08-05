@@ -11,6 +11,7 @@ import {
 	X as XIcon,
 	Copy,
 	CornerDownLeft,
+	MoreVertical,
 } from "lucide-react";
 import UserAvatar from "./UserAvatar";
 import { apiFetch } from "../utils/api";
@@ -720,25 +721,15 @@ export default function CommentNode({
 						{user &&
 							comment.author._id === user._id &&
 							!isEditing && (
-								<>
-									<button
-										onClick={() => {
-											setIsEditing(true);
-											setEditText(comment.content);
-										}}
-										className="text-zinc-500 hover:text-white transition-colors cursor-pointer"
-										title="Edit comment">
-										<Pencil className="h-3 w-3" />
-									</button>
-									<button
-										onClick={() =>
-											setShowDeleteConfirm(true)
-										}
-										className="text-zinc-500 hover:text-red-450 transition-colors cursor-pointer"
-										title="Delete comment">
-										<Trash2 className="h-3 w-3" />
-									</button>
-								</>
+								<button
+									onClick={(e) => {
+										e.stopPropagation();
+										handleContextMenu(e, comment);
+									}}
+									className="text-zinc-500 hover:text-white transition-colors cursor-pointer"
+									title="Comment options">
+									<MoreVertical className="h-3.5 w-3.5" />
+								</button>
 							)}
 					</div>
 				</div>
@@ -749,7 +740,7 @@ export default function CommentNode({
 							ref={editTextRef}
 							value={editText}
 							onChange={(e) => setEditText(e.target.value)}
-							className="w-full rounded-lg border border-white/5 bg-zinc-950/60 px-2.5 py-1.5 text-[12px] md:text-sm text-zinc-200 placeholder-zinc-550 outline-none focus:border-white/15 focus:bg-zinc-950/80 resize-none transition-all"
+							className="w-full !rounded-lg border border-white/5 bg-zinc-950/60 px-2.5 py-1.5 text-[12px] md:text-sm text-zinc-200 placeholder-zinc-550 outline-none focus:border-white/15 focus:bg-zinc-950/80 resize-none transition-all"
 							rows={2}
 							maxLength={1000}
 							spellCheck={false}

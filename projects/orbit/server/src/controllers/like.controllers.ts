@@ -17,6 +17,7 @@ import {
 } from "../configs/socket";
 import { logger } from "../utilities/logger";
 import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenError } from "../utilities/errors";
+import { canInteractWithPost } from "../utilities/postVisibility";
 import { toggleLikeSchema, toggleCommentLikeSchema } from "../schemas/interaction.schema";
 import { clearFeedCache } from "../configs/cache";
 import { logInteraction } from "../services/affinityService";
@@ -49,9 +50,15 @@ export const togglePostLikes = async (req: Request<Params>, res: Response) => {
     }
 
     // find post
-    const post = await Post.findById(postId).select("_id author").lean();
+    const post = await Post.findById(postId).select("_id author visibility").lean();
 
     if (!post) {
+      throw new NotFoundError("Post not found!");
+    }
+
+    // closeFriends posts can only be liked by the author / their close friends
+    const { allowed } = await canInteractWithPost(postId, author.toString());
+    if (!allowed) {
       throw new NotFoundError("Post not found!");
     }
 
@@ -189,6 +196,14 @@ export const toggleCommentLikes = async (
 
     if (!comment) {
       throw new NotFoundError("Comment not found!");
+    }
+
+    // closeFriends posts' comment threads are invisible to non-close-friends
+    if (comment.post) {
+      const { allowed } = await canInteractWithPost(comment.post.toString(), author.toString());
+      if (!allowed) {
+        throw new NotFoundError("Comment not found!");
+      }
     }
 
     // check if already liked

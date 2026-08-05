@@ -263,6 +263,15 @@ export interface Community {
   memberCount: number;
   isMember?: boolean;
   pinnedMessages?: string[];
+  lastMessage?: {
+    messageId?: string;
+    text?: string;
+    attachmentType?: string;
+    sender?: { _id?: string; fullName?: string; username?: string } | null;
+    createdAt?: string;
+    isDeleted?: boolean;
+  } | null;
+  lastAction?: ConversationLastAction | null;
   messagingEnabled?: boolean;
   audioCallEnabled?: boolean;
   videoCallEnabled?: boolean;
@@ -314,8 +323,10 @@ export interface CommunityMessage {
 }
 
 export interface ConversationLastAction {
-  type?: "reaction";
+  type?: "reaction" | "pin" | "unpin" | "call" | "message_edit";
   emoji?: string;
+  callType?: "audio" | "video";
+  callStatus?: "started" | "ended";
   messageId?: string;
   messageSenderId?: string;
   actor?: {

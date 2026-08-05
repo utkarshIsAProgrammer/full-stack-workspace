@@ -7,6 +7,43 @@ import { Message } from "../models/message.model";
 import Notification from "../models/notification.model";
 import { logger } from "../utilities/logger";
 import { clearChatCache, clearByPattern } from "../configs/cache";
+import { getIO } from "../configs/socket";
+
+/**
+ * Blocked users must not exist for each other — after a block (or unblock),
+ * every viewer-sensitive cache for BOTH users must be wiped so a stale
+ * pre-block response (profile, search, feed, trending, glances, followers,
+ * notifications…) can never be served to the other party. Blocking is rare,
+ * so clearing broadly is the correct trade-off vs. correctness.
+ */
+async function clearUserVisibilityCaches(userId: string) {
+  if (!userId) return;
+  const patterns = [
+    // Route-level cacheMiddleware keys (per-viewer): api:{userId}:{path}:{query}
+    `api:${userId}:*`,
+    // Controller-level search caches are keyed per-user too
+    `search:*${userId}*`,
+    `search:${userId}*`,
+    // Follow lists
+    `followers:*${userId}*`,
+    `following:*${userId}*`,
+    // Feed / glances / trending can embed the blocked user
+    `feed:*${userId}*`,
+    `glimpses:${userId}*`,
+    `glimpses:*${userId}*`,
+  ];
+  await Promise.all(patterns.map((p) => clearByPattern(p)));
+  // Shared content caches that embed author/blocker data (viewer-agnostic
+  // keys) — cleared globally since a block must hide the user everywhere.
+  await clearByPattern("user:username:*");
+  await clearByPattern(`user:${userId}*`);
+  await clearByPattern("search:users:*");
+  await clearByPattern("search:posts:*");
+  await clearByPattern("trending:*");
+  await clearByPattern("posts:*");
+  await clearByPattern("glimpses:*");
+  await clearByPattern("notifications:*");
+}
 
 /**
  * Block a user.
@@ -29,6 +66,42 @@ export const blockUser = async (req: Request, res: Response) => {
 
     await Block.create({ blocker: currentUserId as any, blocked: targetUserId as any });
 
+    // Blocked users must not exist for each other — wipe every
+    // viewer-sensitive cache for both users immediately, so neither party
+    // can be served a stale pre-block response (profile, search, feed,
+    // trending, glances, notifications) from Redis.
+    try {
+      const targetId = typeof targetUserId === "string" ? targetUserId : "";
+      await Promise.all([
+        clearUserVisibilityCaches(currentUserId),
+        targetId ? clearUserVisibilityCaches(targetId) : Promise.resolve(),
+      ]);
+    } catch (cacheErr: any) {
+      logger.error("Failed to clear visibility caches on block", {
+        error: cacheErr.message,
+      });
+    }
+
+    // Notify both users in realtime so their clients can evict local
+    // caches (CacheStorage / IndexedDB) and refetch — a blocked user must
+    // stop existing on the other user's device immediately, not after a
+    // cache TTL or reload.
+    try {
+      const io = getIO();
+      io.to(`user:${currentUserId}`).emit("user:blocked", {
+        targetUserId,
+        by: targetUserId,
+      });
+      if (targetUserId) {
+        io.to(`user:${targetUserId}`).emit("user:blocked", {
+          targetUserId: currentUserId,
+          by: currentUserId,
+        });
+      }
+    } catch (socketErr: any) {
+      logger.error("Failed to emit user:blocked", { error: socketErr.message });
+    }
+
     // Blocked users must not exist for each other — wipe the direct
     // conversation, all messages, and every notification between them.
     try {
@@ -42,11 +115,42 @@ export const blockUser = async (req: Request, res: Response) => {
           currentUserId.toString(),
           targetUserId,
         ]);
+
+        // Remove both users' sockets from the conversation room and emit a
+        // realtime "conversation:delete" to each of their personal rooms —
+        // Chat.tsx listens for this and instantly drops the conversation from
+        // the list + closes it if it's open. Without this, the other user's
+        // UI keeps showing (and lets them keep typing into) a dead chat until
+        // a reload.
+        try {
+          const io = getIO();
+          io.in(`conversation:${conversation._id.toString()}`).socketsLeave(
+            `conversation:${conversation._id.toString()}`,
+          );
+          io.to(`user:${currentUserId.toString()}`).emit(
+            "conversation:delete",
+            { conversationId: conversation._id.toString() },
+          );
+          io.to(`user:${targetUserId}`).emit("conversation:delete", {
+            conversationId: conversation._id.toString(),
+          });
+        } catch (socketErr: any) {
+          logger.error("Failed to emit conversation:delete on block", {
+            error: socketErr.message,
+          });
+        }
       }
       // Also invalidate any route-level conversation-list caches for both users
       await clearByPattern(`api:${currentUserId}:/conversations*`);
       if (targetUserId) {
         await clearByPattern(`api:${targetUserId}:/conversations*`);
+      }
+      // getConversations actually caches under `chat:conversations:${userId}`
+      // (30s TTL) — clear that exact key for both users so a stale cached
+      // list can't resurrect the deleted conversation for up to 30 seconds.
+      await clearByPattern(`chat:conversations:${currentUserId}*`);
+      if (targetUserId) {
+        await clearByPattern(`chat:conversations:${targetUserId}*`);
       }
       await Notification.deleteMany({
         $or: [
@@ -89,6 +193,32 @@ export const unblockUser = async (req: Request, res: Response) => {
     const targetUserId = req.params.userId;
 
     await Block.findOneAndDelete({ blocker: currentUserId, blocked: targetUserId });
+
+    // Wipe the visibility caches again so the previously-hidden content
+    // becomes visible immediately (no stale "user not found" responses).
+    try {
+      const targetId = typeof targetUserId === "string" ? targetUserId : "";
+      await Promise.all([
+        clearUserVisibilityCaches(currentUserId),
+        targetId ? clearUserVisibilityCaches(targetId) : Promise.resolve(),
+      ]);
+    } catch (cacheErr: any) {
+      logger.error("Failed to clear visibility caches on unblock", {
+        error: cacheErr.message,
+      });
+    }
+
+    try {
+      const io = getIO();
+      io.to(`user:${currentUserId}`).emit("user:unblocked", { targetUserId });
+      if (targetUserId) {
+        io.to(`user:${targetUserId}`).emit("user:unblocked", {
+          targetUserId: currentUserId,
+        });
+      }
+    } catch (socketErr: any) {
+      logger.error("Failed to emit user:unblocked", { error: socketErr.message });
+    }
 
     logger.info(`User ${currentUserId} unblocked user ${targetUserId}`);
     return res.status(200).json({ success: true, message: "User unblocked", blocked: false });
