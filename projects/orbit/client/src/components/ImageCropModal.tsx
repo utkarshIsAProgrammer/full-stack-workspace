@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import Cropper from "react-easy-crop";
 import { motion, AnimatePresence } from "motion/react";
 import { Check, X } from "lucide-react";
@@ -150,7 +151,12 @@ export default function ImageCropModal({
 
 	if (!isOpen) return null;
 
-	return (
+	// Portal to document.body so the modal is positioned against the viewport,
+	// not against transformed ancestors (GlassCard / motion wrappers) — a
+	// transform or backdrop-filter on an ancestor turns it into the containing
+	// block for `fixed` children, which would push the cropper down the page
+	// and force the user to scroll to see the image.
+	return createPortal(
 		<AnimatePresence>
 			<motion.div
 				ref={cropModalRef}
@@ -274,7 +280,8 @@ export default function ImageCropModal({
 					</div>
 				</div>
 			</motion.div>
-		</AnimatePresence>
+		</AnimatePresence>,
+		document.body,
 	);
 }
 

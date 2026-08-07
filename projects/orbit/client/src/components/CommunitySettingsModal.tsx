@@ -5,6 +5,7 @@ import ImageCropModal from "./ImageCropModal";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 import { downscaleImageFile } from "../utils/imageCompression";
+import { useAutoGrow } from "../hooks/useAutoGrow";
 import type { Community } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
 
@@ -24,7 +25,9 @@ export default function CommunitySettingsModal({
   onDeleted,
 }: CommunitySettingsModalProps) {
   const [name, setName] = useState(community.name);
-  const [description, setDescription] = useState(community.description || "");	const [imageFile, setImageFile] = useState<File | null>(null);
+  const [description, setDescription] = useState(community.description || "");
+  const descriptionRef = useAutoGrow<HTMLTextAreaElement>(description);
+  const [imageFile, setImageFile] = useState<File | null>(null);
 	const [imagePreview, setImagePreview] = useState<string | null>(null);
 	const [removeCurrentImage, setRemoveCurrentImage] = useState(false);
 	const [cropModalOpen, setCropModalOpen] = useState(false);
@@ -223,17 +226,17 @@ export default function CommunitySettingsModal({
                           logger.error("Failed to toggle messaging", err);
                         }
                       }}
-                      className={`relative h-6 w-11 rounded-full transition-all cursor-pointer ${
+                      className={`relative h-6 w-11 cursor-pointer rounded-full transition-colors duration-200 ${
                         community.messagingEnabled !== false
                           ? "bg-green-500"
                           : "bg-zinc-700"
                       }`}
                     >
                       <span
-                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                        className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ease-out ${
                           community.messagingEnabled !== false
-                            ? "left-[22px]"
-                            : "left-0.5"
+                            ? "translate-x-5"
+                            : "translate-x-0"
                         }`}
                       />
                     </button>
@@ -271,17 +274,17 @@ export default function CommunitySettingsModal({
                           logger.error("Failed to toggle audio calls", err);
                         }
                       }}
-                      className={`relative h-6 w-11 rounded-full transition-all cursor-pointer ${
+                      className={`relative h-6 w-11 cursor-pointer rounded-full transition-colors duration-200 ${
                         community.audioCallEnabled
                           ? "bg-green-500"
                           : "bg-zinc-700"
                       }`}
                     >
                       <span
-                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                        className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ease-out ${
                           community.audioCallEnabled
-                            ? "left-[22px]"
-                            : "left-0.5"
+                            ? "translate-x-5"
+                            : "translate-x-0"
                         }`}
                       />
                     </button>
@@ -319,17 +322,17 @@ export default function CommunitySettingsModal({
                           logger.error("Failed to toggle video calls", err);
                         }
                       }}
-                      className={`relative h-6 w-11 rounded-full transition-all cursor-pointer ${
+                      className={`relative h-6 w-11 cursor-pointer rounded-full transition-colors duration-200 ${
                         community.videoCallEnabled
                           ? "bg-green-500"
                           : "bg-zinc-700"
                       }`}
                     >
                       <span
-                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                        className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ease-out ${
                           community.videoCallEnabled
-                            ? "left-[22px]"
-                            : "left-0.5"
+                            ? "translate-x-5"
+                            : "translate-x-0"
                         }`}
                       />
                     </button>
@@ -402,7 +405,7 @@ export default function CommunitySettingsModal({
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="What's this community about?"
+                  ref={descriptionRef} placeholder="What's this community about?"
                   maxLength={500}
                   rows={3}
                   className="w-full bg-zinc-900/80 border border-zinc-800/60 !rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all resize-none"

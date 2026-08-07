@@ -25,6 +25,28 @@ const emailPreferenceSchema = new mongoose.Schema(
       }],
       default: ["like", "comment", "follow", "mention", "message", "weekly_digest"],
     },
+    // Per-category in-app + device notification toggles. Each defaults to
+    // enabled; turning a category off suppresses BOTH the in-app bell
+    // notification and the on-device push for that category (enforced in
+    // `utilities/notification.ts` createNotification + chat/community push).
+    notificationPrefs: {
+      type: new mongoose.Schema(
+        {
+          likes: { type: Boolean, default: true },
+          comments: { type: Boolean, default: true },
+          follows: { type: Boolean, default: true },
+          mentions: { type: Boolean, default: true },
+          messages: { type: Boolean, default: true },
+          reposts: { type: Boolean, default: true },
+          saves: { type: Boolean, default: true },
+          polls: { type: Boolean, default: true },
+          glances: { type: Boolean, default: true },
+          collabs: { type: Boolean, default: true },
+        },
+        { _id: false },
+      ),
+      default: () => ({}),
+    },
     lastDigestSentAt: {
       type: Date,
       default: null,

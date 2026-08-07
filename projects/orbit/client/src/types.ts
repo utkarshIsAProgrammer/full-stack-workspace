@@ -77,6 +77,7 @@ export interface Post {
   likedByMe?: boolean;
   savedByMe?: boolean;
   repostedByMe?: boolean;
+  pinnedByMe?: boolean;
   myVote?: string | null;
 }
 
@@ -111,7 +112,7 @@ export interface Comment {
   reactions?: CommentReaction[];
 }
 
-export type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message" | "message_reply" | "community_message" | "glimpse_reaction" | "glimpse_reply" | "poll_vote" | "collab_invite" | "invite_accepted" | "follow_request" | "daily_reward" | "streak_reminder";
+export type NotificationType = "like" | "comment" | "follow" | "repost" | "save" | "mention" | "reaction" | "message" | "message_reply" | "community_message" | "glimpse_reaction" | "glimpse_reply" | "poll_vote" | "collab_invite" | "invite_accepted" | "follow_request" | "daily_reward" | "streak_reminder" | "profile_share" | "post_share" | "glimpse_share" | "comment_share";
 
 export interface Notification {
   _id: string;
@@ -128,10 +129,26 @@ export interface Notification {
     title: string;
     slug: string;
   } | null;
-  glimpse?: { _id: string } | null;
+  glimpse?: {
+    _id: string;
+    author?: {
+      _id: string;
+      username: string;
+      fullName: string;
+      profilePic?: CloudinaryImage;
+    };
+  } | null;
+  /** The shared profile for profile_share notifications */
+  user?: {
+    _id: string;
+    username: string;
+    fullName: string;
+    profilePic?: CloudinaryImage;
+  } | null;
   comment?: {
     _id: string;
     content: string;
+    post?: { _id?: string; slug?: string };
   } | null;
   room?: {
     _id: string;
@@ -262,6 +279,7 @@ export interface Community {
   }[];
   memberCount: number;
   isMember?: boolean;
+  muted?: boolean;
   pinnedMessages?: string[];
   lastMessage?: {
     messageId?: string;
@@ -351,4 +369,6 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
   presence?: "online" | "offline";
+  // Per-user: notifications for this chat are muted
+  muted?: boolean;
 }

@@ -231,6 +231,27 @@ const userSchema = new mongoose.Schema(
 			default: [],
 		},
 
+		// Muted communities (per-user: suppress notifications/push from this
+		// community while still receiving its messages in the chat).
+		mutedCommunities: {
+			type: [{
+				community: { type: mongoose.Schema.Types.ObjectId, ref: "Community" },
+				mutedAt: { type: Date, default: Date.now },
+			}],
+			default: [],
+		},
+
+		// Muted direct-message conversations (per-user: suppress in-app bell
+		// notifications + push from this chat while still receiving messages
+		// and the chat-tab unread badge).
+		mutedConversations: {
+			type: [{
+				conversation: { type: mongoose.Schema.Types.ObjectId, ref: "Conversation" },
+				mutedAt: { type: Date, default: Date.now },
+			}],
+			default: [],
+		},
+
 		// Close friends list
 		closeFriends: [{
 			type: mongoose.Schema.Types.ObjectId,
@@ -294,6 +315,12 @@ userSchema.index({ createdAt: -1, _id: -1 });
 // Multikey index so "who has this user on their closeFriends list" lookups
 // (feed visibility: User.find({ closeFriends: currentUserId })) stay fast.
 userSchema.index({ closeFriends: 1 });
+// Multikey index for per-community mute lookups on the chat hot path
+// (sendCommunityMessage filters muted members on every message send).
+userSchema.index({ "mutedCommunities.community": 1 });
+// Multikey index for per-conversation mute lookups on the chat hot path
+// (sendMessage checks mutedConversations on every message send).
+userSchema.index({ "mutedConversations.conversation": 1 });
 
 // password hashing
 userSchema.pre("save", async function () {

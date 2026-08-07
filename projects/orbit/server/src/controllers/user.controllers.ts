@@ -7,8 +7,7 @@ import {
 	updateProfileSchema,
 } from "../schemas/user.schema";
 import cloudinary from "../configs/cloudinary";
-import { sendDeletionMail } from "../configs/nodeMailer";
-import {
+import { sendDeletionMail } from "../configs/nodeMailer";	import {
 	getCache,
 	setCache,
 	clearUsersCache,
@@ -16,8 +15,12 @@ import {
 	deleteCache,
 	clearUserByIdCache,
 	clearFeedCache,
+	clearByPattern,
+	clearUserPostsCache,
 
-} from "../configs/cache";		import Post from "../models/post.model";
+} from "../configs/cache";
+import { clearMemUserCache } from "../middlewares/auth.middleware";
+		import Post from "../models/post.model";
 import Comment from "../models/comment.model";
 import Like from "../models/like.model";
 import Follow from "../models/follow.model";
@@ -452,6 +455,7 @@ export const deleteAccount = async (req: Request, res: Response) => {
 		// clear users and session cache
 		await clearUsersCache();
 		await deleteCache(`auth:user:${user._id}`);
+		clearMemUserCache(String(user._id));
 		await deleteCache(`presence:user:${user._id}`);
 		// Clear all user-related caches
 		await deleteCache(`user:${user._id}`);
@@ -522,6 +526,84 @@ export const shareProfile = async (req: Request<Params>, res: Response) => {
 	} catch (err: any) {
 		if (err.statusCode && err.statusCode < 500) throw err;
 		logger.error(`Error in the shareProfile controller!`, {
+			error: err.message,
+		});
+		throw new AppError("Internal server error!");
+	}
+};
+
+// forward a profile to another user — notifies the recipient in-app
+// (notification center + badge) and via device push.
+export const forwardProfile = async (req: Request<Params>, res: Response) => {
+	const { userId } = req.params;
+	const senderId = req.user?._id;
+	const { recipientId } = req.body || {};
+
+	try {
+		if (!senderId) {
+			throw new UnauthorizedError("Unauthorized!");
+		}
+
+		if (!mongoose.Types.ObjectId.isValid(userId)) {
+			throw new BadRequestError("Invalid user id!");
+		}
+
+		if (!recipientId || !mongoose.Types.ObjectId.isValid(recipientId)) {
+			throw new BadRequestError("Invalid recipient!");
+		}
+
+		if (senderId.toString() === recipientId) {
+			throw new BadRequestError("Cannot forward a profile to yourself!");
+		}
+
+		// the shared profile must exist
+		const sharedUser = await User.findById(userId)
+			.select("_id username")
+			.lean();
+		if (!sharedUser) {
+			throw new NotFoundError("User not found!");
+		}
+
+		// the recipient must exist
+		const recipient = await User.findById(recipientId).select("_id").lean();
+		if (!recipient) {
+			throw new BadRequestError("Recipient not found!");
+		}
+
+		// count the forward as a share
+		const updated = await User.findByIdAndUpdate(
+			userId,
+			{ $inc: { sharesCount: 1 } },
+			{ returnDocument: "after" },
+		);
+
+		// emit realtime share-count update (same as shareProfile)
+		if (updated?.sharesCount !== undefined) {
+			emitUserShare(userId, updated.sharesCount);
+		}
+
+		// Notify the recipient. createNotification internally drops the
+		// notification if the sharer and recipient are mutually blocked.
+		// Additionally skip it when the recipient is mutually blocked with
+		// the SHARED profile's owner — otherwise they'd get a dead-end
+		// notification pointing at a profile that 404s for them.
+		if (!(await areMutuallyBlocked(recipientId, userId))) {
+			await createNotification({
+				recipient: recipientId,
+				sender: senderId.toString(),
+				type: "profile_share",
+				user: userId,
+			});
+		}
+
+		res.status(200).json({
+			success: true,
+			message: "Profile forwarded successfully!",
+			shares: updated?.sharesCount,
+		});
+	} catch (err: any) {
+		if (err.statusCode && err.statusCode < 500) throw err;
+		logger.error(`Error in the forwardProfile controller!`, {
 			error: err.message,
 		});
 		throw new AppError("Internal server error!");
@@ -624,27 +706,32 @@ export const getUserByUsername = async (
 			}
 		}
 
+		// Run every remaining lookup in parallel — the block check, the follow
+		// status and both count queries share no dependencies, so batching them
+		// collapses ~4 sequential DB round-trips into one. This is the hot path
+		// for every profile view, so it matters for perceived load speed.
+		const targetId = (user as any)._id;
+		const isSelf =
+			currentUserId && targetId?.toString() === currentUserId.toString();
+
+		const [mutuallyBlocked, existingFollow, actualFollowers, actualFollowing] =
+			await Promise.all([
+				!isSelf && currentUserId
+					? areMutuallyBlocked(currentUserId.toString(), targetId?.toString())
+					: Promise.resolve(false),
+				currentUserId
+					? Follow.findOne({ follower: currentUserId, following: targetId }).lean()
+					: Promise.resolve(null),
+				Follow.countDocuments({ following: targetId }),
+				Follow.countDocuments({ follower: targetId }),
+			]);
+
 		// Blocked users must not exist for each other — hide profile entirely
-		if (currentUserId && (user as any)._id?.toString() !== currentUserId.toString()) {
-			if (await areMutuallyBlocked(currentUserId.toString(), (user as any)._id?.toString())) {
-				throw new NotFoundError("User not found!");
-			}
+		if (mutuallyBlocked) {
+			throw new NotFoundError("User not found!");
 		}
 
-		let isFollowing = false;
-		if (currentUserId) {
-			const existingFollow = await Follow.findOne({
-				follower: currentUserId,
-				following: (user as any)._id,
-			}).lean();
-			isFollowing = !!existingFollow;
-		}
-
-		// sync follow counts from Follow collection (authoritative)
-		const [actualFollowers, actualFollowing] = await Promise.all([
-			Follow.countDocuments({ following: (user as any)._id }),
-			Follow.countDocuments({ follower: (user as any)._id }),
-		]);
+		const isFollowing = !!existingFollow;
 
 		const responseData = {
 			success: true,
@@ -701,34 +788,40 @@ export const getUserPosts = async (
 				throw new BadRequestError("Invalid user id!");
 			}
 
-		const query: any = { author: userId };
+		const query: any = { author: userId, status: "published" };
 		if (cursor) {
 			query._id = { $lt: cursor };
 		}
 
-		// Blocked users must not exist for each other
-		if (currentUserId && currentUserId !== userId) {
-			if (await areMutuallyBlocked(currentUserId, userId)) {
-				return res.status(200).json({
-					success: true,
-					posts: [],
-					nextCursor: null,
-					hasMore: false,
-				});
-			}
+		// Blocked users must not exist for each other, and closeFriends posts
+		// are hidden from everyone else — run both pre-checks in parallel so
+		// the posts query isn't delayed by two sequential lookups.
+		const [mutuallyBlocked, authorUser] = await Promise.all([
+			currentUserId && currentUserId !== userId
+				? areMutuallyBlocked(currentUserId, userId)
+				: Promise.resolve(false),
+			currentUserId !== userId
+				? User.findById(userId).select("closeFriends").lean()
+				: Promise.resolve(null),
+		]);
+
+		if (mutuallyBlocked) {
+			return res.status(200).json({
+				success: true,
+				posts: [],
+				nextCursor: null,
+				hasMore: false,
+			});
 		}
 
 		// Enforce closeFriends privacy when viewed by non-owners
-			if (currentUserId !== userId) {
-				const authorUser = await User.findById(userId).select("closeFriends").lean();
-				const closeFriendsList = (authorUser as any)?.closeFriends || [];
-				const isCloseFriend = currentUserId
-					? closeFriendsList.some((id: any) => id.toString() === currentUserId)
-					: false;
+			const closeFriendsList = (authorUser as any)?.closeFriends || [];
+			const isCloseFriend = currentUserId
+				? closeFriendsList.some((id: any) => id.toString() === currentUserId)
+				: false;
 
-				if (!isCloseFriend) {
-					query.visibility = "public";
-				}
+			if (!isCloseFriend) {
+				query.visibility = "public";
 			}
 
 			const posts = await Post.find(query)
@@ -933,9 +1026,23 @@ export const pinPost = async (req: Request<Params>, res: Response) => {
 			throw new BadRequestError("Maximum 3 pinned posts allowed!");
 		}
 
-		(user as any).pinnedPosts = pinned; (user as any).pinnedPosts = pinned;
-		user.pinnedPosts = pinned;
+		// Append the new post ID — previously this assigned the unchanged old
+		// array, so pinning silently did nothing.
+		const nextPinned = [...pinned, new mongoose.Types.ObjectId(postId)];
+		user.pinnedPosts = nextPinned;
 		await user.save();
+
+		// Invalidate caches so the PINNED badge, the three-dot menu label and the
+		// posts grid reflect the change immediately (previously getPinnedPosts's
+		// `user:${userId}:pinned` cache (300s) and the route-level api:* caches
+		// served stale pinned state — and a second click errored "already pinned"
+		// even though the pin had succeeded).
+		await Promise.all([
+			clearByPattern(`user:${userId}:pinned`),
+			clearUserPostsCache(userId),
+			clearByPattern(`api:*:/users/${userId}/pinned*`),
+			clearByPattern(`api:*:/users/${userId}/posts*`),
+		]);
 
 		// Emit real-time pin event
 		emitPostPin(postId, userId);
@@ -985,6 +1092,18 @@ export const unpinPost = async (req: Request<Params>, res: Response) => {
 
 		(user as any).pinnedPosts = filtered;
 		await user.save();
+
+		// Invalidate caches so the PINNED badge, the three-dot menu label and the
+		// posts grid drop the pin immediately. Without this, getPinnedPosts served
+		// the stale `user:${userId}:pinned` cache (300s TTL) — the badge and menu
+		// still said "pinned" after reload, and a second click errored with
+		// "Post is not pinned!" even though the DB row was already unpinned.
+		await Promise.all([
+			clearByPattern(`user:${userId}:pinned`),
+			clearUserPostsCache(userId),
+			clearByPattern(`api:*:/users/${userId}/pinned*`),
+			clearByPattern(`api:*:/users/${userId}/posts*`),
+		]);
 
 		// Emit real-time unpin event
 		emitPostUnpin(postId, userId);
@@ -1322,6 +1441,7 @@ export const updateProfile = async (req: Request, res: Response) => {
 		await clearUsersCache();
 		await clearFeedCache();
 		await deleteCache(`auth:user:${user._id}`);
+		clearMemUserCache(String(user._id));
 		await clearUserByIdCache(user._id.toString());
 		if (user.username) {
 			await clearUserByUsernameCache(user.username);
@@ -1331,6 +1451,8 @@ export const updateProfile = async (req: Request, res: Response) => {
 		}
 
 		// Emit real-time profile update event so other users see changes instantly
+		// (incl. isPrivate — the privacy toggle in Settings must propagate to
+		// the owner's own client without a reload).
 		if (updatedUser) {
 			emitUserUpdated({
 				_id: updatedUser._id,
@@ -1341,6 +1463,9 @@ export const updateProfile = async (req: Request, res: Response) => {
 				bio: updatedUser.bio,
 				profilePic: updatedUser.profilePic,
 				bannerImage: updatedUser.bannerImage,
+				isPrivate: updatedUser.isPrivate,
+				isOnboarded: updatedUser.isOnboarded,
+				notificationsEnabled: updatedUser.notificationsEnabled,
 			});
 		}
 

@@ -1,4 +1,5 @@
-import { Trash2 } from "lucide-react";
+import { useRef } from "react";
+import { BellOff } from "lucide-react";
 import UserAvatar from "./UserAvatar";
 import ConversationLastMessage from "./ConversationLastMessage";
 import type { User as UserType, Conversation } from "../types";
@@ -7,26 +8,76 @@ interface ConversationListItemProps {
 	conv: Conversation;
 	user: UserType;
 	onSelect: () => void;
-	onDelete: (e: React.MouseEvent) => void;
+	/** Opens the mute/delete context menu at the given screen position. */
+	onOpenMenu: (e: { clientX: number; clientY: number }, conv: Conversation) => void;
 	formatMessageTime: (iso: string) => string;
 }
+
+const LONG_PRESS_MS = 500;
 
 export default function ConversationListItem({
 	conv,
 	user,
 	onSelect,
-	onDelete,
+	onOpenMenu,
 	formatMessageTime,
 }: ConversationListItemProps) {
 	const partner =
 		conv.participants.find((p) => p && p._id !== user._id) || user;
 	const presence: "online" | "offline" = conv.presence || "offline";
 	const unread = conv.unreadCounts?.[user._id] || 0;
+	const isMuted = !!conv.muted;
+
+	// Long-press (mobile) — 500ms hold opens the menu, same feel as messages.
+	const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const suppressClickRef = useRef(false);
+
+	const clearLongPress = () => {
+		if (longPressTimerRef.current) {
+			clearTimeout(longPressTimerRef.current);
+			longPressTimerRef.current = null;
+		}
+	};
+
+	const handleTouchStart = (e: React.TouchEvent) => {
+		clearLongPress();
+		suppressClickRef.current = false;
+		const touch = e.touches[0];
+		if (!touch) return;
+		longPressTimerRef.current = setTimeout(() => {
+			suppressClickRef.current = true;
+			onOpenMenu({ clientX: touch.clientX, clientY: touch.clientY }, conv);
+		}, LONG_PRESS_MS);
+	};
+
+	const handleTouchMove = () => {
+		// Scrolling cancels the hold
+		clearLongPress();
+	};
+
+	const handleTouchEnd = () => {
+		clearLongPress();
+	};
+
+	const handleClick = () => {
+		if (suppressClickRef.current) {
+			suppressClickRef.current = false;
+			return;
+		}
+		onSelect();
+	};
 
 	return (
 		<div
-			onClick={onSelect}
-			className="flex items-center gap-3 rounded-2xl p-2.5 cursor-pointer transition-all border hover:bg-zinc-900/30 text-zinc-300 border-transparent"
+			onClick={handleClick}
+			onContextMenu={(e) => {
+				e.preventDefault();
+				onOpenMenu({ clientX: e.clientX, clientY: e.clientY }, conv);
+			}}
+			onTouchStart={handleTouchStart}
+			onTouchMove={handleTouchMove}
+			onTouchEnd={handleTouchEnd}
+			className="flex items-center gap-3 rounded-2xl p-2.5 cursor-pointer transition-all border hover:bg-zinc-900/30 text-zinc-300 border-transparent select-none"
 		>
 			<div className="relative shrink-0">
 				<UserAvatar
@@ -44,11 +95,19 @@ export default function ConversationListItem({
 					<span className="text-[12px] font-black leading-tight truncate text-zinc-100 uppercase tracking-wide">
 						{partner.fullName}
 					</span>
-					{conv.lastMessage && (
-						<span className="text-[8.5px] font-mono text-zinc-500 shrink-0 mt-0.5">
-							{formatMessageTime(conv.lastMessage.createdAt)}
-						</span>
-					)}
+					<div className="flex items-center gap-1 shrink-0 mt-0.5">
+						{isMuted && (
+							<BellOff
+								className="h-3 w-3 text-zinc-500"
+								aria-label="Chat muted"
+							/>
+						)}
+						{conv.lastMessage && (
+							<span className="text-[8.5px] font-mono text-zinc-500">
+								{formatMessageTime(conv.lastMessage.createdAt)}
+							</span>
+						)}
+					</div>
 				</div>
 				<div className="flex justify-between items-center gap-2 mt-1">
 					<p className="text-[11px] truncate leading-tight flex-1 text-zinc-400">
@@ -63,13 +122,6 @@ export default function ConversationListItem({
 							{unread}
 						</span>
 					)}
-					<button
-						onClick={onDelete}
-						className="h-6 w-6 rounded-full flex items-center justify-center text-zinc-500 hover:text-red-450 hover:bg-white/5 transition-all cursor-pointer shrink-0 ml-1"
-						title="Delete Conversation"
-					>
-						<Trash2 className="h-3.5 w-3.5" />
-					</button>
 				</div>
 			</div>
 		</div>

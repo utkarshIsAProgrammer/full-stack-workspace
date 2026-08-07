@@ -173,7 +173,8 @@ export const incrementAnalytics = async (
     await AnalyticsEvent.findOneAndUpdate(
       {
         user: new mongoose.Types.ObjectId(userId),
-        event,
+        // event arrives as a free string but is always a runtime-valid enum value
+        event: event as "view" | "like" | "comment" | "share" | "save" | "follow" | "profile_view" | "post_view",
         target: targetId ? new mongoose.Types.ObjectId(targetId) : null,
         date,
       },

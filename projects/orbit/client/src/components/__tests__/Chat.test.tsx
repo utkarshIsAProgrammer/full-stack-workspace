@@ -18,7 +18,6 @@ vi.mock("../../utils/logger", () => ({
 
 vi.mock("../../utils/validation", () => ({
   validateChatMessage: vi.fn(() => ({})),
-  extractEmoji: vi.fn((s: string) => s.charAt(0)),
 }));
 
 vi.mock("../hooks/useKeyboardOpen", () => ({

@@ -4,6 +4,7 @@ import ImageCropModal from "./ImageCropModal";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 import { downscaleImageFile } from "../utils/imageCompression";
+import { useAutoGrow } from "../hooks/useAutoGrow";
 import type { Community } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
 
@@ -24,6 +25,7 @@ export default function CommunitySettingsPage({
 }: CommunitySettingsPageProps) {
   const [name, setName] = useState(community.name);
   const [description, setDescription] = useState(community.description || "");
+  const descriptionRef = useAutoGrow<HTMLTextAreaElement>(description);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [removeCurrentImage, setRemoveCurrentImage] = useState(false);
@@ -36,13 +38,22 @@ export default function CommunitySettingsPage({
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Guards the optimistic admin toggles against double-clicks / out-of-order
+  // responses — one in-flight request per setting at a time.
+  const pendingToggleRef = useRef<string | null>(null);
 
-  // User notification settings (stored in localStorage for now)
+  // User notification settings — persisted server-side so the mute applies
+  // to in-app + push notifications on every device. localStorage is only a
+  // fast optimistic mirror; the server value is fetched on mount.
   const [muted, setMuted] = useState(() => {
     try {
       return localStorage.getItem(`orbit_community_muted_${community._id}`) === "true";
     } catch { return false; }
   });
+  const [muting, setMuting] = useState(false);
+  // Set once the user toggles locally — the mount-time GET /muted reconcile
+  // must not overwrite a fast optimistic flip with the older server value.
+  const mutedToggledRef = useRef(false);
 
   // Admin control local states
   const [localMessagingEnabled, setLocalMessagingEnabled] = useState(community.messagingEnabled !== false);
@@ -63,6 +74,28 @@ export default function CommunitySettingsPage({
     setLocalAudioCallsEnabled(!!community.audioCallEnabled);
     setLocalVideoCallsEnabled(!!community.videoCallEnabled);
   }, [community._id, community.name, community.description, community.messagingEnabled, community.audioCallEnabled, community.videoCallEnabled]);
+
+  // Sync the real mute state from the server (survives device changes / cache)
+  useEffect(() => {
+    let alive = true;
+    mutedToggledRef.current = false;
+    apiFetch(`/api/communities/${community._id}/muted`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive || !d.success) return;
+        // If the user already toggled locally, the server response is stale
+        // relative to their intent — don't stomp their optimistic flip.
+        if (mutedToggledRef.current) return;
+        setMuted(!!d.muted);
+        try {
+          localStorage.setItem(`orbit_community_muted_${community._id}`, d.muted ? "true" : "false");
+        } catch {}
+      })
+      .catch(() => {/* keep the localStorage mirror on failure */});
+    return () => {
+      alive = false;
+    };
+  }, [community._id]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -188,17 +221,47 @@ export default function CommunitySettingsPage({
     }
   };
 
-  const handleToggleMute = () => {
+  const handleToggleMute = async () => {
+    if (muting) return;
     const next = !muted;
+    // Optimistic flip — instant, then reconciled with the server.
     setMuted(next);
+    mutedToggledRef.current = true;
+    setMuting(true);
     try {
-      localStorage.setItem(`orbit_community_muted_${community._id}`, next ? "true" : "false");
-    } catch {}
-    window.dispatchEvent(
-      new CustomEvent("showToast", {
-        detail: { message: next ? "Community notifications muted" : "Community notifications unmuted", type: "success" },
-      })
-    );
+      const res = await apiFetch(
+        `/api/communities/${community._id}/${next ? "mute" : "unmute"}`,
+        { method: "POST" }
+      );
+      const data = await res.json();
+      if (res.ok && data.success) {
+        try {
+          localStorage.setItem(`orbit_community_muted_${community._id}`, next ? "true" : "false");
+        } catch {}
+        window.dispatchEvent(
+          new CustomEvent("showToast", {
+            detail: { message: next ? "Community notifications muted" : "Community notifications unmuted", type: "success" },
+          })
+        );
+      } else {
+        setMuted(!next);
+        window.dispatchEvent(
+          new CustomEvent("showToast", {
+            detail: { message: data?.message || "Couldn't update mute setting.", type: "error" },
+          })
+        );
+      }
+    } catch (err: any) {
+      logger.error("Failed to toggle community mute", err);
+      setMuted(!next);
+      window.dispatchEvent(
+        new CustomEvent("showToast", {
+          detail: { message: "Couldn't update mute setting. Try again.", type: "error" },
+        })
+      );
+    } finally {
+      setMuting(false);
+    }
   };
 
   const currentImageUrl = removeCurrentImage
@@ -243,7 +306,8 @@ export default function CommunitySettingsPage({
           <div className="space-y-1">
             <button
               onClick={handleToggleMute}
-              className="w-full flex items-center justify-between px-4 py-3 rounded-xl hover:bg-zinc-900/80 transition-colors cursor-pointer"
+              disabled={muting}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-xl hover:bg-zinc-900/80 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
             >
               <div className="flex items-center gap-3">
                 {muted ? (
@@ -258,8 +322,9 @@ export default function CommunitySettingsPage({
                   </p>
                 </div>
               </div>
-              <div className={`relative h-6 w-11 rounded-full transition-all ${muted ? "bg-green-500" : "bg-zinc-700"}`}>
-                <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${muted ? "left-[22px]" : "left-0.5"}`} />
+              <div className={`relative h-6 w-11 rounded-full transition-colors duration-200 ${muted ? "bg-green-500" : "bg-zinc-700"}`}>
+                {/* Knob animates on transform (GPU-friendly), matching the admin toggles */}
+                <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ease-out ${muted ? "translate-x-5" : "translate-x-0"}`} />
               </div>
             </button>
           </div>
@@ -284,17 +349,43 @@ export default function CommunitySettingsPage({
                 <button
                   type="button"
                   onClick={async () => {
+                    if (pendingToggleRef.current === "messaging") return;
+                    pendingToggleRef.current = "messaging";
+                    // Optimistic flip — the knob moves INSTANTLY, then the
+                    // server response reconciles it (revert + toast on failure).
+                    const nextMessaging = !localMessagingEnabled;
+                    setLocalMessagingEnabled(nextMessaging);
                     try {
                       const res = await apiFetch(`/api/communities/${community._id}/toggle-messaging`, { method: "POST" });
-                      const data = await res.json();                        if (res.ok && data.success) {
-                          setLocalMessagingEnabled(data.messagingEnabled);
-                          onUpdated({ ...community, messagingEnabled: data.messagingEnabled } as Community);
-                        }
-                    } catch (err: any) { logger.error("Failed to toggle messaging", err); }
+                      const data = await res.json();
+                      if (res.ok && data.success) {
+                        setLocalMessagingEnabled(data.messagingEnabled);
+                        onUpdated({ ...community, messagingEnabled: data.messagingEnabled } as Community);
+                      } else {
+                        setLocalMessagingEnabled(!nextMessaging);
+                        window.dispatchEvent(
+                          new CustomEvent("showToast", {
+                            detail: { message: data?.message || "Couldn't update setting.", type: "error" },
+                          }),
+                        );
+                      }
+                    } catch (err: any) {
+                      logger.error("Failed to toggle messaging", err);
+                      setLocalMessagingEnabled(!nextMessaging);
+                      window.dispatchEvent(
+                        new CustomEvent("showToast", {
+                          detail: { message: "Couldn't update setting. Try again.", type: "error" },
+                        }),
+                      );
+                    } finally {
+                      pendingToggleRef.current = null;
+                    }
                   }}
-                  className={`relative h-6 w-11 rounded-full transition-all cursor-pointer shrink-0 ${localMessagingEnabled ? "bg-green-500" : "bg-zinc-700"}`}
+                  className={`relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${localMessagingEnabled ? "bg-green-500" : "bg-zinc-700"}`}
+                  aria-pressed={localMessagingEnabled}
                 >
-                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${localMessagingEnabled ? "left-[22px]" : "left-0.5"}`} />
+                  {/* Knob animates on transform (GPU-friendly) instead of `left` */}
+                  <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ease-out ${localMessagingEnabled ? "translate-x-5" : "translate-x-0"}`} />
                 </button>
               </div>
 
@@ -312,17 +403,42 @@ export default function CommunitySettingsPage({
                 <button
                   type="button"
                   onClick={async () => {
+                    if (pendingToggleRef.current === "audio-calls") return;
+                    pendingToggleRef.current = "audio-calls";
+                    // Optimistic flip — instant, then reconciled with the server.
+                    const nextAudio = !localAudioCallsEnabled;
+                    setLocalAudioCallsEnabled(nextAudio);
                     try {
                       const res = await apiFetch(`/api/communities/${community._id}/toggle-audio-calls`, { method: "POST" });
-                      const data = await res.json();                        if (res.ok && data.success) {
-                          setLocalAudioCallsEnabled(data.audioCallEnabled);
-                          onUpdated({ ...community, audioCallEnabled: data.audioCallEnabled } as Community);
-                        }
-                    } catch (err: any) { logger.error("Failed to toggle audio calls", err); }
+                      const data = await res.json();
+                      if (res.ok && data.success) {
+                        setLocalAudioCallsEnabled(data.audioCallEnabled);
+                        onUpdated({ ...community, audioCallEnabled: data.audioCallEnabled } as Community);
+                      } else {
+                        setLocalAudioCallsEnabled(!nextAudio);
+                        window.dispatchEvent(
+                          new CustomEvent("showToast", {
+                            detail: { message: data?.message || "Couldn't update setting.", type: "error" },
+                          }),
+                        );
+                      }
+                    } catch (err: any) {
+                      logger.error("Failed to toggle audio calls", err);
+                      setLocalAudioCallsEnabled(!nextAudio);
+                      window.dispatchEvent(
+                        new CustomEvent("showToast", {
+                          detail: { message: "Couldn't update setting. Try again.", type: "error" },
+                        }),
+                      );
+                    } finally {
+                      pendingToggleRef.current = null;
+                    }
                   }}
-                  className={`relative h-6 w-11 rounded-full transition-all cursor-pointer shrink-0 ${localAudioCallsEnabled ? "bg-green-500" : "bg-zinc-700"}`}
+                  className={`relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${localAudioCallsEnabled ? "bg-green-500" : "bg-zinc-700"}`}
+                  aria-pressed={localAudioCallsEnabled}
                 >
-                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${localAudioCallsEnabled ? "left-[22px]" : "left-0.5"}`} />
+                  {/* Knob animates on transform (GPU-friendly) instead of `left` */}
+                  <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ease-out ${localAudioCallsEnabled ? "translate-x-5" : "translate-x-0"}`} />
                 </button>
               </div>
 
@@ -340,17 +456,42 @@ export default function CommunitySettingsPage({
                 <button
                   type="button"
                   onClick={async () => {
+                    if (pendingToggleRef.current === "video-calls") return;
+                    pendingToggleRef.current = "video-calls";
+                    // Optimistic flip — instant, then reconciled with the server.
+                    const nextVideo = !localVideoCallsEnabled;
+                    setLocalVideoCallsEnabled(nextVideo);
                     try {
                       const res = await apiFetch(`/api/communities/${community._id}/toggle-video-calls`, { method: "POST" });
-                      const data = await res.json();                        if (res.ok && data.success) {
-                          setLocalVideoCallsEnabled(data.videoCallEnabled);
-                          onUpdated({ ...community, videoCallEnabled: data.videoCallEnabled } as Community);
-                        }
-                    } catch (err: any) { logger.error("Failed to toggle video calls", err); }
+                      const data = await res.json();
+                      if (res.ok && data.success) {
+                        setLocalVideoCallsEnabled(data.videoCallEnabled);
+                        onUpdated({ ...community, videoCallEnabled: data.videoCallEnabled } as Community);
+                      } else {
+                        setLocalVideoCallsEnabled(!nextVideo);
+                        window.dispatchEvent(
+                          new CustomEvent("showToast", {
+                            detail: { message: data?.message || "Couldn't update setting.", type: "error" },
+                          }),
+                        );
+                      }
+                    } catch (err: any) {
+                      logger.error("Failed to toggle video calls", err);
+                      setLocalVideoCallsEnabled(!nextVideo);
+                      window.dispatchEvent(
+                        new CustomEvent("showToast", {
+                          detail: { message: "Couldn't update setting. Try again.", type: "error" },
+                        }),
+                      );
+                    } finally {
+                      pendingToggleRef.current = null;
+                    }
                   }}
-                  className={`relative h-6 w-11 rounded-full transition-all cursor-pointer shrink-0 ${localVideoCallsEnabled ? "bg-green-500" : "bg-zinc-700"}`}
+                  className={`relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${localVideoCallsEnabled ? "bg-green-500" : "bg-zinc-700"}`}
+                  aria-pressed={localVideoCallsEnabled}
                 >
-                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${localVideoCallsEnabled ? "left-[22px]" : "left-0.5"}`} />
+                  {/* Knob animates on transform (GPU-friendly) instead of `left` */}
+                  <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ease-out ${localVideoCallsEnabled ? "translate-x-5" : "translate-x-0"}`} />
                 </button>
               </div>
             </div>
@@ -419,7 +560,7 @@ export default function CommunitySettingsPage({
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="What's this community about?"
+                ref={descriptionRef} placeholder="What's this community about?"
                 maxLength={500}
                 rows={3}
                 className="w-full bg-zinc-900/80 border border-zinc-800/60 !rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all resize-none"

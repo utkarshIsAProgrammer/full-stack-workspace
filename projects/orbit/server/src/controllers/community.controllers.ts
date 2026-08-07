@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { Community } from "../models/community.model";
 import { CommunityMessage } from "../models/communityMessage.model";
 import Notification from "../models/notification.model";
+import { User } from "../models/user.model";
 import {
 	BadRequestError,
 	NotFoundError,
@@ -20,8 +21,17 @@ import {
 } from "../configs/socket";
 import { deleteCache } from "../configs/cache";
 import { getBlockedUserIds } from "../utilities/blockCheck";
+import {
+	invalidateRecipientNotificationCaches,
+	shouldNotifyCategory,
+} from "../utilities/notification";
 import { generateToken } from "../services/livekitService";
-import { sendPushToUser } from "../services/pushService";
+import { sendPushToUser, attachmentPushLabel } from "../services/pushService";
+import {
+	getSearchCache,
+	setSearchCache,
+	clearSearchCacheForTarget,
+} from "../utilities/searchCache";
 
 type CommunityParams = {
 	communityId: string;
@@ -75,13 +85,18 @@ const recordCommunityAction = async (
 /**
  * Create a new community.
  * POST /api/communities
- */
-export const createCommunity = async (
+ */	export const createCommunity = async (
 	req: Request,
 	res: Response,
 	next: NextFunction,
 ) => {
-	const { name, description } = req.body;
+	const {
+		name,
+		description,
+		allowAudioCalls,
+		allowVideoCalls,
+		messagingEnabled,
+	} = req.body;
 	const currentUserId = req.user?._id;
 
 	try {
@@ -113,6 +128,21 @@ export const createCommunity = async (
 			creator: currentUserId,
 			members: [{ user: currentUserId, joinedAt: new Date() }],
 			memberCount: 1,
+			// Respect explicit call/messaging preferences from the client
+			// (the settings page toggles these after creation, and the create
+			// form may pass them too). Falls back to schema defaults otherwise.
+			audioCallEnabled:
+				typeof allowAudioCalls === "boolean"
+					? allowAudioCalls
+					: undefined,
+			videoCallEnabled:
+				typeof allowVideoCalls === "boolean"
+					? allowVideoCalls
+					: undefined,
+			messagingEnabled:
+				typeof messagingEnabled === "boolean"
+					? messagingEnabled
+					: undefined,
 		});
 
 		await community.save();
@@ -211,12 +241,20 @@ export const pinCommunityMessage = async (
 			},
 		});
 
+		// Order by pin time — newest pin is LAST in the array, FIRST in the banner.
 		const pinnedMessages = await CommunityMessage.find({
 			_id: { $in: community.pinnedMessages },
 		})
 			.populate("sender", "username fullName profilePic")
-			.sort({ createdAt: -1 })
 			.lean();
+		const pinOrder = (community.pinnedMessages || []).map((p) =>
+			p.toString(),
+		);
+		pinnedMessages.sort(
+			(a, b) =>
+				pinOrder.indexOf(b._id.toString()) -
+				pinOrder.indexOf(a._id.toString()),
+		);
 
 		const io = getIO();
 		io.to(`community:${communityId}`).emit("community:message:pinned", {
@@ -297,12 +335,20 @@ export const unpinCommunityMessage = async (
 			},
 		});
 
+		// Order by pin time — newest pin is LAST in the array, FIRST in the banner.
 		const pinnedMessages = await CommunityMessage.find({
 			_id: { $in: community.pinnedMessages },
 		})
 			.populate("sender", "username fullName profilePic")
-			.sort({ createdAt: -1 })
 			.lean();
+		const pinOrder = (community.pinnedMessages || []).map((p) =>
+			p.toString(),
+		);
+		pinnedMessages.sort(
+			(a, b) =>
+				pinOrder.indexOf(b._id.toString()) -
+				pinOrder.indexOf(a._id.toString()),
+		);
 
 		const io = getIO();
 		io.to(`community:${communityId}`).emit("community:message:unpinned", {
@@ -373,8 +419,17 @@ export const getPinnedMessages = async (
 				select: "sender text attachments createdAt",
 				populate: { path: "sender", select: "username fullName profilePic" },
 			})
-			.sort({ createdAt: -1 })
 			.lean();
+
+		// Order by PIN TIME — newest pin is last in the stored array, first shown.
+		const pinOrder = (community.pinnedMessages || []).map((p) =>
+			p.toString(),
+		);
+		pinnedMessages.sort(
+			(a, b) =>
+				pinOrder.indexOf(b._id.toString()) -
+				pinOrder.indexOf(a._id.toString()),
+		);
 
 		return res.status(200).json({
 			success: true,
@@ -504,9 +559,29 @@ export const getMyCommunities = async (
 			.sort({ updatedAt: -1 })
 			.lean();
 
+		// Attach the per-user muted flag so the "My Communities" list can show
+		// a muted indicator without an extra round-trip per community.
+		let mutedCommunityIds = new Set<string>();
+		try {
+			const mutedDocs = await User.findById(currentUserId)
+				.select("mutedCommunities")
+				.lean();
+			(mutedDocs?.mutedCommunities || []).forEach((m: any) =>
+				mutedCommunityIds.add(m.community.toString()),
+			);
+		} catch (muteErr: any) {
+			logger.error("Muted-community fetch error in getMyCommunities", {
+				error: muteErr.message,
+			});
+		}
+
 		return res.status(200).json({
 			success: true,
-			communities: communities.map((c: any) => ({ ...c, isMember: true })),
+			communities: communities.map((c: any) => ({
+				...c,
+				isMember: true,
+				muted: mutedCommunityIds.has(c._id.toString()),
+			})),
 		});
 	} catch (err: any) {
 		logger.error("Error in getMyCommunities controller", {
@@ -1067,6 +1142,10 @@ export const sendCommunityMessage = async (
 
 		await message.save();
 
+		// New message content changes what search would return for this
+		// community — drop the cached results so the next search is fresh.
+		clearSearchCacheForTarget(`comm:${communityId}`);
+
 		// Update community's updatedAt + lastMessage snapshot (so the community
 		// list can show a live "last message" preview). lastAction is reset — a
 		// fresh message supersedes any stale "reacted" preview.
@@ -1140,27 +1219,55 @@ export const sendCommunityMessage = async (
 			else if (firstAttach.type === "file") messageType = "file";
 		}
 
+		// Members who muted this community must not receive notifications/push
+		// for its messages (they still receive the message itself in the chat).
+		const mutedForCommunity = new Set<string>();
+		try {
+			const mutedDocs = await User.find({
+				"mutedCommunities.community": communityId,
+			})
+				.select("_id")
+				.lean();
+			mutedDocs.forEach((u) => mutedForCommunity.add(u._id.toString()));
+		} catch (muteErr: any) {
+			logger.error("Muted-member filter error in sendCommunityMessage", {
+				error: muteErr.message,
+			});
+		}
+
 		// Create notifications for all other members (not the sender). Members
-		// with a mutual block relationship are excluded — a blocked user must
-		// not receive notifications, badges, or pushes from the blocker either.
+		// with a mutual block relationship or who muted this community are
+		// excluded — they must not receive notifications, badges, or pushes.
 		const otherMembers = community.members.filter(
 			(m) =>
 				m.user.toString() !== currentUserId.toString() &&
-				!blockedForSender.has(m.user.toString())
+				!blockedForSender.has(m.user.toString()) &&
+				!mutedForCommunity.has(m.user.toString())
 		);
 
 		// Create notifications and populate sender for socket emission
 		const createAndEmitNotif = async (recipientId: string) => {
 			try {
-				const notif = new Notification({
-					recipient: recipientId,
-					sender: currentUserId,
-					type: "community_message",
-					community: communityId,
-					message: populatedMessage?._id,
-					messageType,
-				});
-				await notif.save();
+					// Per-category preference toggle — suppressed community
+					// messages produce neither an in-app notification nor a
+					// device push for this recipient.
+					if (!(await shouldNotifyCategory(recipientId, "message"))) {
+						return;
+					}
+					const notif = new Notification({
+						recipient: recipientId,
+						sender: currentUserId,
+						type: "community_message",
+						community: communityId,
+						message: populatedMessage?._id,
+						messageType,
+					});
+					await notif.save();
+
+					// Drop the recipient's cached notifications list + unread badge
+					// so the new notification appears instantly (the direct save
+					// above bypasses createNotification's cache invalidation).
+					await invalidateRecipientNotificationCaches(recipientId);
 
 				// Populate sender for the socket payload so App.tsx can read sender.fullName
 				const populated = await Notification.findById(notif._id)
@@ -1173,15 +1280,9 @@ export const sendCommunityMessage = async (
 				const senderInfo = (populated as any)?.sender || {};
 				const senderName =
 					senderInfo?.fullName || senderInfo?.username || "Someone";
-				const body =
-					sanitizedText?.slice(0, 120) ||
-					messageType === "photo"
-						? "📷 Photo"
-						: messageType === "video"
-							? "🎬 Video"
-							: messageType === "voice_note"
-								? "🎤 Voice note"
-								: "New message";
+				// Plain-text, type-specific body ("Photo", "Voice note", "Video",
+				// "File") — no emoji in push bodies.
+				const body = attachmentPushLabel(attachments, sanitizedText);
 				sendPushToUser(recipientId, {
 					title: senderName,
 					body,
@@ -1689,6 +1790,18 @@ export const searchCommunityMessages = async (
 			searchQuery.sender = { $nin: blockedIds };
 		}
 
+		// Short-TTL in-memory cache: repeated/backspace queries resolve instantly
+		// instead of hitting the (slow, free-tier) DB again.
+		// NOTE: keyed per-user — the query excludes each searcher's blocked
+		// users (`sender: { $nin: blockedIds }`), so a process-global key would
+		// leak one user's filtered results to another. Per-user keys prevent
+		// cross-user cache contamination.
+		const cacheKey = `comm:${communityId}:${currentUserId}:${q}`;
+		const cached = getSearchCache(cacheKey);
+		if (cached) {
+			return res.status(200).json(cached);
+		}
+
 		const messages = await CommunityMessage.find(searchQuery)
 			.populate("sender", "username fullName profilePic")
 			.populate({
@@ -1700,11 +1813,14 @@ export const searchCommunityMessages = async (
 			.limit(limit)
 			.lean();
 
-		return res.status(200).json({
+		const payload = {
 			success: true,
 			messages: messages.reverse(),
 			total: messages.length,
-		});
+		};
+		setSearchCache(cacheKey, payload);
+
+		return res.status(200).json(payload);
 	} catch (err: any) {
 		logger.error("Error in searchCommunityMessages controller", {
 			error: err.message,
@@ -1855,6 +1971,138 @@ export const toggleCommunityMessaging = async (
     });
   } catch (err: any) {
     logger.error("Error in toggleCommunityMessaging controller", {
+      error: err.message,
+    });
+    return next(
+      err instanceof AppError
+        ? err
+        : new AppError("Internal server error!"),
+    );
+  }
+};
+
+/**
+ * Mute notifications for a community (any member, per-user setting).
+ * POST /api/communities/:communityId/mute
+ */
+export const muteCommunityNotifications = async (
+  req: Request<CommunityParams>,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { communityId } = req.params;
+    const currentUserId = (req.user as any)?._id;
+    const userId = currentUserId?.toString();
+
+    const community = await Community.findById(communityId);
+    if (!community) {
+      return next(new NotFoundError("Community not found."));
+    }
+    if (!community.members.some((m) => m.user.toString() === userId)) {
+      return next(
+        new ForbiddenError("Join the community to mute its notifications."),
+      );
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return next(new UnauthorizedError("User not found."));
+    }
+    const alreadyMuted = user.mutedCommunities?.some(
+      (m) => m.community?.toString() === communityId,
+    );
+    if (!alreadyMuted) {
+      user.mutedCommunities.push({
+        community: new mongoose.Types.ObjectId(communityId) as any,
+        mutedAt: new Date(),
+      });
+      await user.save();
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Community notifications muted.",
+      muted: true,
+    });
+  } catch (err: any) {
+    logger.error("Error in muteCommunityNotifications controller", {
+      error: err.message,
+    });
+    return next(
+      err instanceof AppError
+        ? err
+        : new AppError("Internal server error!"),
+    );
+  }
+};
+
+/**
+ * Unmute notifications for a community (any member, per-user setting).
+ * POST /api/communities/:communityId/unmute
+ */
+export const unmuteCommunityNotifications = async (
+  req: Request<CommunityParams>,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { communityId } = req.params;
+    const currentUserId = (req.user as any)?._id;
+    const userId = currentUserId?.toString();
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return next(new UnauthorizedError("User not found."));
+    }
+
+    user.mutedCommunities = user.mutedCommunities.filter(
+      (m) => m.community?.toString() !== communityId,
+    ) as any;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Community notifications unmuted.",
+      muted: false,
+    });
+  } catch (err: any) {
+    logger.error("Error in unmuteCommunityNotifications controller", {
+      error: err.message,
+    });
+    return next(
+      err instanceof AppError
+        ? err
+        : new AppError("Internal server error!"),
+    );
+  }
+};
+
+/**
+ * Get whether the current user muted a community's notifications.
+ * GET /api/communities/:communityId/muted
+ */
+export const getCommunityMutedStatus = async (
+  req: Request<CommunityParams>,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { communityId } = req.params;
+    const currentUserId = (req.user as any)?._id;
+    const userId = currentUserId?.toString();
+
+    const user = await User.findById(userId)
+      .select("mutedCommunities")
+      .lean();
+    const muted =
+      user?.mutedCommunities?.some(
+        (m) => m.community?.toString() === communityId,
+      ) ?? false;
+
+    return res.status(200).json({ success: true, muted });
+  } catch (err: any) {
+    logger.error("Error in getCommunityMutedStatus controller", {
       error: err.message,
     });
     return next(
@@ -2257,23 +2505,33 @@ export const toggleCommunityMessageReaction = async (
 			return next(new NotFoundError("Message not found!"));
 		}
 
+		const userIdStr = currentUserId.toString();
+		const trimmedEmoji = emoji.trim();
+
 		// Check if user already reacted with this emoji
 		const existingIndex = message.reactions.findIndex(
 			(r) =>
-				r.sender.toString() === currentUserId.toString() &&
-				r.emoji === emoji,
+				r.sender.toString() === userIdStr &&
+				r.emoji === trimmedEmoji,
 		);
 
 		let type: "add" | "remove";
 
 		if (existingIndex > -1) {
-			// Remove reaction
-			message.reactions.splice(existingIndex, 1);
+			// Toggle off — remove ALL of this user's reactions
+			message.reactions = message.reactions.filter(
+				(r) => r.sender.toString() !== userIdStr,
+			) as any;
 			type = "remove";
 		} else {
-			// Add reaction
+			// Replace — remove any previous reaction by this user, then add the
+			// new one (one reaction per user, exactly like personal chat and
+			// comments — clicking 6 emojis shows ONE, the latest).
+			message.reactions = message.reactions.filter(
+				(r) => r.sender.toString() !== userIdStr,
+			) as any;
 			(message.reactions as any).push({
-				emoji,
+				emoji: trimmedEmoji,
 				sender: currentUserId,
 			});
 			type = "add";

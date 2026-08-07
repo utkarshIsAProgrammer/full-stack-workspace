@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Award, Loader2 } from "lucide-react";
+import { Award, Crown, Gem, Loader2, Medal, Star, Trophy, BadgeCheck } from "lucide-react";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 
@@ -82,15 +82,25 @@ export default function ReputationDisplay({ userId, compact = false }: Reputatio
           <span className="text-zinc-600">{repInfo.totalXP.toLocaleString()} XP</span>
           {repInfo.badges.length > 0 && (
             <span className="ml-1 flex items-center gap-1">
-              {repInfo.badges.slice(0, 3).map((badge) => (
-                <span
-                  key={badge}
-                  className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[8px] font-bold text-amber-400 leading-none"
-                  title={badge.replace(/_/g, " ")}
-                >
-                  {badge === "first_100" ? "🏅" : badge === "first_1k" ? "🥇" : badge === "first_10k" ? "💎" : badge === "level_5" ? "⭐️" : badge === "level_10" ? "🏆" : badge === "level_20" ? "👑" : "📛"}
-                </span>
-              ))}
+              {repInfo.badges.slice(0, 3).map((badge) => {
+                const Icon =
+                  badge === "first_100" ? Medal
+                  : badge === "first_1k" ? Trophy
+                  : badge === "first_10k" ? Gem
+                  : badge === "level_5" ? Star
+                  : badge === "level_10" ? Trophy
+                  : badge === "level_20" ? Crown
+                  : BadgeCheck;
+                return (
+                  <span
+                    key={badge}
+                    className="flex h-4 w-4 items-center justify-center rounded-full bg-amber-500/10 text-amber-400"
+                    title={badge.replace(/_/g, " ")}
+                  >
+                    <Icon className="h-2.5 w-2.5" />
+                  </span>
+                );
+              })}
               {repInfo.badges.length > 3 && (
                 <span className="text-[8px] text-zinc-500">+{repInfo.badges.length - 3}</span>
               )}

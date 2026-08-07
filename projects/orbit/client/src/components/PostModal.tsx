@@ -7,6 +7,8 @@ import { downscaleImageFile } from "../utils/imageCompression";
 import { validatePost } from "../utils/validation";
 import ValidationMessage from "./ValidationMessage";
 import CharCounter from "./CharCounter";
+import LinkPreviewCard from "./LinkPreviewCard";
+import { extractFirstUrl } from "../utils/links";
 import { useAutoGrow } from "../hooks/useAutoGrow";
 
 interface PostModalProps {
@@ -27,6 +29,25 @@ export default function PostModal({
 	const [title, setTitle] = useState("");
 	const [content, setContent] = useState("");
 	const contentRef = useAutoGrow<HTMLTextAreaElement>(content, 360);
+	// Debounced URL for the live link preview — only fetches once the user
+	// stops typing for a beat, so a half-typed "https://g" doesn't fire a
+	// request per keystroke (LinkPreviewCard caches by exact URL, so each
+	// new char would otherwise bypass the cache and hit the API).
+	const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!content) {
+			setPreviewUrl(null);
+			return;
+		}
+		const url = extractFirstUrl(content);
+		if (!url) {
+			setPreviewUrl(null);
+			return;
+		}
+		const t = setTimeout(() => setPreviewUrl(url), 600);
+		return () => clearTimeout(t);
+	}, [content]);
 	const [postImageFiles, setPostImageFiles] = useState<File[]>([]);
 	const [postImagePreviews, setPostImagePreviews] = useState<string[]>([]);
 	const [submittingPost, setSubmittingPost] = useState(false);
@@ -369,6 +390,14 @@ export default function PostModal({
 							</div>
 							<ValidationMessage message={fieldErrors.content} />
 
+							{/* Live link preview while composing — debounced so partial
+								URLs while typing don't spam the preview API. */}
+							{previewUrl && (
+								<div className="mt-2">
+									<LinkPreviewCard url={previewUrl} />
+								</div>
+							)}
+
 							{/* Poll Creator */}
 							{showPollCreator && (
 								<div className="space-y-3 p-3 rounded-xl border border-zinc-800/40 bg-zinc-900/20">
@@ -502,8 +531,8 @@ export default function PostModal({
 										</div>
 									))}
 								</div>
-							)}										{/* Collaborator invite — DISABLED, panel can never open */}
-										{false && showCollabInvite && (
+							)}										{/* Collaborator invite — invite panel opens from the toggle below */}
+										{showCollabInvite && (
 								<div className="space-y-2 p-3 rounded-xl border border-zinc-800/40 bg-zinc-900/20">
 									<div className="flex items-center justify-between">
 										<h3 className="text-label-sm font-semibold text-zinc-300 flex items-center gap-1.5">
@@ -621,18 +650,23 @@ export default function PostModal({
 										title="Schedule post"
 									>
 										<Calendar className="h-4.5 w-4.5" />
-									</button>
-
-									{/* Collab toggle — DISABLED (feature temporarily unavailable) */}
-									<button
-										type="button"
-										disabled
-										aria-disabled="true"
-										title="Invite collaborator (coming soon)"
-										className="flex h-10 w-10 items-center justify-center rounded-full text-zinc-600 dark:text-zinc-700 opacity-50 cursor-not-allowed"
-									>
-										<UserPlus className="h-4.5 w-4.5" />
-									</button>
+									</button>										{/* Collab toggle — invite a co-author to the post */}
+										<button
+											type="button"
+											onClick={() => setShowCollabInvite((v) => !v)}
+											className={`flex h-10 w-10 items-center justify-center rounded-full transition-all cursor-pointer ${
+												showCollabInvite || collabUsername.trim()
+													? "bg-white/15 text-white"
+													: "text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+											}`}
+											title={
+												collabUsername.trim()
+													? `Collaborating with @${collabUsername.replace(/^@/, "")}`
+													: "Invite a collaborator"
+											}
+										>
+											<UserPlus className="h-4.5 w-4.5" />
+										</button>
 
 									{postImageFiles.length > 0 && (
 										<span className="text-[9px] text-zinc-500 ml-1">

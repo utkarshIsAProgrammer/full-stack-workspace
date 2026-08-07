@@ -19,6 +19,7 @@ import {
 	Trash2,
 	BarChart3,
 	Check,
+	Share2,
 } from "lucide-react";
 import { Socket } from "socket.io-client";
 import { Notification, User } from "../types";
@@ -62,10 +63,9 @@ export default function Notifications({
 	const [activeFilter, setActiveFilter] = useState<string>("all");
 
 	// ── Tab labels ──
-	// On non-desktop devices each tab is an icon pill and only the active
-	// tab also shows its label (so tapping an icon reveals its name while
-	// the previous tab collapses back to just the icon). On desktop (lg+)
-	// there's enough room for every label, so they all show.
+	// On every screen size each tab is an icon pill and only the active tab
+	// also shows its label (so tapping an icon reveals its name while the
+	// previous tab collapses back to just the icon). Single line, no scroll.
 
 	const filteredNotifications = activeFilter === "all"
 		? notifications
@@ -483,6 +483,30 @@ export default function Notifications({
         color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/30",
         text: "accepted your collaboration invite",
       };
+    case "profile_share":
+      return {
+        icon: Share2,
+        color: "text-zinc-400 bg-zinc-900/20 border-zinc-800",
+        text: "shared a profile with you",
+      };
+    case "post_share":
+      return {
+        icon: Share2,
+        color: "text-zinc-400 bg-zinc-900/20 border-zinc-800",
+        text: "shared a post with you",
+      };
+    case "glimpse_share":
+      return {
+        icon: Share2,
+        color: "text-zinc-400 bg-zinc-900/20 border-zinc-800",
+        text: "shared a glance with you",
+      };
+    case "comment_share":
+      return {
+        icon: Share2,
+        color: "text-zinc-400 bg-zinc-900/20 border-zinc-800",
+        text: "shared a comment with you",
+      };
     default:
       return {
         icon: Bell,
@@ -492,8 +516,8 @@ export default function Notifications({
 		}
 	};
 
-	// Shared tab button. Below lg the label only shows for the active tab
-	// (icon pills otherwise); at lg+ every label is visible.
+	// Shared tab button. The label only shows for the active tab (icon pills
+	// otherwise) on every screen size.
 	const renderTabButton = (tab: (typeof FILTER_TABS)[number]) => {
 		const TabIcon = tab.icon;
 		const isActive = activeFilter === tab.key;
@@ -514,9 +538,7 @@ export default function Notifications({
 				}`}
 			>
 				<TabIcon className="h-3.5 w-3.5 shrink-0" />
-				<span
-					className={`${isActive ? "inline" : "hidden"} lg:inline`}
-				>
+				<span className={`${isActive ? "inline" : "hidden"}`}>
 					{tab.label}
 				</span>
 				{count > 0 && (
@@ -590,9 +612,9 @@ export default function Notifications({
 				)}
 			</div>
 
-			{/* Filter tabs — below lg each tab is an icon pill and only the active
-			   one also shows its label (tap an icon to reveal its name); at lg+
-			   every label is shown. Single line, no scroll, no wrap. */}
+			{/* Filter tabs — on every screen each tab is an icon pill and only the
+			   active one also shows its label (tap an icon to reveal its name).
+			   Single line, no scroll, no wrap. */}
 			<div className="mb-5 flex items-center gap-1.5">
 				{FILTER_TABS.map((tab) => renderTabButton(tab))}
 			</div>
@@ -669,7 +691,28 @@ export default function Notifications({
 												handleMarkSingleRead(notif._id);
 											// Whole-row tap opens the exact place the
 											// notification happened.
-											if (notif.post?.slug) {
+											if (notif.type === "profile_share") {
+												// Open the SHARED profile, not the sender
+												if (notif.user?.username) {
+													onUserClick(notif.user.username);
+												} else if (notif.sender?.username) {
+													onUserClick(
+														notif.sender.username,
+													);
+												}
+											} else if (
+												notif.type === "comment_share" &&
+												notif.comment?.post?.slug
+											) {
+												// Open the post that holds the shared comment
+												onPostClick(notif.comment.post.slug);
+											} else if (
+												notif.type === "glimpse_share" &&
+												notif.glimpse?.author?.username
+											) {
+												// Open the glance author's profile
+												onUserClick(notif.glimpse.author.username);
+											} else if (notif.post?.slug) {
 												onPostClick(notif.post.slug);
 											} else if (notif.sender?.username) {
 												onUserClick(notif.sender.username);
@@ -681,11 +724,21 @@ export default function Notifications({
 												if (!notif.isRead)
 													handleMarkSingleRead(notif._id);
 												if (notif.post?.slug) {
-													onPostClick(notif.post.slug);
-												} else if (notif.sender?.username) {
-													onUserClick(notif.sender.username);
-												}
+												onPostClick(notif.post.slug);
+											} else if (
+												notif.type === "comment_share" &&
+												notif.comment?.post?.slug
+											) {
+												onPostClick(notif.comment.post.slug);
+											} else if (
+												notif.type === "glimpse_share" &&
+												notif.glimpse?.author?.username
+											) {
+												onUserClick(notif.glimpse.author.username);
+											} else if (notif.sender?.username) {
+												onUserClick(notif.sender.username);
 											}
+										}
 										}}
 										className={`group relative flex items-start justify-between gap-3 rounded-2xl border px-3 py-2.5 transition-colors cursor-pointer ${
 											notif.isRead
@@ -735,11 +788,35 @@ export default function Notifications({
 													</p>
 												)}
 
-												{notif.comment?.content && (
-													<p className="mt-0.5 truncate pl-2 text-[12px] italic text-slate-400 dark:text-zinc-500">
-														"{notif.comment.content}"
-													</p>
-												)}
+										{notif.comment?.content && (
+											<p className="mt-0.5 truncate pl-2 text-[12px] italic text-slate-400 dark:text-zinc-500">
+												"{notif.comment.content}"
+											</p>
+										)}
+
+										{/* Shared profile context for profile_share */}
+										{notif.type === "profile_share" &&
+											notif.user && (
+												<p className="mt-0.5 truncate text-[12px] font-medium text-slate-500 dark:text-zinc-400">
+													@{notif.user.username} · profile
+												</p>
+											)}
+
+										{/* Shared comment context for comment_share */}
+										{notif.type === "comment_share" &&
+											notif.comment?.content && (
+												<p className="mt-0.5 truncate pl-2 text-[12px] italic text-slate-400 dark:text-zinc-500">
+													"{notif.comment.content}"
+												</p>
+											)}
+
+										{/* Shared glance context for glimpse_share */}
+										{notif.type === "glimpse_share" &&
+											notif.glimpse?.author?.username && (
+												<p className="mt-0.5 truncate text-[12px] font-medium text-slate-500 dark:text-zinc-400">
+													by @{notif.glimpse.author.username} · glance
+												</p>
+											)}
 
 												<div className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400 dark:text-zinc-500">
 													<Clock className="h-2.5 w-2.5" />

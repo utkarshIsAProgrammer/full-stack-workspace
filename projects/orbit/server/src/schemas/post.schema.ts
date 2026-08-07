@@ -34,7 +34,20 @@ export const createPostSchema = z.object({
 
   // ISO timestamp for scheduled posts
   scheduledAt: z.string().optional(),
-});
+})
+  // A post must not be fully empty — but any of title, content, an image or a
+  // poll is enough (image-only and poll-only posts are valid flows).
+  .refine(
+    (data) =>
+      (data.title ?? "").trim() !== "" ||
+      (data.content ?? "").trim() !== "" ||
+      Boolean(data.image) ||
+      Boolean(data.poll),
+    {
+      message: "Post must have a title, content, or an image!",
+      path: ["content"],
+    },
+  );
 
 export const updatePostSchema = z
   .object({

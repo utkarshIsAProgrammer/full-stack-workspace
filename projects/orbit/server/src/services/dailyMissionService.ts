@@ -90,13 +90,16 @@ export async function claimMissionReward(userId: string, missionType: string) {
       await UserMission.findByIdAndUpdate(record._id, { $set: { allClaimed: true } });
     }
 
-    // Award XP
+    // Award XP equal to the mission's actual xpReward (per-mission amounts
+    // differ: 25/20/15/15/20/10), not the flat COMPLETE_MISSION value — so
+    // the "Claimed X XP!" message matches what the user actually receives.
     const missionDef = DAILY_MISSIONS.find((m) => m.type === missionType);
-    const xpResult = await awardXP(userId, "COMPLETE_MISSION");
+    const missionXP = missionDef?.xpReward || 25;
+    const xpResult = await awardXP(userId, "COMPLETE_MISSION", undefined, missionXP);
 
     return {
       success: true,
-      message: `Claimed ${missionDef?.xpReward || 25} XP!`,
+      message: `Claimed ${missionXP} XP!`,
       xp: xpResult,
     };
   } catch (err) {

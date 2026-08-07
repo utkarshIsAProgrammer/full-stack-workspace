@@ -15,6 +15,9 @@ interface GlassCardProps {
 	viewport?: MotionProps["viewport"];
 	transition?: MotionProps["transition"];
 	whileHover?: MotionProps["whileHover"];
+	/** Optional data-post-id marker so post cards are picked up by
+	 *  usePostViewTracking (3s visibility → one view). */
+	dataPostId?: string;
 }	export default React.memo(function GlassCard({
 	children,
 	className = "",
@@ -27,6 +30,7 @@ interface GlassCardProps {
 	viewport,
 	transition,
 	whileHover,
+	dataPostId,
 }: GlassCardProps) {
 	// Fluid, premium liquid glass class combinations for Dark Space macOS glass feel
 	const baseClasses = `relative overflow-hidden ${
@@ -46,7 +50,12 @@ interface GlassCardProps {
 
 	if (!animate) {
 		return (
-			<div id={id} className={baseClasses} onClick={onClick}>
+			<div
+				id={id}
+				data-post-id={dataPostId}
+				className={baseClasses}
+				onClick={onClick}
+			>
 				{!flat && <GlassGlossOverlay />}
 				<div className="relative z-10">{children}</div>
 			</div>
@@ -56,6 +65,7 @@ interface GlassCardProps {
 	return (
 		<motion.div
 			id={id}
+			data-post-id={dataPostId}
 			initial={initial || { opacity: 0, y: 4 }}
 			whileInView={whileInView}
 			viewport={viewport}

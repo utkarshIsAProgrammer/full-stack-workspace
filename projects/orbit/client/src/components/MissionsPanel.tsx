@@ -1,7 +1,12 @@
 import { useState, useEffect } from "react";
 import { CheckCircle2, Circle, Gift, Loader2, ListChecks } from "lucide-react";
 import { apiFetch } from "../utils/api";
+import { useCacheRefresh } from "../hooks/useCacheRefresh";
 import { logger } from "../utils/logger";
+
+// Stable RegExp for matching missions cache refresh events
+// — module-level to prevent React effect re-attachment on every render.
+const MATCHER_MISSIONS = /\/api\/missions\/today/;
 
 interface Mission {
   type: string;
@@ -45,6 +50,11 @@ export default function MissionsPanel() {
   useEffect(() => {
     fetchMissions();
   }, []);
+
+  // When the background cache timer refreshes the missions data (e.g. after
+  // the user creates a post / likes / comments), re-fetch so progress bars
+  // update in place without a page reload.
+  useCacheRefresh(MATCHER_MISSIONS, () => fetchMissions());
 
   const handleClaim = async (type: string) => {
     setClaiming(type);

@@ -34,6 +34,14 @@ export default defineConfig(() => {
         srcDir: 'src',
         filename: 'sw.js',
         injectRegister: 'auto',
+        // Enable the service worker in DEV too. Without this the push-capable
+        // worker is never registered during local development, so on-device
+        // notifications silently never arrive (injectRegister only injects the
+        // registration script into production builds).
+        devOptions: {
+          enabled: true,
+          type: 'module',
+        },
         includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png'],
         manifest: {
           name: 'ORBIT — Your Inner Circle',

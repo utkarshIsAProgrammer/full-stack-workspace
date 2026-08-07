@@ -283,7 +283,15 @@ export async function logInteraction(
       userId,
       targetAuthorId,
       postId,
-      type,
+      // type is a free string but always one of the schema enum values at runtime
+      type: type as
+        | "like"
+        | "comment"
+        | "save"
+        | "share"
+        | "dm"
+        | "profileVisit"
+        | "storyView",
       timestamp,
     }).catch((_err: unknown) => {
       logger.error("Failed to persist interaction", {

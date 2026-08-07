@@ -4,6 +4,7 @@ import { Message } from "../models/message.model";
 import { Conversation } from "../models/conversation.model";
 import { logger } from "../utilities/logger";
 import { AppError, BadRequestError, NotFoundError, UnauthorizedError } from "../utilities/errors";
+import { getSearchCache, setSearchCache } from "../utilities/searchCache";
 
 /**
  * Search messages within a conversation.
@@ -41,6 +42,17 @@ export const searchMessages = async (req: Request, res: Response) => {
       searchQuery._id = { $lt: new mongoose.Types.ObjectId(cursor) };
     }
 
+    // Short-TTL in-memory cache: repeated/backspace queries resolve instantly
+    // instead of hitting the (slow, free-tier) DB again.
+    // NOTE: keyed per-user — the query filters `deletedFor: { $ne: user }`,
+    // so different users can legitimately see different results in the same
+    // conversation (a per-user key prevents cross-user cache contamination).
+    const cacheKey = `chat:${conversationId}:${currentUserId}:${query}`;
+    const cached = getSearchCache(cacheKey);
+    if (cached) {
+      return res.status(200).json(cached);
+    }
+
     // Search messages using text index (case-insensitive regex fallback)
     const messages = await Message.find(searchQuery)
       .sort({ createdAt: -1 })
@@ -54,7 +66,10 @@ export const searchMessages = async (req: Request, res: Response) => {
     }
     const nextCursor = messages.slice(-1).shift()?._id || null;
 
-    return res.status(200).json({ success: true, messages, count: messages.length, hasMore, nextCursor });
+    const payload = { success: true, messages, count: messages.length, hasMore, nextCursor };
+    setSearchCache(cacheKey, payload);
+
+    return res.status(200).json(payload);
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
     logger.error("Message search error", { error: err.message });

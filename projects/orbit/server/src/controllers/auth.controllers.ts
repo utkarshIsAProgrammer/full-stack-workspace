@@ -7,6 +7,7 @@ import { cookieOptions } from "../configs/cookie";
 import { setCsrfCookie } from "../middlewares/csrf.middleware";
 
 import { deleteCache } from "../configs/cache";
+import { clearMemUserCache } from "../middlewares/auth.middleware";
 import cloudinary from "../configs/cloudinary";
 import { env } from "../configs/env";
 import { logger } from "../utilities/logger";
@@ -229,6 +230,10 @@ export const login = async (req: Request, res: Response) => {
         bannerImage: user.bannerImage,
         followersCount: user.followersCount,
         followingCount: user.followingCount,
+        isPrivate: user.isPrivate,
+        isOnboarded: user.isOnboarded,
+        notificationsEnabled: user.notificationsEnabled,
+        isAdmin: user.isAdmin,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
@@ -268,6 +273,10 @@ export const getCurrentUser = async (req: Request, res: Response) => {
         bannerImage: user.bannerImage,
         followersCount: user.followersCount,
         followingCount: user.followingCount,
+        isPrivate: user.isPrivate,
+        isOnboarded: user.isOnboarded,
+        notificationsEnabled: user.notificationsEnabled,
+        isAdmin: user.isAdmin,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
@@ -285,6 +294,7 @@ export const logout = async (req: Request, res: Response) => {
     const currentUserId = req.user?._id;
     if (currentUserId) {
       await deleteCache(`auth:user:${currentUserId.toString()}`);
+      clearMemUserCache(currentUserId.toString());
     }
 
     // clear cookies

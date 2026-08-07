@@ -5,6 +5,7 @@ import { X, Loader2, Quote as QuoteIcon } from "lucide-react";
 import type { Post } from "../types";
 import UserAvatar from "./UserAvatar";
 import { useAutoGrow } from "../hooks/useAutoGrow";
+import { usePostViewTracking } from "../hooks/usePostViewTracking";
 
 interface QuoteRepostModalProps {
 	post: Post;
@@ -55,6 +56,13 @@ export default function QuoteRepostModal({
 		}
 	};
 
+	// View tracking for the shared post preview — a post being quote-reposted
+	// (shared) is "opened" on screen, so it counts a view after 3s.
+	usePostViewTracking({
+		enabled: isOpen,
+		deps: [isOpen, post._id],
+	});
+
 	if (!isOpen) return null;
 
 	return createPortal(
@@ -91,7 +99,7 @@ export default function QuoteRepostModal({
 					</div>
 
 					{/* Original post preview */}
-					<div className="px-5 pt-4 pb-3">
+					<div className="px-5 pt-4 pb-3" data-post-id={post._id}>
 						<div className="rounded-2xl border border-zinc-800/50 bg-zinc-900/50 p-3.5">
 							<div className="flex items-center gap-2.5 mb-2">
 								<UserAvatar

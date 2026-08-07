@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useKeyboardOpen } from "../hooks/useKeyboardOpen";
+import { useAutoGrow } from "../hooks/useAutoGrow";
 
 import {
   Lock,
@@ -66,6 +67,7 @@ export default function Auth({
   const [email, setEmail] = useState("");
   const [gender] = useState<"male" | "female" | "others">("others");
   const [bio, setBio] = useState("");
+  const bioRef = useAutoGrow<HTMLTextAreaElement>(bio);
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -320,7 +322,7 @@ export default function Auth({
             <div className="space-y-1 text-left">
               <label htmlFor="signup-bio" className="text-[12px] md:text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 pl-3.5">Bio</label>
               <textarea
-                id="signup-bio"
+                id="signup-bio" ref={bioRef}
                 rows={1}
                 placeholder="A short snippet about yourself..."
                 value={bio}

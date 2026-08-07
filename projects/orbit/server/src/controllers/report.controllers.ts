@@ -118,6 +118,17 @@ export const reviewReport = async (
     const report = await Report.findById(reportId);
     if (!report) return next(new BadRequestError("Report not found!"));
 
+    // Validate against the schema enums — invalid values would otherwise
+    // blow up as a 500 on save instead of a clean 400.
+    const VALID_STATUS = ["pending", "reviewed", "dismissed", "action_taken"];
+    const VALID_ACTION = ["none", "warning", "mute", "ban", "delete"];
+    if (status && !VALID_STATUS.includes(status)) {
+      return next(new BadRequestError("Invalid report status!"));
+    }
+    if (action && !VALID_ACTION.includes(action)) {
+      return next(new BadRequestError("Invalid report action!"));
+    }
+
     if (status) report.status = status;
     if (action) report.action = action;
     report.reviewedBy = currentUserId as any;

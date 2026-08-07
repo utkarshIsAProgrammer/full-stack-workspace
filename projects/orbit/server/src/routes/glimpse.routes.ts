@@ -7,6 +7,7 @@ import {
   deleteGlimpse,
   reactToGlimpse,
   replyToGlimpse,
+  forwardGlimpse,
 } from "../controllers/glimpse.controllers";
 import { protect } from "../middlewares/auth.middleware";
 import { uploadGlimpseMedia } from "../middlewares/upload.middleware";
@@ -27,6 +28,9 @@ router.post("/:glimpseId/reactions", protect, reactToGlimpse);
 
 // Reply to a glimpse (opens DM with author)
 router.post("/:glimpseId/reply", protect, replyToGlimpse);
+
+// Forward a glimpse to another user
+router.post("/:glimpseId/forward", protect, forwardGlimpse);
 
 // Get single glimpse
 router.get("/:glimpseId", protect, getGlimpse);

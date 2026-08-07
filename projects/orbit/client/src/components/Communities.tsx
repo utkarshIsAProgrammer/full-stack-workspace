@@ -30,18 +30,23 @@ import {
   Video,
   MoreVertical,
   LogOut,
+  Bell,
+  BellOff,
 } from "lucide-react";
 import type { Community, CommunityMessage, Conversation } from "../types";
 import { apiFetch } from "../utils/api";
 import { getCachedResponse, evictCachedResponse } from "../utils/apiCache";
 import { useCacheRefresh } from "../hooks/useCacheRefresh";
+import { useKeyboardOpen } from "../hooks/useKeyboardOpen";
 import { logger } from "../utils/logger";
 import { downscaleImageFile } from "../utils/imageCompression";
+import { optimizeImageUrl } from "../utils/imageUrls";
 
 // Stable RegExp for matching community cache refresh events
 // — module-level to prevent React effect re-attachment on every render.
 const MATCHER_COMMUNITIES = /\/api\/communities/;
 import MessageBubble from "./MessageBubble";
+import EmojiReactionMenu from "./EmojiReactionMenu";
 import CommunityLastActivity from "./CommunityLastActivity";
 import GlassCard from "./GlassCard";
 import ChatGallery from "./ChatGallery";
@@ -78,6 +83,7 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
 
   // Chat state
   const [messages, setMessages] = useState<CommunityMessage[]>([]);
+  const [showPinnedPanel, setShowPinnedPanel] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -99,6 +105,12 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   // Community being left from the "My Communities" list row (header leave uses selectedCommunity)
   const [pendingLeaveCommunityId, setPendingLeaveCommunityId] = useState<string | null>(null);
+  // Long-press / right-click context menu for "My Communities" list rows (mute / leave)
+  const [communityMenu, setCommunityMenu] = useState<{
+    x: number;
+    y: number;
+    community: Community;
+  } | null>(null);
 
   // Voice note retry infrastructure (matching personal Chat.tsx)
   const activeUploadsRef = useRef<Record<string, AbortController>>({});
@@ -180,33 +192,47 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const isKeyboardOpen = useKeyboardOpen();
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const communityMenuRef = useRef<HTMLDivElement>(null);
+  const communityLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const communitySuppressClickRef = useRef(false);
   const messageSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Monotonic counter so only the LATEST search query's response is applied
+  // — prevents out-of-order responses from older keystrokes overwriting newer
+  // results when the free-tier backend answers slowly.
+  const messageSearchSeqRef = useRef(0);
 
-  // ─── Fetch communities ─────────────────────────────────────────
-  const fetchMyCommunities = useCallback(async () => {
-    try {
-      const res = await apiFetch("/api/communities/mine");
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setMyCommunities(data.communities || []);
-      }
-    } catch (err) {
-      logger.error("Failed to fetch my communities", err);
-    }
-  }, []);
+  // ─── Fetch communities ─────────────────────────────────────────	// `bypass` forces a network fetch — used after community mutations so the
+	// lists always reflect the server's fresh flags (audio/video calls, messaging)
+	// instead of a stale cached response with the old toggle values.
+	const fetchMyCommunities = useCallback(async (bypass = false) => {
+		try {
+			const res = await apiFetch("/api/communities/mine", {
+				...(bypass ? { bypassCache: true } : {}),
+			});
+			const data = await res.json();
+			if (res.ok && data.success) {
+				setMyCommunities(data.communities || []);
+			}
+		} catch (err) {
+			logger.error("Failed to fetch my communities", err);
+		}
+	}, []);
 
-  const fetchAllCommunities = useCallback(async () => {
-    try {
-      const res = await apiFetch("/api/communities?limit=50");
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setAllCommunities(data.communities || []);
-      }
-    } catch (err) {
-      logger.error("Failed to fetch all communities", err);
-    }
-  }, []);
+	const fetchAllCommunities = useCallback(async (bypass = false) => {
+		try {
+			const res = await apiFetch("/api/communities?limit=50", {
+				...(bypass ? { bypassCache: true } : {}),
+			});
+			const data = await res.json();
+			if (res.ok && data.success) {
+				setAllCommunities(data.communities || []);
+			}
+		} catch (err) {
+			logger.error("Failed to fetch all communities", err);
+		}
+	}, []);
 
   // Cache-first: display cached community list instantly
   useEffect(() => {
@@ -338,6 +364,22 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
     return () => onCommunityChatChange?.(false);
   }, [selectedCommunity, onCommunityChatChange]);
 
+  // Tracks the community id the active-call banner belongs to (set when the
+  // banner appears), so a live banner isn't wiped by a re-run of the socket
+  // effect — which happens on every selectedCommunity identity change
+  // (member count, presence, toggle events all create a new object). The
+  // banner is only cleared when the user switches to a different community
+  // or the call actually ends.
+  const activeCallBannerCommunityRef = useRef<string | null>(null);
+  // Always-current community id, updated during render so effect cleanups
+  // can tell whether the selected community changed between effect runs.
+  const selectedCommunityIdRef = useRef<string | null>(selectedCommunity?._id ?? null);
+  selectedCommunityIdRef.current = selectedCommunity?._id ?? null;
+  // Tracks which community already requested a call-status check, so the
+  // "community:call-status" request (and its toast) fires only once per
+  // community open instead of on every effect re-run.
+  const callStatusRequestedRef = useRef<string | null>(null);
+
   // ─── Socket events ─────────────────────────────────────────────
   useEffect(() => {
     if (!socket || !selectedCommunity) return;
@@ -348,6 +390,10 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
     socket.emit("community:join", { communityId });
     // Mark messages as seen when opening the chat
     socket.emit("community:seen", { communityId });
+    if (callStatusRequestedRef.current !== communityId) {
+      callStatusRequestedRef.current = communityId;
+      socket.emit("community:call-status", { communityId });
+    }
 
     // Listen for seen updates (other members reading messages)
     const handleSeenUpdate = (data: {
@@ -531,6 +577,7 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
     }) => {
       if (data.communityId !== communityId) return;
       if (data.startedBy === userId) return; // own call already tracked
+      activeCallBannerCommunityRef.current = data.communityId;
       setActiveCommunityCall({
         roomName: data.roomName,
         type: data.type,
@@ -550,13 +597,11 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
     };
     const handleCallEnded = (data: { communityId: string }) => {
       if (data.communityId !== communityId) return;
+      activeCallBannerCommunityRef.current = null;
       setActiveCommunityCall(null);
     };
     socket.on("community:call-started", handleCallStarted);
     socket.on("community:call-ended", handleCallEnded);
-
-    // Ask the server whether a call is already live (e.g. page reload mid-call)
-    socket.emit("community:call-status", { communityId });
 
     return () => {
       socket.emit("community:leave", { communityId });
@@ -573,9 +618,15 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
       socket.off("community:presence", handleCommunityPresence);
       socket.off("community:call-started", handleCallStarted);
       socket.off("community:call-ended", handleCallEnded);
-      // Reset the active-call banner when leaving/switching communities so
-      // community A's call banner doesn't linger while browsing community B.
-      setActiveCommunityCall(null);
+      // Clear the banner only when the user is no longer viewing the
+      // community the banner belongs to (e.g. switched to a different
+      // community). The effect itself re-runs on every selectedCommunity
+      // identity change, and wiping the banner there would flash the
+      // "join call" button off the moment it appears.
+      if (selectedCommunityIdRef.current !== activeCallBannerCommunityRef.current) {
+        activeCallBannerCommunityRef.current = null;
+        setActiveCommunityCall(null);
+      }
     };
   }, [socket, selectedCommunity, userId]);
 
@@ -1636,14 +1687,80 @@ export default function Communities({ user, socket, onUserSelected, onCommunityC
   };
 
   const handleReaction = async (message: CommunityMessage, emoji: string) => {
+    const trimmedEmoji = emoji.trim();
+    const optimisticReactions = [...(message.reactions || [])];
+    const existingIndex = optimisticReactions.findIndex((r) => {
+      const sId = typeof r.sender === "string" ? r.sender : r.sender?._id;
+      return sId === userId && r.emoji === trimmedEmoji;
+    });
+
+    // Optimistic toggle/replace — ONE reaction per user. Clicking the same
+    // emoji removes it; clicking a different one replaces the previous.
+    let nextReactions = optimisticReactions.filter((r) => {
+      const sId = typeof r.sender === "string" ? r.sender : r.sender?._id;
+      return sId !== userId;
+    });
+    if (existingIndex < 0) {
+      nextReactions = [
+        ...nextReactions,
+        {
+          _id: Date.now().toString(), // temp ID
+          emoji: trimmedEmoji,
+          sender: {
+            _id: user._id,
+            username: user.username,
+            fullName: user.fullName,
+            profilePic: user.profilePic,
+          },
+          createdAt: new Date().toISOString(),
+        } as any,
+      ];
+    }
+    setMessages((prev) =>
+      prev.map((m) =>
+        m._id === message._id ? { ...m, reactions: nextReactions } : m,
+      ),
+    );
+
     try {
-      await apiFetch(`/api/communities/messages/${message._id}/reactions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emoji }),
-      });
+      const res = await apiFetch(
+        `/api/communities/messages/${message._id}/reactions`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ emoji: trimmedEmoji }),
+        },
+      );
+      const data = await res.json();
+      if (res.ok && data.success) {
+        // Sync with the exact backend response (server returns the full list)
+        if (data.reactions) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m._id === message._id
+                ? { ...m, reactions: data.reactions }
+                : m,
+            ),
+          );
+        }
+        // A reload must not serve the stale cached message list (which would
+        // make the reaction appear "removed" — the cache holds the pre-reaction
+        // snapshot). Evict the open community's message cache so the next load
+        // re-fetches fresh data.
+        evictCachedResponse(
+          `/api/communities/${message.community}/messages?limit=30`,
+        );
+      } else {
+        logger.error("Reaction failed", data?.message);
+        setMessages((prev) =>
+          prev.map((m) => (m._id === message._id ? message : m)),
+        );
+      }
     } catch (err) {
       logger.error("Failed to toggle reaction", err);
+      setMessages((prev) =>
+        prev.map((m) => (m._id === message._id ? message : m)),
+      );
     }
   };
 
@@ -1664,6 +1781,23 @@ useLayoutEffect(() => {
     menu.style.top = adjY + "px";
   }
 }, [contextMenu]);
+
+// Viewport-safe positioning for the "My Communities" row context menu
+useLayoutEffect(() => {
+  if (!communityMenu || !communityMenuRef.current) return;
+  const menu = communityMenuRef.current;
+  const rect = menu.getBoundingClientRect();
+  let adjX = rect.left;
+  let adjY = rect.top;
+  if (rect.right > window.innerWidth) adjX = window.innerWidth - rect.width - 12;
+  if (rect.left < 12) adjX = 12;
+  if (rect.bottom > window.innerHeight) adjY = window.innerHeight - rect.height - 12;
+  if (rect.top < 12) adjY = 12;
+  if (adjX !== rect.left || adjY !== rect.top) {
+    menu.style.left = adjX + "px";
+    menu.style.top = adjY + "px";
+  }
+}, [communityMenu]);
 
 // ─── Context menu handlers ─────────────────────────────────────
   // ─── Pin/Unpin handlers ──────────────────────────────────────
@@ -1967,6 +2101,111 @@ useLayoutEffect(() => {
     setPendingLeaveCommunityId(null);
   };
 
+  // ─── "My Communities" row context menu (long-press / right-click) ───
+  const openCommunityMenu = (
+    e: { clientX: number; clientY: number },
+    community: Community
+  ) => {
+    setCommunityMenu({ x: e.clientX, y: e.clientY, community });
+  };
+
+  // 500ms hold opens the menu (same feel as chat messages); scroll cancels.
+  const handleCommunityTouchStart = (
+    e: React.TouchEvent,
+    community: Community
+  ) => {
+    if (communityLongPressTimerRef.current) {
+      clearTimeout(communityLongPressTimerRef.current);
+      communityLongPressTimerRef.current = null;
+    }
+    communitySuppressClickRef.current = false;
+    const touch = e.touches[0];
+    if (!touch) return;
+    communityLongPressTimerRef.current = setTimeout(() => {
+      communitySuppressClickRef.current = true;
+      openCommunityMenu(
+        { clientX: touch.clientX, clientY: touch.clientY },
+        community
+      );
+    }, 500);
+  };
+
+  const handleCommunityTouchMove = () => {
+    if (communityLongPressTimerRef.current) {
+      clearTimeout(communityLongPressTimerRef.current);
+      communityLongPressTimerRef.current = null;
+    }
+  };
+
+  const handleCommunityTouchEnd = () => {
+    if (communityLongPressTimerRef.current) {
+      clearTimeout(communityLongPressTimerRef.current);
+      communityLongPressTimerRef.current = null;
+    }
+  };
+
+  const handleToggleCommunityMute = async (community: Community) => {
+    const next = !community.muted;
+    // Optimistic flip — instant, then reconciled with the server response.
+    const patch = (c: Community) =>
+      c._id === community._id ? { ...c, muted: next } : c;
+    setMyCommunities((prev) => prev.map(patch));
+    setAllCommunities((prev) => prev.map(patch));
+    setCommunityMenu(null);
+    try {
+      const res = await apiFetch(
+        `/api/communities/${community._id}/${next ? "mute" : "unmute"}`,
+        { method: "POST" }
+      );
+      const data = await res.json();
+      if (res.ok && data.success) {
+        window.dispatchEvent(
+          new CustomEvent("showToast", {
+            detail: {
+              message: next
+                ? "Community notifications muted"
+                : "Community notifications unmuted",
+              type: "success",
+            },
+          })
+        );
+        // A reload must not serve the stale cached list without the new flag
+        evictCachedResponse("/api/communities/mine");
+      } else {
+        setMyCommunities((prev) =>
+          prev.map((c) => (c._id === community._id ? community : c))
+        );
+        setAllCommunities((prev) =>
+          prev.map((c) => (c._id === community._id ? community : c))
+        );
+        window.dispatchEvent(
+          new CustomEvent("showToast", {
+            detail: {
+              message: data?.message || "Couldn't update mute setting.",
+              type: "error",
+            },
+          })
+        );
+      }
+    } catch (err) {
+      logger.error("Failed to toggle community mute", err);
+      setMyCommunities((prev) =>
+        prev.map((c) => (c._id === community._id ? community : c))
+      );
+      setAllCommunities((prev) =>
+        prev.map((c) => (c._id === community._id ? community : c))
+      );
+      window.dispatchEvent(
+        new CustomEvent("showToast", {
+          detail: {
+            message: "Couldn't update mute setting. Try again.",
+            type: "error",
+          },
+        })
+      );
+    }
+  };
+
   // ─── Cancel/Retry handlers for voice notes ────────────────────
   const handleCancelUpload = (pendingId: string) => {
     const controller = activeUploadsRef.current[pendingId];
@@ -2065,10 +2304,12 @@ useLayoutEffect(() => {
     );
     setSelectedCommunity((prev) =>
       prev?._id === updated._id ? updated : prev
-    );
-    // Refresh both lists from server to ensure data consistency (e.g. image URL)
-    fetchMyCommunities();
-    fetchAllCommunities();
+    );	// Refresh both lists from server to ensure data consistency (e.g. image URL).
+	// Bypass the cache: the mutation just changed community flags (audio/video
+	// calls, messaging) and a cache-first read could serve the OLD values,
+	// making the toggle look like it "reverted" after reopening the community.
+	fetchMyCommunities(true);
+	fetchAllCommunities(true);
   };
 
   // ─── Handle community deleted ──────────────────────────────────
@@ -2254,6 +2495,12 @@ useLayoutEffect(() => {
                   role="button"
                   tabIndex={0}
                   onClick={() => {
+                    // A long-press fires a synthetic click on release — swallow it
+                    // so the menu doesn't instantly open the chat.
+                    if (communitySuppressClickRef.current) {
+                      communitySuppressClickRef.current = false;
+                      return;
+                    }
                     if (community.isMember) {
                       handleSelectCommunity(community);
                     }
@@ -2265,7 +2512,21 @@ useLayoutEffect(() => {
                         handleSelectCommunity(community);
                       }
                     }
-                  }}					  className={`w-full flex items-center gap-3 px-4 sm:px-5 py-3 transition-all text-left group ${
+                  }}
+                  onContextMenu={(e) => {
+                    if (!community.isMember) return;
+                    e.preventDefault();
+                    openCommunityMenu(
+                      { clientX: e.clientX, clientY: e.clientY },
+                      community
+                    );
+                  }}
+                  onTouchStart={(e) => {
+                    if (community.isMember)
+                      handleCommunityTouchStart(e, community);
+                  }}
+                  onTouchMove={handleCommunityTouchMove}
+                  onTouchEnd={handleCommunityTouchEnd}					  className={`w-full flex items-center gap-3 px-4 sm:px-5 py-3 transition-all text-left group ${
 					    community.isMember
 					      ? "hover:bg-zinc-900/50 cursor-pointer"
 					      : "cursor-default opacity-80"
@@ -2308,17 +2569,12 @@ useLayoutEffect(() => {
                   <div className="shrink-0">
                     {community.isMember ? (
                       communityTab === "mine" ? (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPendingLeaveCommunityId(community._id);
-                            setConfirmLeaveOpen(true);
-                          }}
-                          className="h-7 w-7 rounded-full flex items-center justify-center text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-all cursor-pointer"
-                          title="Leave community"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        community.muted ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-500 bg-zinc-800/60 px-2.5 py-1 rounded-full">
+                            <BellOff className="h-3 w-3" />
+                            Muted
+                          </span>
+                        ) : null
                       ) : (
                         <span className="text-[10px] font-bold text-zinc-300 bg-white/10 px-2.5 py-1 rounded-full">
                           Open
@@ -2508,18 +2764,7 @@ useLayoutEffect(() => {
               <Video className="h-3.5 w-3.5 text-zinc-500 hover:text-white" />
             </button>
           )}
-          <button
-            onClick={() => {
-              setShowMessageSearch((prev) => !prev);
-              setMessageSearchQuery("");
-              setSearchResults([]);
-            }}
-            className={`h-7 w-7 rounded-full flex items-center justify-center hover:bg-zinc-700/50 transition-colors cursor-pointer shrink-0 ${showMessageSearch ? "bg-white/10 text-white" : ""}`}
-            title="Search messages"
-          >
-            <Search className="h-3.5 w-3.5 text-zinc-500 hover:text-zinc-300" />
-          </button>
-          {/* Community options — clear chat + leave live in a three-dot menu to keep the header clean */}
+          {/* Community options — search, clear chat + leave live in a three-dot menu to keep the header clean */}
           <div className="relative shrink-0">
             <button
               onClick={() => setShowHeaderMenu((prev) => !prev)}
@@ -2535,6 +2780,20 @@ useLayoutEffect(() => {
                   onClick={() => setShowHeaderMenu(false)}
                 />
                 <div className="absolute right-0 top-9 z-[90] w-48 overflow-hidden rounded-xl border border-zinc-700/50 bg-zinc-900/95 backdrop-blur-xl shadow-2xl">
+                  <button
+                    onClick={() => {
+                      setShowHeaderMenu(false);
+                      setShowMessageSearch((prev) => !prev);
+                      // Drop any in-flight search response when opening/closing.
+                      messageSearchSeqRef.current++;
+                      setMessageSearchQuery("");
+                      setSearchResults([]);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-semibold text-zinc-200 hover:bg-white/10 transition-colors cursor-pointer text-left"
+                  >
+                    <Search className="h-3.5 w-3.5 text-zinc-400" />
+                    Search messages
+                  </button>
                   <button
                     onClick={() => {
                       setShowHeaderMenu(false);
@@ -2587,7 +2846,7 @@ useLayoutEffect(() => {
 
         {/* Message search bar */}
         {showMessageSearch && (
-          <div className="shrink-0 border-b border-zinc-800/50 bg-zinc-900/80 px-4 py-2.5">
+          <div className="shrink-0 border-b border-zinc-800/50 bg-zinc-950/60 px-4 py-2.5">
             <div className="relative">
               <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-zinc-500">
                 <Search className="h-3.5 w-3.5" />
@@ -2599,11 +2858,14 @@ useLayoutEffect(() => {
                 onChange={(e) => {
                   const val = e.target.value;
                   setMessageSearchQuery(val);
+                  // Invalidate any in-flight response from the previous query.
+                  messageSearchSeqRef.current++;
 
                   // Clear previous debounce timer
                   if (messageSearchTimerRef.current) {
                     clearTimeout(messageSearchTimerRef.current);
                   }
+
 
                   if (!val.trim() || !selectedCommunity) {
                     setSearchResults([]);
@@ -2612,21 +2874,32 @@ useLayoutEffect(() => {
                   }
 
                   setSearchingMessages(true);
+                  // Clear stale results from the previous query while the new
+                  // search is in flight — otherwise old matches linger during
+                  // the debounce and look wrong for the new query.
+                  setSearchResults([]);
 
                   // Debounce: wait 350ms after last keystroke before searching
                   messageSearchTimerRef.current = setTimeout(async () => {
+                    const seq = messageSearchSeqRef.current;
                     try {
                       const res = await apiFetch(
                         `/api/communities/${selectedCommunity._id}/messages/search?q=${encodeURIComponent(val)}`
                       );
                       const data = await res.json();
+                      // Drop responses from superseded keystrokes — only the
+                      // latest query wins.
+                      if (seq !== messageSearchSeqRef.current) return;
                       if (res.ok && data.success) {
                         setSearchResults(data.messages || []);
                       }
                     } catch (err) {
+                      if (seq !== messageSearchSeqRef.current) return;
                       logger.error("Failed to search messages", err);
                     } finally {
-                      setSearchingMessages(false);
+                      if (seq === messageSearchSeqRef.current) {
+                        setSearchingMessages(false);
+                      }
                     }
                   }, 350);
                 }}
@@ -2639,9 +2912,24 @@ useLayoutEffect(() => {
                     setSearchResults([]);
                   }}
                   className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-500 hover:text-zinc-300 cursor-pointer"
-                  type="button"
+                  title="Clear search"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+              {!messageSearchQuery && (
+                <button
+                  onClick={() => {
+                    setShowMessageSearch(false);
+                    // Drop any in-flight search response when the bar closes.
+                    messageSearchSeqRef.current++;
+                    setMessageSearchQuery("");
+                    setSearchResults([]);
+                  }}
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                  title="Close search"
+                >
+                  <X className="h-3 w-3" />
                 </button>
               )}
             </div>
@@ -2650,54 +2938,161 @@ useLayoutEffect(() => {
 
 
 
-        {/* Pinned messages banner */}
+        {/* Pinned messages banner — WhatsApp-style slim bar */}
         {pinnedMessages.length > 0 && (
-          <div className="shrink-0 border-b border-amber-500/20 bg-amber-500/5 px-4 py-2">
-            <div className="flex items-center gap-2 mb-1.5">
-              <Pin className="h-3 w-3 text-amber-400" />
-              <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
-                Pinned {pinnedMessages.length > 1 ? `${pinnedMessages.length} messages` : "message"}
-              </span>
-            </div>
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
+          <div className="shrink-0 border-b border-zinc-700/30 bg-zinc-950/60 px-3 py-1.5 flex items-center gap-2">
+            <button
+              type="button"
+              title="View all pinned messages"
+              onClick={() => setShowPinnedPanel(true)}
+              className="flex items-center justify-center h-6 w-6 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-all cursor-pointer shrink-0"
+            >
+              <Pin className="h-3 w-3" />
+            </button>
+            <div className="flex-1 min-w-0 flex gap-1.5 overflow-x-auto scrollbar-thin">
               {pinnedMessages.map((pinned) => (
-                <div
+                <button
                   key={pinned._id}
-                  className="shrink-0 max-w-[220px] bg-zinc-900/80 border border-zinc-800/60 rounded-lg p-2.5 flex items-start gap-2"
+                  type="button"
+                  title="Jump to message"
+                  onClick={() => {
+                    const el = document.getElementById(`msg-${pinned._id}`);
+                    if (el) {
+                      el.scrollIntoView({ behavior: "smooth", block: "center" });
+                      el.classList.add(
+                        "ring-2", "ring-white/50", "rounded-2xl",
+                        "transition-all", "duration-500",
+                      );
+                      setTimeout(() => {
+                        el.classList.remove(
+                          "ring-2", "ring-white/50", "rounded-2xl",
+                          "transition-all", "duration-500",
+                        );
+                      }, 2000);
+                    } else {
+                      window.dispatchEvent(
+                        new CustomEvent("showToast", {
+                          detail: {
+                            message: "Pinned message not loaded yet — scroll up to find it.",
+                            type: "error",
+                          },
+                        }),
+                      );
+                    }
+                  }}
+                  className="shrink-0 max-w-[220px] flex items-center gap-1.5 rounded-md bg-zinc-950/80 border border-zinc-700/40 px-2 py-1 hover:bg-zinc-900/90 hover:border-zinc-600/50 transition-colors cursor-pointer text-left"
                 >
-                  <div className="h-6 w-6 rounded-full bg-zinc-800 shrink-0 flex items-center justify-center overflow-hidden">
+                  <span className="h-3.5 w-3.5 rounded-full bg-zinc-700 shrink-0 flex items-center justify-center overflow-hidden text-[7px] font-bold text-zinc-200">
                     {pinned.sender.profilePic?.url ? (
                       <img
                         src={pinned.sender.profilePic.url}
                         alt={pinned.sender.fullName}
-                        className="h-full w-full object-cover cursor-pointer"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          window.dispatchEvent(new CustomEvent("openImagePreview", { detail: pinned.sender.profilePic!.url }));
-                        }}
+                        className="h-full w-full object-cover"
                       />
                     ) : (
-                      <span className="text-[9px] font-bold text-zinc-500">
-                        {pinned.sender.fullName?.charAt(0) || "?"}
-                      </span>
+                      pinned.sender.fullName?.charAt(0) || "?"
                     )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] font-semibold text-zinc-300 truncate leading-tight">
-                      {pinned.text || (pinned.attachments?.length ? "Attachment" : "")}
-                    </p>
-                    <p className="text-[9px] text-zinc-400 mt-0.5">
-                      {pinned.sender.fullName} · {formatMessageTime(pinned.createdAt)}
-                    </p>
-                  </div>
-                </div>
+                  </span>
+                  <span className="flex-1 min-w-0 text-[9px] leading-tight text-zinc-300 truncate">
+                    <span className="font-semibold text-white">{pinned.sender.fullName}: </span>
+                    {pinned.text || (pinned.attachments?.length ? "Attachment" : "")}
+                  </span>
+                </button>
               ))}
             </div>
+            {pinnedMessages.length > 1 && (
+              <span className="shrink-0 text-[9px] font-semibold text-zinc-400">
+                {pinnedMessages.length}
+              </span>
+            )}
           </div>
         )}
 
+        {/* View all pinned messages panel */}
+        {showPinnedPanel &&
+          createPortal(
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[400] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4"
+              onClick={() => setShowPinnedPanel(false)}
+            >
+              <motion.div
+                initial={{ y: 40, scale: 0.97, opacity: 0 }}
+                animate={{ y: 0, scale: 1, opacity: 1 }}
+                exit={{ y: 40, scale: 0.97, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full sm:max-w-md max-h-[75vh] rounded-t-3xl sm:rounded-3xl border border-zinc-800 bg-zinc-950/95 backdrop-blur-xl shadow-2xl flex flex-col overflow-hidden"
+              >
+                <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/70 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <Pin className="h-4 w-4 text-amber-200/90" />
+                    <h3 className="text-sm font-bold text-white">Pinned messages</h3>
+                  </div>
+                  <button
+                    onClick={() => setShowPinnedPanel(false)}
+                    className="h-8 w-8 rounded-full flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer"
+                    title="Close"
+                  >
+                    <X className="h-4 w-4 text-zinc-400" />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                  {pinnedMessages.length === 0 ? (
+                    <p className="text-xs text-zinc-500 text-center py-8">No pinned messages</p>
+                  ) : (
+                    pinnedMessages.map((pinned) => (
+                      <div
+                        key={pinned._id}
+                        className="flex items-center gap-3 rounded-xl px-3 py-2 hover:bg-zinc-900/70 transition-colors group"
+                      >
+                        <span className="h-8 w-8 rounded-full bg-zinc-800 border border-zinc-700 shrink-0 flex items-center justify-center overflow-hidden text-[9px] font-bold text-zinc-300">
+                          {pinned.sender?.profilePic?.url ? (
+                            <img
+                              src={pinned.sender.profilePic.url}
+                              alt={pinned.sender.fullName}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            pinned.sender?.fullName?.charAt(0) || "?"
+                          )}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[11px] font-bold text-white truncate">
+                            {pinned.sender?.fullName}
+                          </p>
+                          <p className="text-[11px] text-zinc-400 truncate">
+                            {pinned.text ||
+                              (pinned.attachments?.length ? "Attachment" : "")}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            handleUnpinMessage(pinned._id);
+                            setShowPinnedPanel(false);
+                          }}
+                          className="shrink-0 rounded-full border border-zinc-700 px-3 py-1.5 text-[10px] font-bold text-zinc-300 hover:text-white hover:border-red-400/60 hover:bg-red-500/10 transition-all cursor-pointer"
+                          title="Unpin message"
+                        >
+                          Unpin
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </motion.div>
+            </motion.div>,
+            document.body,
+          )}
+
         {/* Messages area — regular or search results */}
-        {searchResults.length > 0 ? (
+        {/* When a search query is active, ALWAYS show the search view (results,
+            loading or the empty state) instead of silently falling back to the
+            normal chat — falling back made it look like search "did nothing". */}
+        {messageSearchQuery.trim() ? (
+          searchResults.length > 0 ? (
           <div className="flex-1 overflow-y-auto px-4 py-2 space-y-0.5">
             <div className="sticky top-0 z-10 bg-zinc-950/90 backdrop-blur-sm py-2 mb-2 flex items-center gap-2 border-b border-zinc-800/40">
               <Search className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
@@ -2737,6 +3132,15 @@ useLayoutEffect(() => {
               );
             })}
           </div>
+          ) : searchingMessages ? (
+            <div className="flex-1 overflow-y-auto px-4 py-2 flex items-center justify-center">
+              <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto px-4 py-2 flex items-center justify-center">
+              <p className="text-[10px] font-medium text-zinc-500 text-center">No messages found</p>
+            </div>
+          )
         ) : (
           <div
             ref={messagesContainerRef}
@@ -2845,7 +3249,7 @@ useLayoutEffect(() => {
 
         {/* Reply/Edit indicator */}
         {replyTo && (
-          <div className="px-2 py-2 bg-zinc-900/80 border-t border-zinc-800/50 flex items-center gap-2 shrink-0">
+          <div className="px-2 py-2 bg-zinc-950/60 border-t border-zinc-800/50 flex items-center gap-2 shrink-0">
             <CornerDownLeft className="h-3.5 w-3.5 text-zinc-300 shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-[10px] font-bold text-zinc-300">
@@ -2865,7 +3269,7 @@ useLayoutEffect(() => {
         )}
 
         {editingMessage && (
-          <div className="px-2 py-2 bg-zinc-900/80 border-t border-zinc-800/50 flex items-center gap-2 shrink-0">
+          <div className="px-2 py-2 bg-zinc-950/60 border-t border-zinc-800/50 flex items-center gap-2 shrink-0">
             <Edit3 className="h-3.5 w-3.5 text-amber-400 shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-[10px] font-bold text-amber-400">Editing message</p>
@@ -2892,7 +3296,7 @@ useLayoutEffect(() => {
 
         {/* Messaging disabled banner */}
         {selectedCommunity.messagingEnabled === false && selectedCommunity.creator?._id !== userId && (
-          <div className="px-4 py-3 border-t border-zinc-800/50 shrink-0 bg-zinc-900/80">
+          <div className="px-4 py-3 border-t border-zinc-800/50 shrink-0 bg-zinc-950/60">
             <div className="flex items-center gap-2 text-[11px] text-zinc-500">
               <MessageSquare className="h-3.5 w-3.5 shrink-0" />
               <span>Messaging is disabled in this community.</span>
@@ -2926,12 +3330,13 @@ useLayoutEffect(() => {
               className="hidden"
               onChange={handleFileSelect}
             />
-            <div className="flex-1 min-w-0 relative">
+            <div className="flex-1 min-w-0 relative flex items-end">
               {!recordedUrl && (
                 <>
-                  <textarea
-                    ref={inputRef}
-                    value={messageInput}
+                  <div className="relative w-full">
+                    <textarea
+                      ref={inputRef}
+                      value={messageInput}
                     wrap="soft"
                     onChange={handleInputChange}
                     onKeyDown={(e) => {
@@ -2950,18 +3355,26 @@ useLayoutEffect(() => {
                         : `Message ${selectedCommunity.name}...`
                     }
                     rows={1}
-                    className="w-full bg-zinc-900/80 border border-zinc-800/60 !rounded-lg pl-10 pr-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all resize-none max-h-[120px] overflow-y-auto leading-relaxed"
+                    className={`w-full !rounded-2xl border border-zinc-800 bg-zinc-950/40 text-[12px] md:text-sm placeholder:text-[12px] md:placeholder:text-sm text-slate-100 placeholder-zinc-500 outline-none focus:border-white focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-zinc-700 pl-[52px] resize-none max-h-[120px] overflow-y-auto leading-relaxed ${
+                      isKeyboardOpen ? "py-2 pr-3" : "py-2.5 pr-10"
+                    }`}
                   />
-  {/* Gallery icon — single media entry point (choose files or take photo via OS native dialog) */}
+                  {/* Media icon — inside the input box, vertically centered */}
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="absolute left-2 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full bg-zinc-800/80 hover:bg-zinc-700/80 flex items-center justify-center transition-colors cursor-pointer"
+                    className="absolute left-2 inset-y-0 my-auto flex h-9 w-9 items-center justify-center rounded-full bg-zinc-800/60 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors cursor-pointer"
                     title="Attach file"
                     type="button"
                   >
-                    <Image className="h-3.5 w-3.5 text-zinc-400 hover:text-zinc-200" />
+                    <Image className="h-4.5 w-4.5" />
                   </button>
-
+                  {!isKeyboardOpen && !messageInput && (
+                    <span className="absolute right-3.5 top-3.5 text-[9px] text-zinc-650 hidden md:flex items-center gap-0.5 border border-zinc-800 px-1 rounded bg-zinc-950 select-none">
+                      <CornerDownLeft className="h-2 w-2" />{" "}
+                      Enter
+                    </span>
+                  )}
+                  </div>
                 </>
               )}
               
@@ -3149,23 +3562,23 @@ useLayoutEffect(() => {
                 ref={contextMenuRef}
                 style={{ left: contextMenu.x, top: contextMenu.y }}
               >
-                {/* Reactions row */}
+
+                {/* Quick-reaction pill — same options as the emoji menu; reacts
+                    straight from the long-press menu. Hidden for deleted msgs. */}
                 {!contextMenu.message.isDeleted && (
-                  <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/50 gap-0.5">
-                    {["👍", "❤️", "😂", "😮", "😢", "😠"].map((emoji) => (
-                      <button
-                        key={emoji}
-                        onClick={() => {
-                          handleReaction(contextMenu.message, emoji);
-                          setContextMenu(null);
-                        }}
-                        className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-zinc-800 text-sm transition-all cursor-pointer hover:scale-110 active:scale-95"
-                      >
-                        {emoji}
-                      </button>
-                    ))}
+                  <div className="border-b border-zinc-800 px-1 py-1">
+                    <EmojiReactionMenu
+                      inline
+                      onReact={(emoji) => {
+                        handleReaction(contextMenu.message, emoji);
+                        setContextMenu(null);
+                      }}
+                      ariaLabel="React to this message"
+                      title="React"
+                    />
                   </div>
                 )}
+
                 <button
                   onClick={() => {
                     handleReply(contextMenu.message);
@@ -3260,6 +3673,57 @@ useLayoutEffect(() => {
 
   return (
     <>
+      {/* "My Communities" row context menu — long-press / right-click (mounted
+          at root so it works in BOTH the list and chat views) */}
+      {communityMenu && createPortal(
+        <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[300]"
+            onClick={() => setCommunityMenu(null)}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="fixed z-[310] bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden py-1 min-w-[190px]"
+            ref={communityMenuRef}
+            style={{ left: communityMenu.x, top: communityMenu.y }}
+          >
+            <button
+              onClick={() => handleToggleCommunityMute(communityMenu.community)}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+            >
+              {communityMenu.community.muted ? (
+                <>
+                  <Bell className="h-3.5 w-3.5" />
+                  Unmute notifications
+                </>
+              ) : (
+                <>
+                  <BellOff className="h-3.5 w-3.5" />
+                  Mute notifications
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => {
+                setPendingLeaveCommunityId(communityMenu.community._id);
+                setConfirmLeaveOpen(true);
+                setCommunityMenu(null);
+              }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-red-400 hover:bg-zinc-800 transition-colors cursor-pointer"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Leave community
+            </button>
+          </motion.div>
+        </>,
+        document.body
+      )}
+
       <GlassCard
         className="w-full h-full pt-0 sm:pt-4 lg:pt-4 xl:pt-5 pb-0 px-0 flex !rounded-none sm:!rounded-3xl lg:!rounded-4xl sm:border sm:border-white/10"
       >
@@ -3399,7 +3863,7 @@ useLayoutEffect(() => {
                 <div className="flex items-start gap-2.5">
                   <div className="h-6 w-6 rounded-full bg-zinc-800 shrink-0 flex items-center justify-center overflow-hidden">
                     {forwardModal.message.sender.profilePic?.url ? (
-                      <img src={forwardModal.message.sender.profilePic?.url || ""} alt="" className="h-full w-full object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                      <img src={optimizeImageUrl(forwardModal.message.sender.profilePic?.url)!} alt="" className="h-full w-full object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                     ) : (
                       <span className="text-[8px] font-bold text-zinc-500">
                         {forwardModal.message.sender.fullName?.charAt(0) || "?"}
@@ -3448,7 +3912,7 @@ useLayoutEffect(() => {
                         >
                           <div className="h-9 w-9 rounded-full bg-zinc-800 shrink-0 flex items-center justify-center overflow-hidden border border-zinc-700/50">
                             {partner?.profilePic?.url ? (
-                              <img src={partner.profilePic?.url || ""} alt="" className="h-full w-full object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                              <img src={optimizeImageUrl(partner.profilePic?.url)!} alt="" className="h-full w-full object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                             ) : (
                               <span className="text-[10px] font-bold text-zinc-500">
                                 {partner?.fullName?.charAt(0) || "?"}

@@ -4,6 +4,7 @@ import Comment from "../models/comment.model";
 import Post from "../models/post.model";
 import Like from "../models/like.model";
 import Notification from "../models/notification.model";
+import { User } from "../models/user.model";
 import {
   addCommentSchema,
   updateCommentSchema,
@@ -28,6 +29,98 @@ type CommentParams = {
   commentId: string;
 };
 
+// forward a comment to another user — notifies the recipient in-app
+// (notification center + badge) and via device push.
+export const forwardComment = async (
+  req: Request<CommentParams>,
+  res: Response,
+) => {
+  const { commentId } = req.params;
+  const senderId = req.user?._id;
+  const { recipientId } = req.body || {};
+
+  try {
+    if (!senderId) throw new UnauthorizedError("Unauthorized!");
+
+    if (!mongoose.Types.ObjectId.isValid(commentId)) {
+      throw new BadRequestError("Invalid comment ID!");
+    }
+
+    if (!recipientId || !mongoose.Types.ObjectId.isValid(recipientId)) {
+      throw new BadRequestError("Invalid recipient!");
+    }
+
+    if (senderId.toString() === recipientId) {
+      throw new BadRequestError("Cannot forward a comment to yourself!");
+    }
+
+    const comment = await Comment.findById(commentId)
+      .select("_id author post")
+      .lean();
+    if (!comment) {
+      throw new NotFoundError("Comment not found!");
+    }
+
+    const recipient = await User.findById(recipientId).select("_id").lean();
+    if (!recipient) {
+      throw new BadRequestError("Recipient not found!");
+    }
+
+    // The RECIPIENT must be able to view the comment's parent post — a
+    // closeFriends post's comment forwarded to an outsider would leak the
+    // comment text into a notification AND point at content they can't open.
+    let recipientCanView = true;
+    if (comment.post) {
+      const { allowed } = await canInteractWithPost(
+        comment.post.toString(),
+        recipientId,
+      );
+      recipientCanView = allowed;
+    }
+
+    // Skipped when the recipient is mutually blocked with the comment author
+    if (
+      recipientCanView &&
+      !(await areMutuallyBlocked(recipientId, comment.author.toString()))
+    ) {
+      await createNotification({
+        recipient: recipientId,
+        sender: senderId.toString(),
+        type: "comment_share",
+        comment: commentId,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Comment forwarded successfully!",
+    });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error(`Error in forwardComment controller!`, { error: err.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+// Attach per-viewer `likedByMe` to a list of comments so the client can
+// restore the liked (colored) heart state after a refresh. Like documents
+// live in their own collection, so this is one batched lookup per request.
+const attachLikedByMe = async (
+  currentUserId: string | undefined,
+  comments: any[],
+): Promise<any[]> => {
+  if (!currentUserId || comments.length === 0) return comments;
+  const ids = comments.map((c: any) => c._id);
+  const likes = await Like.find({ author: currentUserId, comment: { $in: ids } })
+    .select("comment")
+    .lean();
+  const likedSet = new Set(likes.map((l: any) => l.comment.toString()));
+  return comments.map((c: any) => ({
+    ...c,
+    likedByMe: likedSet.has(c._id.toString()),
+  }));
+};
+
 // Get all comments for a specific post (including replies)
 export const getAllCommentsForPost = async (req: Request<Params>, res: Response) => {
   const { postId } = req.params;
@@ -39,8 +132,16 @@ export const getAllCommentsForPost = async (req: Request<Params>, res: Response)
     }
 
     // closeFriends posts are invisible to non-close-friends — their comment
-    // threads must be too (404 so outsiders can't even detect the post).
-    const { allowed } = await canInteractWithPost(postId, req.user?._id?.toString());
+    // threads must be too (404 so outsiders can't even detect the post). The
+    // visibility check + block list are independent — run them CONCURRENTLY to
+    // cut a Mongo round-trip off the cold-cache path.
+    const currentUserId = req.user?._id?.toString();
+    const [{ allowed }, blockedIds] = await Promise.all([
+      canInteractWithPost(postId, currentUserId),
+      currentUserId
+        ? getBlockedUserIds(currentUserId)
+        : Promise.resolve([] as string[]),
+    ]);
     if (!allowed) {
       throw new NotFoundError("Post not found!");
     }
@@ -49,7 +150,6 @@ export const getAllCommentsForPost = async (req: Request<Params>, res: Response)
     // in either direction. Because results are per-viewer, the cache key must
     // include the viewer's ID (otherwise one user's filtered list would be
     // served to another user).
-    const currentUserId = req.user?._id?.toString();
     const cacheKey = `comments:all:${postId}:${currentUserId || "anon"}`;
 
     // get from cache
@@ -61,14 +161,11 @@ export const getAllCommentsForPost = async (req: Request<Params>, res: Response)
     }
 
     let blockedCommentIds: string[] = [];
-    if (currentUserId) {
-      const blockedIds = await getBlockedUserIds(currentUserId);
-      if (blockedIds.length > 0) {
-        const blockedComments = await Comment.find({ post: postId, author: { $in: blockedIds } })
-          .select("_id")
-          .lean();
-        blockedCommentIds = blockedComments.map((c) => c._id.toString());
-      }
+    if (blockedIds.length > 0) {
+      const blockedComments = await Comment.find({ post: postId, author: { $in: blockedIds } })
+        .select("_id")
+        .lean();
+      blockedCommentIds = blockedComments.map((c) => c._id.toString());
     }
 
     // fetch ALL comments for this post (including replies) with author info
@@ -88,7 +185,7 @@ export const getAllCommentsForPost = async (req: Request<Params>, res: Response)
 
     const responseData = {
       success: true,
-      comments: filteredComments,
+      comments: await attachLikedByMe(currentUserId, filteredComments),
     };
 
     // set cache
@@ -116,8 +213,16 @@ export const getComment = async (req: Request<Params>, res: Response) => {
       throw new BadRequestError("Invalid post ID!");
     }
 
-    // closeFriends posts are invisible to non-close-friends — hide their threads
-    const { allowed } = await canInteractWithPost(postId, req.user?._id?.toString());
+    // closeFriends posts are invisible to non-close-friends — hide their threads.
+    // The post-visibility check and the viewer's block list are independent, so
+    // they run CONCURRENTLY (cuts one Mongo round-trip off the cold-cache path).
+    const currentUserId = req.user?._id?.toString();
+    const [{ allowed }, blockedIds] = await Promise.all([
+      canInteractWithPost(postId, currentUserId),
+      currentUserId
+        ? getBlockedUserIds(currentUserId)
+        : Promise.resolve([] as string[]),
+    ]);
     if (!allowed) {
       throw new NotFoundError("Post not found!");
     }
@@ -138,12 +243,8 @@ export const getComment = async (req: Request<Params>, res: Response) => {
 
     // Blocked users must not exist — hide comments from anyone blocked in
     // either direction. Per-viewer result, so the cache key includes the viewer.
-    const currentUserId = req.user?._id?.toString();
-    if (currentUserId) {
-      const blockedIds = await getBlockedUserIds(currentUserId);
-      if (blockedIds.length > 0) {
-        query.author = { $nin: blockedIds };
-      }
+    if (blockedIds.length > 0) {
+      query.author = { $nin: blockedIds };
     }
 
     // cache key
@@ -177,7 +278,7 @@ export const getComment = async (req: Request<Params>, res: Response) => {
 
     const responseData = {
       success: true,
-      comments,
+      comments: await attachLikedByMe(currentUserId, comments),
       nextCursor,
       hasMore,
     };
@@ -248,7 +349,7 @@ export const getAllComments = async (req: Request, res: Response) => {
 
     const responseData = {
       success: true,
-      comments: visibleComments,
+      comments: await attachLikedByMe(currentUserId, visibleComments),
       nextCursor,
       hasMore,
     };
@@ -280,10 +381,18 @@ export const getCommentReplies = async (
       throw new BadRequestError("Invalid comment ID!");
     }
 
-    // Resolve the comment's parent post and enforce closeFriends visibility
-    const parentCommentDoc = await Comment.findById(commentId).select("post").lean();
+    // Resolve the comment's parent post + the viewer's block list concurrently
+    // (they're independent), then enforce closeFriends visibility. Saves a Mongo
+    // round-trip on the cold-cache path.
+    const currentUserId = req.user?._id?.toString();
+    const [parentCommentDoc, blockedIds] = await Promise.all([
+      Comment.findById(commentId).select("post").lean(),
+      currentUserId
+        ? getBlockedUserIds(currentUserId)
+        : Promise.resolve([] as string[]),
+    ]);
     if (parentCommentDoc?.post) {
-      const { allowed } = await canInteractWithPost(parentCommentDoc.post.toString(), req.user?._id?.toString());
+      const { allowed } = await canInteractWithPost(parentCommentDoc.post.toString(), currentUserId);
       if (!allowed) {
         throw new NotFoundError("Comment not found!");
       }
@@ -298,12 +407,8 @@ export const getCommentReplies = async (
     }
 
     // Blocked users must not exist — hide replies from blocked authors
-    const currentUserId = req.user?._id?.toString();
-    if (currentUserId) {
-      const blockedIds = await getBlockedUserIds(currentUserId);
-      if (blockedIds.length > 0) {
-        query.author = { $nin: blockedIds };
-      }
+    if (blockedIds.length > 0) {
+      query.author = { $nin: blockedIds };
     }
 
     // cache key
@@ -330,7 +435,7 @@ export const getCommentReplies = async (
 
     const responseData = {
       success: true,
-      replies,
+      replies: await attachLikedByMe(currentUserId, replies),
       nextCursor,
       hasMore,
     };

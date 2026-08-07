@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { ArrowLeft, Users, Settings, Image, Video, Music, FileText, Hash, Loader2, Play } from "lucide-react";
+import LinkPreviewCard from "./LinkPreviewCard";
+import { extractFirstUrl } from "../utils/links";
 import type { Community, CommunityMessage } from "../types";
 import { apiFetch } from "../utils/api";
+import { optimizeImageUrl } from "../utils/imageUrls";
 
 interface CommunityProfileOverlayProps {
   community: Community;
@@ -122,7 +125,6 @@ export default function CommunityProfileOverlay({
           <h3 className="text-sm font-bold text-white truncate">{community.name}</h3>
           <p className="text-[10px] text-zinc-500">
             {community.memberCount} member{community.memberCount !== 1 ? "s" : ""}
-            {community.description ? ` · ${community.description}` : ""}
           </p>
         </div>
         {isAdmin && (
@@ -158,6 +160,25 @@ export default function CommunityProfileOverlay({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
+        {/* About block — full description with rich link preview */}
+        {community.description && (
+          <div className="mb-4 rounded-2xl border border-white/5 bg-zinc-900/50 p-3.5">
+            <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5">
+              About
+            </h4>
+            <p className="text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap break-words">
+              {community.description}
+            </p>
+            {extractFirstUrl(community.description) && (
+              <div className="mt-2.5">
+                <LinkPreviewCard
+                  url={extractFirstUrl(community.description)!}
+                  compact
+                />
+              </div>
+            )}
+          </div>
+        )}
         {/* Members tab */}
         {activeTab === "members" && (
           <div className="space-y-1">
@@ -185,7 +206,7 @@ export default function CommunityProfileOverlay({
                       <div className="h-8 w-8 rounded-full bg-zinc-800 flex items-center justify-center overflow-hidden">
                         {member.user.profilePic?.url ? (
                           <img
-                            src={member.user.profilePic.url}
+                            src={optimizeImageUrl(member.user.profilePic.url)}
                             alt={member.user.fullName}
                             className="h-full w-full object-cover cursor-pointer"
                             onClick={(e) => {

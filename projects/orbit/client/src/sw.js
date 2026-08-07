@@ -5,18 +5,30 @@ import { NetworkFirst, CacheFirst, StaleWhileRevalidate } from 'workbox-strategi
 import { ExpirationPlugin } from 'workbox-expiration';
 
 // ─── Static precache (injected at build time by vite-plugin-pwa) ────
-precacheAndRoute(self.__WB_MANIFEST);
+const __manifest = self.__WB_MANIFEST || [];
+precacheAndRoute(__manifest);
 cleanupOutdatedCaches();
 
 // ─── App shell navigation fallback (SPA) ─────────────────────────
-registerRoute(
-  ({ request, url }) =>
-    request.mode === 'navigate' &&
-    url.origin === self.location.origin &&
-    !url.pathname.startsWith('/api') &&
-    !url.pathname.startsWith('/socket.io'),
-  createHandlerBoundToURL('/index.html'),
+// Only register when /index.html is ACTUALLY precached. In dev the plugin
+// injects an EMPTY manifest (precacheAndRoute([])), and calling
+// createHandlerBoundToURL('/index.html') on an uncached URL throws during
+// module evaluation — which kills the ENTIRE service worker (and with it
+// web-push notifications). Guarding this keeps the dev SW alive so push
+// works locally as well as in production builds.
+const hasAppShell = __manifest.some((entry) =>
+  typeof entry === 'string' ? entry === 'index.html' : entry?.url === 'index.html',
 );
+if (hasAppShell) {
+  registerRoute(
+    ({ request, url }) =>
+      request.mode === 'navigate' &&
+      url.origin === self.location.origin &&
+      !url.pathname.startsWith('/api') &&
+      !url.pathname.startsWith('/socket.io'),
+    createHandlerBoundToURL('/index.html'),
+  );
+}
 
 // ─── Runtime caching (same strategy as the previous generateSW config) ──
 registerRoute(

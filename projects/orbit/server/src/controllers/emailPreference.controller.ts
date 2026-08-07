@@ -51,6 +51,23 @@ export const updateEmailPreferences = async (req: Request, res: Response) => {
     if (req.body.emailTypes !== undefined) {
       updateData.emailTypes = req.body.emailTypes;
     }
+    // Per-category toggles (likes/comments/follows/mentions/messages/…).
+    // Only whitelisted keys with boolean values are accepted.
+    if (req.body.notificationPrefs !== undefined) {
+      const allowed = [
+        "likes", "comments", "follows", "mentions", "messages",
+        "reposts", "saves", "polls", "glances", "collabs",
+      ];
+      const np: Record<string, boolean> = {};
+      for (const key of allowed) {
+        if (typeof req.body.notificationPrefs[key] === "boolean") {
+          np[key] = req.body.notificationPrefs[key];
+        }
+      }
+      if (Object.keys(np).length > 0) {
+        updateData.notificationPrefs = np;
+      }
+    }
 
     const prefs = await EmailPreference.findOneAndUpdate(
       { user: currentUserId },

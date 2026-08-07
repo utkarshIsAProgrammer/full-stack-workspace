@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { optimizeImageUrl } from "../utils/imageUrls";
 
 interface ImageCarouselProps {
   images: { url: string; public_id?: string; alt?: string }[];
@@ -94,7 +95,8 @@ export default function ImageCarousel({
           <div key={idx} className="w-full shrink-0">
             <img
               loading="lazy"
-              src={img.url}
+              decoding="async"
+              src={optimizeImageUrl(img.url, 1000)}
               alt={img.alt || "post image"}
               onLoad={onImageLoad}
               onClick={() => onImageClick?.(img.url)}

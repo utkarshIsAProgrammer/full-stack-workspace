@@ -8,19 +8,24 @@ import UserAvatar from "./UserAvatar";
 import { apiFetch } from "../utils/api";
 import { getCachedResponse } from "../utils/apiCache";
 import { useCacheRefresh } from "../hooks/useCacheRefresh";
+import { usePostViewTracking } from "../hooks/usePostViewTracking";
 import EmptyState from "./EmptyState";
 
 // Stable RegExp for matching trending/popular cache refresh events
 // — module-level to prevent React effect re-attachment on every render.
 const MATCHER_TRENDING = /\/api\/posts\/trending|sort=likesCount/;
 import { logger } from "../utils/logger";
+import Leaderboard from "./Leaderboard";
 
 interface ExploreProps {
   onUserSelected: (username: string) => void;
   onPostSelected: (slug: string) => void;
   user: any;
   followingStates: Record<string, boolean>;
-  onToggleFollow: (userId: string) => Promise<void>;
+  requestedFollows?: Record<string, boolean>;
+  onToggleFollow: (
+    userId: string,
+  ) => Promise<void | { requested?: boolean }>;
 }
 
 export default function Explore({
@@ -28,6 +33,7 @@ export default function Explore({
   onPostSelected,
   user,
   followingStates,
+  requestedFollows,
   onToggleFollow,
 }: ExploreProps) {
   const [q, setQ] = useState("");
@@ -39,6 +45,12 @@ export default function Explore({
   const [loading, setLoading] = useState(false);
   const [followError, setFollowError] = useState<string | null>(null);
 
+  // Post view tracking (3s visibility → one view) for the trending + search
+  // post surfaces — cards carry data-post-id.
+  usePostViewTracking({
+    enabled: !loading,
+    deps: [trendingPosts, postCandidates, activeSegment, q, loading],
+  });
 
   // Listen for realtime comment count updates from other users
   useEffect(() => {
@@ -476,12 +488,19 @@ export default function Explore({
                               setFollowError("Follow action failed. Please try again.");
                             }
                           }}
-                          className={`shrink-0 text-sm font-semibold px-4 py-2 rounded-full transition-all cursor-pointer transform hover:scale-105 active:scale-95 ${followingStates[usr._id]
-                            ? "bg-zinc-900 text-white dark:bg-zinc-800 dark:text-white border border-zinc-300 dark:border-zinc-600 shadow-md"
-                            : "bg-black text-white hover:bg-zinc-800 shadow-lg"
+                          className={`shrink-0 text-sm font-semibold px-4 py-2 rounded-full transition-all cursor-pointer transform hover:scale-105 active:scale-95 ${
+                            !followingStates[usr._id] && requestedFollows?.[usr._id]
+                              ? "bg-amber-500/10 text-amber-400 border border-amber-500/30"
+                              : followingStates[usr._id]
+                                ? "bg-zinc-900 text-white dark:bg-zinc-800 dark:text-white border border-zinc-300 dark:border-zinc-600 shadow-md"
+                                : "bg-black text-white hover:bg-zinc-800 shadow-lg"
                             }`}
                         >
-                          {followingStates[usr._id] ? "Following" : "Follow"}
+                          {!followingStates[usr._id] && requestedFollows?.[usr._id]
+                            ? "Requested"
+                            : followingStates[usr._id]
+                              ? "Following"
+                              : "Follow"}
                         </button>
                       )}
                     </div>
@@ -497,6 +516,7 @@ export default function Explore({
               {postCandidates.map((pst) => (
                 <GlassCard
                   key={pst._id}
+                  dataPostId={pst._id}
                   className="shadow-sm border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all rounded-4xl"
                   animate={false}
                   showMacControls={false}
@@ -609,6 +629,9 @@ export default function Explore({
                 </GlassCard>
               )}
 
+              {/* Leaderboard */}
+              <Leaderboard />
+
               {/* Trending Posts */}
               <div>
                 <h3 className="text-label font-semibold text-zinc-300 mb-4 px-1 flex items-center gap-2">
@@ -625,6 +648,7 @@ export default function Explore({
                     {trendingPosts.map((pst, idx) => (
                       <GlassCard
                         key={pst._id}
+                        dataPostId={pst._id}
                         className="p-4 rounded-3xl border border-zinc-800/30 hover:border-zinc-700/50 transition-all"
                       >
                         <div className="flex items-start gap-4">

@@ -231,14 +231,15 @@ describe("Auth API", () => {
         .expect(200);
 
       expect(res.body.success).toBe(true);
-    });
+    });		it("should allow unauthenticated logout (idempotent cookie clear)", async () => {
+			// Logout is intentionally idempotent: it must always succeed, even with a
+			// missing/expired session or after account deletion cleared the cookies,
+			// so the client UI never gets stuck logged-in.
+			const res = await request(app)
+				.post("/api/auth/logout")
+				.expect(200);
 
-    it("should reject unauthenticated logout", async () => {
-      const res = await request(app)
-        .post("/api/auth/logout")
-        .expect(401);
-
-      expect(res.body.success).toBe(false);
-    });
+			expect(res.body.success).toBe(true);
+		});
   });
 });

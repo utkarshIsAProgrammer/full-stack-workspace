@@ -111,9 +111,16 @@ export const verifyOtpSchema = z
       .regex(/[a-z]/, "Must include lowercase letter!")
       .regex(/[0-9]/, "Must include number!")
       .regex(/[^A-Za-z0-9]/, "Must include special character!"),
-    confirmPassword: z.string(),
+    // The forgot-password UI has a single password field, so confirmPassword
+    // is optional here — it is still enforced when a client sends it.
+    confirmPassword: z.string().optional(),
   })
-  .refine((data) => data.newPassword === data.confirmPassword, {
+  .refine((data) => {
+    if (data.confirmPassword !== undefined && data.newPassword !== data.confirmPassword) {
+      return false;
+    }
+    return true;
+  }, {
     message: "Passwords do not match!",
     path: ["confirmPassword"],
   });
@@ -149,6 +156,9 @@ export const updateProfileSchema = z.object({
     .max(300, "Bio must be less than 300 characters!")
     .trim()
     .optional(),
+
+  // Private account — new followers must be approved before they can follow.
+  isPrivate: z.boolean().optional(),
 
   removeProfilePic: z.preprocess(
     (val) => val === "true" || val === true,

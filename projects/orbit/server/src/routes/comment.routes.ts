@@ -7,6 +7,7 @@ import {
   addComment,
   updateComment,
   deleteComment,
+  forwardComment,
 } from "../controllers/comment.controllers";
 import { toggleCommentReaction } from "../controllers/commentReaction.controllers";
 import { protect, optionalAuth } from "../middlewares/auth.middleware";
@@ -35,5 +36,8 @@ router.delete("/:commentId", protect, commentLimiter, deleteComment);
 
 // Comment reactions
 router.post("/:commentId/reactions", protect, commentLimiter, toggleCommentReaction);
+
+// Comment share / forward
+router.post("/:commentId/forward", protect, commentLimiter, forwardComment);
 
 export { router as commentRoutes };

@@ -26,6 +26,9 @@ import {
   clearCommunityChat,
   generateLiveKitToken,
   getCommunityMedia,
+  muteCommunityNotifications,
+  unmuteCommunityNotifications,
+  getCommunityMutedStatus,
 } from "../controllers/community.controllers";
 import { protect } from "../middlewares/auth.middleware";
 import upload, { uploadChatMedia } from "../middlewares/upload.middleware";
@@ -86,5 +89,10 @@ router.get("/:communityId/media", generalLimiter, getCommunityMedia);
 
 // LiveKit group call token
 router.post("/:communityId/livekit-token", generalLimiter, generateLiveKitToken);
+
+// Per-user notification mute settings (any member)
+router.get("/:communityId/muted", generalLimiter, getCommunityMutedStatus);
+router.post("/:communityId/mute", generalLimiter, muteCommunityNotifications);
+router.post("/:communityId/unmute", generalLimiter, unmuteCommunityNotifications);
 
 export { router as communityRoutes };

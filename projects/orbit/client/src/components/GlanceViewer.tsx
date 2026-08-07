@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Eye, Heart, MessageSquare, Loader2, Trash2, MoreHorizontal, Send, Share2, Search } from "lucide-react";
+import { X, Eye, Heart, MessageSquare, Loader2, Trash2, MoreHorizontal, Send, Share2, Search, Link2 } from "lucide-react";
 import type { Glance, User, Conversation } from "../types";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
+import { optimizeImageUrl } from "../utils/imageUrls";
 
 interface GlanceViewerProps {
 	glimpses: Glance[];
@@ -593,6 +594,43 @@ export default function GlanceViewer({
 		});
 	};
 
+	// Copy the glance link (points at the author's profile where the glance lives)
+	const copyGlanceLink = async () => {
+		if (!currentGlance) return;
+		const username = currentGlance.author?.username;
+		const link = username
+			? `${window.location.origin}/u/${username}`
+			: window.location.origin;
+		try {
+			await navigator.clipboard.writeText(link);
+		} catch (e) {
+			try {
+				const ta = document.createElement("textarea");
+				ta.value = link;
+				ta.style.position = "fixed";
+				ta.style.opacity = "0";
+				document.body.appendChild(ta);
+				ta.select();
+				document.execCommand("copy");
+				document.body.removeChild(ta);
+			} catch (clipErr) {
+				logger.error("Clipboard copy failed", clipErr);
+				window.dispatchEvent(
+					new CustomEvent("showToast", {
+						detail: { message: "Could not copy link", type: "error" },
+					}),
+				);
+				return;
+			}
+		}
+		setShowShareModal(false);
+		window.dispatchEvent(
+			new CustomEvent("showToast", {
+				detail: { message: "Glance link copied!", type: "success" },
+			}),
+		);
+	};
+
 	// Share the glance (media + caption) to every selected conversation
 	const handleExecuteShare = async () => {
 		if (!currentGlance || selectedShareConvIds.length === 0 || isSharing) return;
@@ -862,6 +900,7 @@ export default function GlanceViewer({
 					e.stopPropagation();
 					handleClose();
 				}}
+				aria-label="Close glance"
 				className="absolute top-6 right-6 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-black/40 hover:bg-black/60 text-white transition-all cursor-pointer">
 				<X className="h-5 w-5" />
 			</button>
@@ -923,7 +962,7 @@ export default function GlanceViewer({
 					<div className="absolute top-4 left-4 z-10 flex items-center gap-3">
 						{currentGlance.author.profilePic?.url ? (
 						<img
-							src={currentGlance.author.profilePic.url}
+							src={optimizeImageUrl(currentGlance.author.profilePic.url)}
 							alt={currentGlance.author.fullName}
 							className="h-10 w-10 rounded-full object-cover border-2 border-white/30 shadow-lg"
 						/>
@@ -1255,7 +1294,7 @@ export default function GlanceViewer({
 											>
 												{partner?.profilePic?.url ? (
 													<img
-														src={partner.profilePic.url}
+														src={optimizeImageUrl(partner.profilePic.url)}
 														alt={partner.fullName}
 														className="h-8 w-8 rounded-full object-cover border border-zinc-800 shrink-0"
 													/>
@@ -1289,8 +1328,15 @@ export default function GlanceViewer({
 								)}
 							</div>
 
-							{/* Send button */}
-							<div className="px-5 py-4 border-t border-white/5">
+							{/* Copy link + Send buttons */}
+							<div className="px-5 py-4 border-t border-white/5 space-y-2">
+								<button
+									onClick={copyGlanceLink}
+									className="w-full py-2.5 border border-white/10 hover:border-white/30 text-[11px] font-bold uppercase tracking-wider text-zinc-200 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2"
+								>
+									<Link2 className="h-3.5 w-3.5" />
+									Copy link
+								</button>
 								<button
 									onClick={handleExecuteShare}
 									disabled={selectedShareConvIds.length === 0 || isSharing}
@@ -1329,7 +1375,7 @@ export default function GlanceViewer({
 										return (												<div key={idx} className="flex items-center gap-2.5">
 													{viewerUser.profilePic?.url ? (
 														<img
-															src={viewerUser.profilePic.url}
+															src={optimizeImageUrl(viewerUser.profilePic.url)}
 															alt={viewerUser.fullName}
 															className="h-8 w-8 rounded-full object-cover border border-zinc-800"
 														/>

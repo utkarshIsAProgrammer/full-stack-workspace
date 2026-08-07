@@ -121,7 +121,20 @@ export const getNotifications = async (req: Request, res: Response) => {
 			.limit(limit + 1)
 			.populate("sender", "username fullName profilePic")
 			.populate("post", "title slug")
-			.populate("comment", "content")
+			.populate({
+				path: "comment",
+				select: "content post",
+				// allow comment_share notifications to open the post that holds
+				// the shared comment
+				populate: { path: "post", select: "slug" },
+			})
+			.populate({
+				path: "glimpse",
+				select: "author",
+				// allow glimpse_share notifications to open the glance author
+				populate: { path: "author", select: "username fullName" },
+			})
+			.populate("user", "username fullName profilePic")
 			.lean();
 
 		const hasMore = notifications.length > limit;

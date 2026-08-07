@@ -352,6 +352,11 @@ export const getGlimpse = async (req: Request, res: Response) => {
       throw new NotFoundError("Glimpse not found!");
     }
 
+    // Expired glimpses are gone — reject before the TTL sweep deletes them
+    if (glimpse.expiresAt < new Date()) {
+      throw new NotFoundError("Glimpse not found!");
+    }
+
     // closeFriends + blocked access guard (404s so outsiders can't detect it)
     await assertGlimpseAccess(glimpse, currentUserId);
 
@@ -423,6 +428,11 @@ export const reactToGlimpse = async (req: Request, res: Response) => {
 
     const glimpse = await Glimpse.findById(glimpseId);
     if (!glimpse) {
+      throw new NotFoundError("Glimpse not found!");
+    }
+
+    // Expired glimpses can no longer be reacted to
+    if (glimpse.expiresAt < new Date()) {
       throw new NotFoundError("Glimpse not found!");
     }
 
@@ -513,6 +523,11 @@ export const replyToGlimpse = async (req: Request, res: Response) => {
       .populate("author", "_id username fullName profilePic")
       .lean({ virtuals: true });
     if (!glimpse) {
+      throw new NotFoundError("Glimpse not found!");
+    }
+
+    // Expired glimpses can no longer be replied to
+    if (glimpse.expiresAt < new Date()) {
       throw new NotFoundError("Glimpse not found!");
     }
 
@@ -685,6 +700,85 @@ export const deleteGlimpse = async (req: Request, res: Response) => {
   } catch (err: any) {
     if (err.statusCode && err.statusCode < 500) throw err;
     logger.error("Error in deleteGlimpse controller!", { error: err?.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
+// forward a glance to another user — notifies the recipient in-app
+// (notification center + badge) and via device push.
+export const forwardGlimpse = async (
+  req: Request<{ glimpseId: string }>,
+  res: Response,
+) => {
+  const { glimpseId } = req.params;
+  const senderId = req.user?._id;
+  const { recipientId } = req.body || {};
+
+  try {
+    if (!senderId) throw new UnauthorizedError("Unauthorized!");
+
+    if (!mongoose.Types.ObjectId.isValid(glimpseId)) {
+      throw new BadRequestError("Invalid glance ID!");
+    }
+
+    if (!recipientId || !mongoose.Types.ObjectId.isValid(recipientId)) {
+      throw new BadRequestError("Invalid recipient!");
+    }
+
+    if (senderId.toString() === recipientId) {
+      throw new BadRequestError("Cannot forward a glance to yourself!");
+    }
+
+    const glimpse = await Glimpse.findById(glimpseId)
+      .select("_id author visibility expiresAt")
+      .lean();
+    if (!glimpse) {
+      throw new NotFoundError("Glance not found!");
+    }
+
+    // Expired glances can no longer be forwarded (same guard as view/react/reply)
+    if (glimpse.expiresAt < new Date()) {
+      throw new NotFoundError("Glance not found!");
+    }
+
+    // The SENDER must be able to see this glance (author / close friend /
+    // public) — otherwise a stranger who knows the ID could forward a
+    // closeFriends glance as a side channel.
+    await assertGlimpseAccess(glimpse, senderId.toString());
+
+    const recipient = await User.findById(recipientId).select("_id").lean();
+    if (!recipient) {
+      throw new BadRequestError("Recipient not found!");
+    }
+
+    // The RECIPIENT must also be able to see the glance — a closeFriends
+    // glance forwarded to an outsider would create a dead-end notification
+    // pointing at content they can never open.
+    let recipientCanSee = true;
+    try {
+      await assertGlimpseAccess(glimpse, recipientId);
+    } catch {
+      recipientCanSee = false;
+    }
+
+    // Skipped when the recipient is mutually blocked with the glance author
+    // or can't view the glance's audience.
+    if (recipientCanSee && !(await areMutuallyBlocked(recipientId, glimpse.author.toString()))) {
+      await createNotification({
+        recipient: recipientId,
+        sender: senderId.toString(),
+        type: "glimpse_share",
+        glimpse: glimpseId,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Glance forwarded successfully!",
+    });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error("Error in forwardGlimpse controller!", { error: err?.message });
     throw new AppError("Internal server error!");
   }
 };

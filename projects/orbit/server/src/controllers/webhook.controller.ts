@@ -144,7 +144,16 @@ export const testWebhook = async (req: Request, res: Response) => {
  */
 export const deliverWebhookEvent = async (event: string, data: any) => {
   try {
-    const webhooks = await Webhook.find({ events: event, isActive: true }).lean();
+    // events is a free string but matches the schema enum at runtime
+    const webhooks = await Webhook.find({
+      events: event as
+        | "post.created"
+        | "post.liked"
+        | "post.commented"
+        | "user.followed"
+        | "comment.created",
+      isActive: true,
+    }).lean();
     if (webhooks.length === 0) return;
 
     const payload = {

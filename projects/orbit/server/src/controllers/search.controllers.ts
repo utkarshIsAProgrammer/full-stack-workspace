@@ -173,7 +173,11 @@ export const searchPosts = async (req: Request, res: Response) => {
 
     if (q) {
       try {
-        const textQuery: any = { $text: { $search: q } };
+        // PRIVACY: the $text path must be scoped to public posts only —
+        // otherwise closeFriends-only posts leak into search results for
+        // anyone (the regex fallback below already filters visibility, so
+        // this keeps the two paths consistent).
+        const textQuery: any = { $text: { $search: q }, visibility: "public" };
         if (cursor) {
           textQuery._id = { $lt: cursor };
         }

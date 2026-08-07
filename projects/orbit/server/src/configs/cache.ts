@@ -1,5 +1,6 @@
 import { redis } from "./redis";
 import { logger } from "../utilities/logger";
+import { clearMemCacheByPrefix } from "../utilities/chatCache";
 
 // SCAN-based pattern deletion — avoids O(N) blocking of KEYS
 export const clearByPattern = async (pattern: string) => {
@@ -124,8 +125,11 @@ export const clearHashtagCache = async () => {
 
 // clear chat conversations and messages list cache
 export const clearChatCache = async (conversationId: string, participantIds: string[]) => {
+  // Purge the in-memory layer first (zero-latency reads must not go stale)
+  clearMemCacheByPrefix(`chat:messages:${conversationId}`);
   await clearByPattern(`chat:messages:${conversationId}:*`);
   for (const userId of participantIds) {
+    clearMemCacheByPrefix(`chat:conversations:${userId}`);
     await deleteCache(`chat:conversations:${userId}`);
     // Also invalidate the route-level cacheMiddleware keys
     // (format: `api:{userId}:{path}:{query}`) so the conversations list

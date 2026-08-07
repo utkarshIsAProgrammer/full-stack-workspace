@@ -20,10 +20,11 @@ const XP_REWARDS = {
 export async function awardXP(
   userId: string,
   action: keyof typeof XP_REWARDS,
-  metadata?: Record<string, any>
+  metadata?: Record<string, any>,
+  amountOverride?: number
 ): Promise<{ totalXP: number; level: number; leveledUp: boolean; newBadges: string[] }> {
   try {
-    const amount = XP_REWARDS[action] || 0;
+    const amount = amountOverride ?? XP_REWARDS[action] ?? 0;
     if (amount === 0) return { totalXP: 0, level: 1, leveledUp: false, newBadges: [] };
 
     let xpRecord = await XP.findOne({ userId });

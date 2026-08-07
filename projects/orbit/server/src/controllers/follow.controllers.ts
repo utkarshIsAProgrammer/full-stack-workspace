@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { User } from "../models/user.model";
 import Follow from "../models/follow.model";
+import FollowRequest from "../models/followRequest.model";
 import Block from "../models/block.model";
 import { getCache, setCache, clearByPattern, clearFollowCache, clearUserByUsernameCache, clearUserByIdCache } from "../configs/cache";
 import {
@@ -13,6 +14,7 @@ import { emitFollowUser, emitUnfollowUser } from "../configs/socket";
 import { getBlockedUserIds } from "../utilities/blockCheck";
 import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenError } from "../utilities/errors";
 import { invalidateFeedCache } from "../services/feedService";
+import { awardXP } from "../services/xpService";
 
 type Params = {
   userId: string;
@@ -69,7 +71,9 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
     }
 
     // check target user exists
-    const targetUser = await User.findById(userId).select("_id username").lean();
+    const targetUser = await User.findById(userId)
+      .select("_id username isPrivate")
+      .lean();
 
     if (!targetUser) {
       throw new NotFoundError("User not found!");
@@ -94,6 +98,41 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
       follower,
       following: userId,
     });
+
+    // Private account → route to the follow-request flow instead of a
+    // direct follow. The account owner approves/declines each request.
+    if (!existingFollow && (targetUser as any).isPrivate) {
+      const alreadyRequested = await FollowRequest.exists({
+        sender: follower,
+        recipient: userId,
+      });
+      if (alreadyRequested) {
+        return res.status(200).json({
+          success: true,
+          message: "Follow request already sent!",
+          isPrivate: true,
+          requested: true,
+        });
+      }
+
+      await FollowRequest.create({
+        sender: follower,
+        recipient: userId,
+      });
+
+      await createNotification({
+        recipient: userId,
+        sender: follower.toString(),
+        type: "follow_request",
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Follow request sent!",
+        isPrivate: true,
+        requested: true,
+      });
+    }
 
     // follow
     if (!existingFollow) {
@@ -147,6 +186,9 @@ export const toggleFollowUser = async (req: Request<Params>, res: Response) => {
       if (updatedTargetUser) {
         emitFollowUser(userId, follower.toString(), updatedTargetUser.followersCount);
       }
+
+      // Award XP for following a user (fire-and-forget)
+      awardXP(follower.toString(), "FOLLOW").catch(() => {});
 
       return res.status(201).json({
         success: true,

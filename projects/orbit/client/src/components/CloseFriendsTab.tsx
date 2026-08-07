@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { UserPlus, UserMinus, Users, Search, Loader2, Lock } from "lucide-react";
 import { apiFetch } from "../utils/api";
+import { evictCachedResponse } from "../utils/apiCache";
 import { logger } from "../utils/logger";
 import UserAvatar from "./UserAvatar";
 import type { User } from "../types";
@@ -86,6 +87,10 @@ export default function CloseFriendsTab({ user }: CloseFriendsTabProps) {
       if (!res.ok || !data.success) {
         throw new Error(data.message || "Failed to add close friend");
       }
+      // apiFetch is cache-first (2 min default TTL) — the just-mutated
+      // close-friends list must NOT be re-served from the stale cache, or the
+      // newly-added friend stays invisible until the TTL expires.
+      await evictCachedResponse("/api/users/close-friends");
       await fetchCloseFriends();
       const addedUser = searchResults.find((u) => u._id === userId);
       if (addedUser) {
@@ -121,6 +126,9 @@ export default function CloseFriendsTab({ user }: CloseFriendsTabProps) {
       if (!res.ok || !data.success) {
         throw new Error(data.message || "Failed to remove close friend");
       }
+      // Same cache-first concern as add: evict so the removal is reflected
+      // immediately on the next fetch/mount.
+      await evictCachedResponse("/api/users/close-friends");
       setCloseFriends((prev) => prev.filter((f) => f._id !== userId));
       window.dispatchEvent(
         new CustomEvent("showToast", {

@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Gift, Copy, Check, Share2, Users, Loader2 } from "lucide-react";
+import { Gift, Copy, Check, Users, Loader2, TicketCheck } from "lucide-react";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 import GlassCard from "./GlassCard";
@@ -11,6 +11,11 @@ export default function InvitesTab() {
 	const [generating, setGenerating] = useState(false);
 	const [copied, setCopied] = useState(false);
 	const [stats, setStats] = useState({ totalInvites: 0, acceptedInvites: 0 });
+	const [redeemCode, setRedeemCode] = useState("");
+	const [redeeming, setRedeeming] = useState(false);
+	const [redeemMsg, setRedeemMsg] = useState<{ ok: boolean; text: string } | null>(null);
+	// Guards against concurrent double-redeem (button + deep-link transports).
+	const redeemInFlightRef = useRef(false);
 
 	const fetchInviteCode = async () => {
 		setLoading(true);
@@ -44,6 +49,56 @@ export default function InvitesTab() {
 		fetchStats();
 	}, []);
 
+	// Pre-fill + auto-redeem when arriving via a shared /invite/<code> link.
+	// Two transports: a window event (tab already mounted) and sessionStorage
+	// (cold load where this component mounts after the deep-link ran).
+	useEffect(() => {
+		const onInviteDeepLink = (e: Event) => {
+			const code = ((e as CustomEvent).detail?.code || "").toUpperCase();
+			if (!code) return;
+			setRedeemCode(code);
+			setTimeout(() => handleRedeemWithCode(code), 250);
+		};
+		window.addEventListener("orbit:redeem-invite", onInviteDeepLink);
+		try {
+			const pending = sessionStorage.getItem("orbit_pending_invite");
+			if (pending) {
+				sessionStorage.removeItem("orbit_pending_invite");
+				const code = pending.toUpperCase();
+				setRedeemCode(code);
+				setTimeout(() => handleRedeemWithCode(code), 250);
+			}
+		} catch { /* private mode */ }
+		return () => window.removeEventListener("orbit:redeem-invite", onInviteDeepLink);
+	}, []);
+
+	// Redeem a specific code (used by the button + deep-link path).
+	// The ref guard makes double-fire impossible even if the deep-link event
+	// and the sessionStorage path both run (or the user double-clicks).
+	const handleRedeemWithCode = async (code: string) => {
+		if (redeemInFlightRef.current) return;
+		redeemInFlightRef.current = true;
+		setRedeeming(true);
+		setRedeemMsg(null);
+		try {
+			const res = await apiFetch(`/api/invites/redeem/${encodeURIComponent(code)}`, { method: "POST" });
+			const data = await res.json();
+			if (res.ok && data.success) {
+				setRedeemMsg({ ok: true, text: "Invite redeemed successfully!" });
+				setRedeemCode("");
+				fetchStats();
+			} else {
+				setRedeemMsg({ ok: false, text: data.message || "Could not redeem this code." });
+			}
+		} catch (err) {
+			logger.error("Failed to redeem invite code", err);
+			setRedeemMsg({ ok: false, text: "Could not redeem this code." });
+		} finally {
+			redeemInFlightRef.current = false;
+			setRedeeming(false);
+		}
+	};
+
 	const handleGenerate = async () => {
 		setGenerating(true);
 		try {
@@ -60,28 +115,45 @@ export default function InvitesTab() {
 	};
 
 	const handleCopy = () => {
-		const link = `${window.location.origin}/invite/${inviteCode}`;
-		navigator.clipboard.writeText(link).then(() => {
-			setCopied(true);
-			setTimeout(() => setCopied(false), 2000);
-		});
+		// Copy just the invite code — the recipient redeems it in the
+		// "Have an invite code?" field. Falls back to a hidden textarea for
+		// browsers/contexts without the async clipboard API.
+		const fallbackCopy = () => {
+			try {
+				const ta = document.createElement("textarea");
+				ta.value = inviteCode;
+				ta.style.position = "fixed";
+				ta.style.opacity = "0";
+				document.body.appendChild(ta);
+				ta.select();
+				document.execCommand("copy");
+				document.body.removeChild(ta);
+				setCopied(true);
+				setTimeout(() => setCopied(false), 2000);
+			} catch {
+				logger.error("Failed to copy invite code");
+			}
+		};
+		if (navigator.clipboard?.writeText) {
+			navigator.clipboard.writeText(inviteCode).then(
+				() => {
+					setCopied(true);
+					setTimeout(() => setCopied(false), 2000);
+				},
+				() => fallbackCopy(),
+			);
+		} else {
+			fallbackCopy();
+		}
 	};
 
-	const handleShare = async () => {
-		const link = `${window.location.origin}/invite/${inviteCode}`;
-		const shareData = {
-			title: "Join me on Orbit!",
-			text: `Come join me on Orbit! Use my invite link: ${link}`,
-		};
-		if (navigator.share) {
-			try {
-				await navigator.share(shareData);
-			} catch {
-				// User cancelled
-			}
-		} else {
-			handleCopy();
+	const handleRedeem = () => {
+		const code = redeemCode.trim().toUpperCase();
+		if (!code) {
+			setRedeemMsg({ ok: false, text: "Enter an invite code first." });
+			return;
 		}
+		handleRedeemWithCode(code);
 	};
 
 	if (loading) {
@@ -107,18 +179,41 @@ export default function InvitesTab() {
 				</div>
 
 				<p className="text-[11px] text-zinc-400 mb-5 leading-relaxed">
-					Share your invite link with friends and earn rewards when they join Orbit!
+					Share your invite code with friends and earn rewards when they join Orbit!
 				</p>
 
 				{/* Invite Code Display */}
 				{inviteCode ? (
 					<div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 mb-4">
-						<div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-1.5">
-							Your Invite Code
+						<div className="flex items-center justify-between mb-1.5">
+							<div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">
+								Your Invite Code
+							</div>
+							<button
+								type="button"
+								onClick={handleCopy}
+								title={copied ? "Copied!" : "Copy invite code"}
+								aria-label="Copy invite code"
+								className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-bold text-zinc-400 hover:text-white hover:bg-zinc-800/70 transition-all cursor-pointer"
+							>
+								{copied ? (
+									<><Check className="h-3.5 w-3.5 text-emerald-400" /> Copied</>
+								) : (
+									<><Copy className="h-3.5 w-3.5" /> Copy</>
+								)}
+							</button>
 						</div>
-						<div className="text-lg font-black tracking-widest text-white font-mono">
-							{inviteCode}
-						</div>
+						<button
+							type="button"
+								onClick={handleCopy}
+								title="Copy invite code"
+								className="group w-full text-left cursor-pointer"
+							>
+							<span className="inline-flex items-center gap-2.5 text-lg font-black tracking-widest text-white font-mono group-hover:text-emerald-300 transition-colors">
+								{inviteCode}
+								<Copy className="h-4 w-4 text-zinc-600 group-hover:text-emerald-400 transition-colors" />
+							</span>
+						</button>
 					</div>
 				) : (
 					<button
@@ -135,29 +230,40 @@ export default function InvitesTab() {
 					</button>
 				)}
 
-				{/* Action Buttons */}
-				{inviteCode && (
-					<div className="flex gap-2 mb-5">
+				{/* Redeem a friend's code */}
+				<div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 mb-4">
+					<div className="flex items-center gap-2 mb-2">
+						<TicketCheck className="h-4 w-4 text-emerald-400" />
+						<div className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+							Have an invite code?
+						</div>
+					</div>
+					<div className="flex gap-2">
+						<input
+							value={redeemCode}
+							onChange={(e) => setRedeemCode(e.target.value.toUpperCase())}
+							placeholder="ABC12345"
+							maxLength={12}
+							className="min-w-0 flex-1 rounded-full border border-zinc-700 bg-zinc-950/60 px-4 py-2 text-[12px] font-mono font-bold tracking-widest text-white placeholder-zinc-600 outline-none focus:border-emerald-500/50 transition-colors uppercase"
+						/>
 						<button
 							type="button"
-							onClick={handleCopy}
-							className="flex-1 rounded-full bg-zinc-800 hover:bg-zinc-700 py-2.5 text-[10px] font-bold text-zinc-300 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+							onClick={handleRedeem}
+							disabled={redeeming}
+							className="shrink-0 rounded-full bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 px-4 py-2 text-[10px] font-bold text-emerald-300 transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
 						>
-							{copied ? (
-								<><Check className="h-3.5 w-3.5 text-emerald-400" /> Copied!</>
-							) : (
-								<><Copy className="h-3.5 w-3.5" /> Copy Link</>
-							)}
-						</button>
-						<button
-							type="button"
-							onClick={handleShare}
-							className="flex-1 rounded-full bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 py-2.5 text-[10px] font-bold text-emerald-300 transition-all cursor-pointer flex items-center justify-center gap-1.5"
-						>
-							<Share2 className="h-3.5 w-3.5" /> Share
+							{redeeming ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+							Redeem
 						</button>
 					</div>
-				)}
+					{redeemMsg && (
+						<div
+							className={`mt-2 text-[11px] font-semibold ${redeemMsg.ok ? "text-emerald-400" : "text-red-400"}`}
+						>
+							{redeemMsg.text}
+						</div>
+					)}
+				</div>
 
 				{/* Stats */}
 				<div className="grid grid-cols-2 gap-3 pt-4 border-t border-zinc-800/50">

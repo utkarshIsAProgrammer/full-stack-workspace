@@ -101,7 +101,7 @@ export default React.memo(function Dock({
 				}}
 				onMouseLeave={() => setHoveredIndex(null)}
 				aria-label={item.label}
-				className="group relative flex h-10 w-10 min-[400px]:h-11 min-[400px]:w-11 min-[500px]:h-12 min-[500px]:w-12 items-center justify-center rounded-xl sm:rounded-2xl text-zinc-500 dark:text-zinc-500 transition-colors">
+				className="group relative flex h-9 w-8 min-[400px]:h-10 min-[400px]:w-9 min-[500px]:h-11 min-[500px]:w-10 items-center justify-center rounded-xl sm:rounded-2xl text-zinc-500 dark:text-zinc-500 transition-colors">
 				{/* Active indicator glow */}
 				{isActive && (
 					<motion.div
@@ -123,7 +123,7 @@ export default React.memo(function Dock({
 					className="relative z-10 flex items-center justify-center gpu-accelerated">
 					<Icon
 						strokeWidth={item.strokeWidth || 2}
-						className={`h-5 w-5 min-[400px]:h-5.5 min-[400px]:w-5.5 min-[500px]:h-6 min-[500px]:w-6 ${isActive ? "text-black dark:text-white" : "text-zinc-400 dark:text-zinc-450"}`}
+						className={`h-4.5 w-4.5 min-[400px]:h-5 min-[400px]:w-5 min-[500px]:h-5.5 min-[500px]:w-5.5 ${isActive ? "text-black dark:text-white" : "text-zinc-400 dark:text-zinc-450"}`}
 					/>
 
 					{/* Badge */}
@@ -154,7 +154,7 @@ export default React.memo(function Dock({
 					bottom: `calc(${isKeyboardOpen ? "0.2rem" : "0.3rem"} + env(safe-area-inset-bottom, 0px))`,
 				}}>
 				<div
-					className={`relative flex items-center justify-between rounded-3xl sm:rounded-4xl border border-white/20 dark:border-zinc-700/60 bg-white/70 dark:bg-zinc-900/85 backdrop-blur-xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.45)] transition-all duration-200 ${isKeyboardOpen ? "px-2 py-1.5 gap-0.5" : "px-2.5 py-3.5 gap-0.5 min-[400px]:gap-1 min-[500px]:gap-1.5 min-[400px]:px-3 min-[500px]:py-4"}`}>
+					className={`relative flex items-center justify-between rounded-3xl sm:rounded-4xl border border-white/15 bg-black/35 backdrop-blur-3xl backdrop-saturate-150 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.12),inset_0_-1px_0_rgba(255,255,255,0.04)] transition-all duration-200 ${isKeyboardOpen ? "px-2 py-1.5 gap-0.5" : "px-2.5 py-3.5 gap-1 min-[400px]:gap-1.5 min-[500px]:gap-2 min-[400px]:px-3 min-[500px]:py-4"}`}>
 
 
 					{leftItems.map((item, i) => renderDockItem(item, i))}
@@ -162,14 +162,14 @@ export default React.memo(function Dock({
 					{/* Center: Create Post button — same size as other dock items, no hover animation */}
 					<button
 						onClick={() => setTab("compose")}
-						className={`group relative flex h-10 w-10 min-[400px]:h-11 min-[400px]:w-11 min-[500px]:h-12 min-[500px]:w-12 items-center justify-center rounded-full gpu-accelerated ${
+						className={`group relative flex h-9 w-8 min-[400px]:h-10 min-[400px]:w-9 min-[500px]:h-11 min-[500px]:w-10 items-center justify-center rounded-full gpu-accelerated ${
 							currentTab === "compose"
 								? "bg-linear-to-br from-zinc-700 to-black dark:from-white dark:to-zinc-300 shadow-xl shadow-black/40 dark:shadow-white/30 border border-white/40 dark:border-zinc-800"
 								: "bg-linear-to-br from-zinc-800 to-black dark:from-white dark:to-zinc-200 shadow-xl shadow-black/30 dark:shadow-white/20 border border-zinc-700 dark:border-zinc-200"
 						} transition-all duration-200 hover:shadow-2xl cursor-pointer shrink-0 z-20`}
 						title="New Post">
 						<Plus
-							className={`h-4.5 w-4.5 min-[400px]:h-5 min-[400px]:w-5 min-[500px]:h-6 min-[500px]:w-6 gpu-accelerated ${
+							className={`h-4 w-4 min-[400px]:h-4.5 min-[400px]:w-4.5 min-[500px]:h-5 min-[500px]:w-5 gpu-accelerated ${
 								currentTab === "compose"
 									? "text-white scale-110 dark:text-black"
 									: "text-white dark:text-black"

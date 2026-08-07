@@ -5,6 +5,7 @@ import ImageCropModal from "./ImageCropModal";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
 import { downscaleImageFile } from "../utils/imageCompression";
+import { useAutoGrow } from "../hooks/useAutoGrow";
 import type { Community } from "../types";
 
 interface CreateCommunityModalProps {
@@ -19,7 +20,9 @@ export default function CreateCommunityModal({
   onCreated,
 }: CreateCommunityModalProps) {
   const [name, setName] = useState("");
-  const [description, setDescription] = useState("");	const [imageFile, setImageFile] = useState<File | null>(null);
+  const [description, setDescription] = useState("");
+  const descriptionRef = useAutoGrow<HTMLTextAreaElement>(description);
+  const [imageFile, setImageFile] = useState<File | null>(null);
 	const [imagePreview, setImagePreview] = useState<string | null>(null);
 	const [cropModalOpen, setCropModalOpen] = useState(false);
 	const [cropSrc, setCropSrc] = useState("");
@@ -193,7 +196,7 @@ export default function CreateCommunityModal({
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="What's this community about?"
+                  ref={descriptionRef} placeholder="What's this community about?"
                   maxLength={500}
                   rows={3}
                   className="w-full bg-zinc-900/80 border border-zinc-800/60 !rounded-lg px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/40 transition-all resize-none"

@@ -64,6 +64,16 @@ export const isUserOnline = (userId: string): boolean => {
 };
 
 /**
+ * Number of users currently connected to this instance (in-memory presence).
+ * Used by the admin stats endpoint as the authoritative "online now" count —
+ * the Redis presence keys are only a short-TTL mirror and updatedAt is bumped
+ * by logins/profile edits, so neither is a reliable activity signal.
+ */
+export const getOnlineUsersCount = (): number => {
+  return onlineUsers.size;
+};
+
+/**
  * Broadcasts a member's online/offline status to a community room so every
  * open community chat can show live green dots (like personal chat presence).
  */
@@ -269,7 +279,11 @@ export const initSocket = async (server: http.Server) => {
     // Calls can only be signalled between users who share a direct-message
     // conversation. This prevents an authenticated account from using the
     // signalling server to ring arbitrary users or relay malformed payloads.
-    const canRelayCall = async (targetUserId: unknown): Promise<boolean> => {
+    const canRelayCall = async (
+      targetUserId: unknown,
+      opts?: { skipBlockCheck?: boolean },
+    ): Promise<boolean> => {
+      const skipBlockCheck = opts?.skipBlockCheck === true;
       if (
         !s.userId ||
         typeof targetUserId !== "string" ||
@@ -286,19 +300,29 @@ export const initSocket = async (server: http.Server) => {
         s.data.authorizedCalls = new Set<string>();
       }
 
-      if (s.data.authorizedCalls.has(targetUserId)) {
-        return true;
+      // Block status is re-checked on every security-critical (and
+      // low-frequency) relay — a block created mid-session must stop a
+      // previously-authorized target from ringing again. The one exception
+      // is the high-frequency call:ice-candidate path (passes
+      // skipBlockCheck): candidates only flow after an offer/answer has
+      // already been exchanged, and the next offer re-checks the block, so
+      // a mid-call block is torn down at the signaling layer without
+      // paying a DB round-trip per candidate.
+      if (!skipBlockCheck) {
+        const isBlocked = await Block.exists({
+          $or: [
+            { blocker: s.userId, blocked: targetUserId },
+            { blocker: targetUserId, blocked: s.userId },
+          ],
+        });
+        if (isBlocked) {
+          s.data.authorizedCalls.delete(targetUserId);
+          return false;
+        }
       }
 
-      // Check if blocked
-      const isBlocked = await Block.exists({
-        $or: [
-          { blocker: s.userId, blocked: targetUserId },
-          { blocker: targetUserId, blocked: s.userId },
-        ],
-      });
-      if (isBlocked) {
-        return false;
+      if (s.data.authorizedCalls.has(targetUserId)) {
+        return true;
       }
 
       const sharedConversation = await Conversation.exists({
@@ -611,7 +635,9 @@ export const initSocket = async (server: http.Server) => {
 
     // Relay ICE candidates between peers
     socket.on("call:ice-candidate", async (data: { targetUserId: string; candidate: unknown }) => {
-      if (!data || !data.candidate || !(await canRelayCall(data.targetUserId))) return;
+      // High-frequency path — skip the block DB query; the offer/answer
+      // that preceded these candidates already passed the block check.
+      if (!data || !data.candidate || !(await canRelayCall(data.targetUserId, { skipBlockCheck: true }))) return;
       io.to(`user:${data.targetUserId}`).emit("call:ice-candidate", {
         senderId: s.userId,
         candidate: data.candidate,
@@ -649,21 +675,30 @@ export const initSocket = async (server: http.Server) => {
     // ── Community Socket Events ──────────────────────────────────────
     socket.on("community:join", async ({ communityId }) => {
       if (!s.userId || !communityId) return;
-      socket.join(`community:${communityId}`);
-      logger.info("Socket joined community", { userId: s.userId, communityId });
+      if (!mongoose.isObjectIdOrHexString(communityId)) return;
 
-      // Send back current online members so the client can show green dots
       try {
+        // Only actual members may subscribe to the community room. This
+        // prevents an authenticated non-member from receiving message,
+        // call, and presence events for communities they don't belong to.
         const community = await Community.findById(communityId).select("members").lean();
-        if (community) {
-          const memberIds = (community as any).members?.map((m: any) => m.user?.toString()).filter(Boolean) || [];
-          const onlineMemberIds = memberIds.filter((id: string) => id !== s.userId && onlineUsers.has(id));
-          if (onlineMemberIds.length > 0) {
-            io.to(`user:${s.userId}`).emit("community:presence:sync", {
-              communityId,
-              onlineUserIds: onlineMemberIds,
-            });
-          }
+        if (!community) return;
+        const isMember = (community as any).members?.some(
+          (m: any) => m.user?.toString() === s.userId
+        );
+        if (!isMember) return;
+
+        socket.join(`community:${communityId}`);
+        logger.info("Socket joined community", { userId: s.userId, communityId });
+
+        // Send back current online members so the client can show green dots
+        const memberIds = (community as any).members?.map((m: any) => m.user?.toString()).filter(Boolean) || [];
+        const onlineMemberIds = memberIds.filter((id: string) => id !== s.userId && onlineUsers.has(id));
+        if (onlineMemberIds.length > 0) {
+          io.to(`user:${s.userId}`).emit("community:presence:sync", {
+            communityId,
+            onlineUserIds: onlineMemberIds,
+          });
         }
       } catch (error: any) {
         logger.error("Error syncing community presence", { error: error.message, communityId, userId: s.userId });
@@ -828,6 +863,7 @@ export const initSocket = async (server: http.Server) => {
     // A member wants to know if there's an active call they can join
     socket.on("community:call-status", async ({ communityId }) => {
       if (!s.userId || !communityId) return;
+      if (!(await isCommunityMember(communityId, s.userId))) return;
       pruneStaleCommunityCalls();
       const call = activeCommunityCalls.get(communityId);
       if (call) {

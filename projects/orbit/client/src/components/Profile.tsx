@@ -18,18 +18,30 @@ import {
 	Lock,
 	FilePenLine,
 	Clock,
+	Send,
+	Link2,
+	Pin,
+	FolderOpen,
+	FolderPlus,
+	Plus,
+	Trash2,
+	ArrowLeft,
+	Loader2,
+	Archive,
 } from "lucide-react";
-import { User as UserType, Post } from "../types";
+	import { User as UserType, Post } from "../types";
 import { downscaleImageFile } from "../utils/imageCompression";
+import { optimizeImageUrl } from "../utils/imageUrls";
 import GlassCard from "./GlassCard";
+import LinkPreviewCard from "./LinkPreviewCard";
+import { extractFirstUrl } from "../utils/links";
 import ImageCropModal from "./ImageCropModal";
 import UserAvatar from "./UserAvatar";
-import Skeleton from "./Skeleton";
-import ConfirmDialog from "./ConfirmDialog";
+import Skeleton from "./Skeleton";	import { useAutoGrow } from "../hooks/useAutoGrow";		import ConfirmDialog from "./ConfirmDialog";
+	import ForwardModal, { ForwardPartner } from "./ForwardModal";
+import ReportButton from "./ReportButton";
 
 import Streaks from "./Streaks";
-import BlockButton from "./BlockButton";
-import CloseFriendButton from "./CloseFriendButton";
 import ReputationDisplay from "./ReputationDisplay";
 import PollCard from "./PollCard";
 import { apiFetch } from "../utils/api";
@@ -39,6 +51,7 @@ import {
 	evictCachedResponse,
 } from "../utils/apiCache";
 import { useCacheRefresh } from "../hooks/useCacheRefresh";
+import { usePostViewTracking } from "../hooks/usePostViewTracking";
 import { logger } from "../utils/logger";
 
 // Stable RegExp for matching profile/posts cache refresh events
@@ -56,7 +69,10 @@ interface ProfileProps {
 	onPostClick: (slug: string, openComments?: boolean) => void;
 	onUserClick: (username: string) => void;
 	followingStates: Record<string, boolean>;
-	onToggleFollow: (userId: string) => Promise<void>;
+	requestedFollows?: Record<string, boolean>;
+	onToggleFollow: (
+		userId: string,
+	) => Promise<void | { requested?: boolean }>;
 	onProfileLoaded?: (profileId: string, followingByMe: boolean) => void;
 	onBack?: () => void;
 }
@@ -68,6 +84,7 @@ export default function Profile({
 	onPostClick,
 	onUserClick,
 	followingStates,
+	requestedFollows,
 	onToggleFollow,
 	onProfileLoaded,
 	onBack: _onBack,
@@ -75,11 +92,20 @@ export default function Profile({
 	const [profile, setProfile] = useState<UserType | null>(null);
 	const [posts, setPosts] = useState<Post[]>([]);
 	const [loading, setLoading] = useState(true);
+	// Posts load in the background AFTER the profile header paints — this
+	// shows a lightweight grid skeleton (instead of a misleading "No posts
+	// yet") while the posts round-trip is still in flight.
+	const [postsLoading, setPostsLoading] = useState(false);
 	const [editOpen, setEditOpen] = useState(false);
 	const [, setEditType] = useState<"profile" | "banner">("profile");
 
 	// Crop Modal States
 	const [cropModalOpen, setCropModalOpen] = useState(false);
+
+	// ─── Profile share: menu + forward ────────────────────────────────
+	const [shareMenuOpen, setShareMenuOpen] = useState(false);
+	const [forwardOpen, setForwardOpen] = useState(false);
+	const shareMenuRef = useRef<HTMLDivElement>(null);
 	const [cropImageSrc, setCropImageSrc] = useState("");
 	const [cropType, setCropType] = useState<"profile" | "banner">("profile");
 
@@ -92,7 +118,7 @@ export default function Profile({
 
 	// Profile content tab
 	const [profileTab, setProfileTab] = useState<
-		"posts" | "saved" | "reposts" | "drafts"
+		"posts" | "saved" | "reposts" | "drafts" | "collections"
 	>("posts");
 	const [savedPosts, setSavedPosts] = useState<Post[]>([]);
 	const [repostedPosts, setRepostedPosts] = useState<Post[]>([]);
@@ -102,7 +128,30 @@ export default function Profile({
 	const [drafts, setDrafts] = useState<Post[]>([]);
 	const [scheduledPosts, setScheduledPosts] = useState<Post[]>([]);
 	const [loadingDrafts, setLoadingDrafts] = useState(false);
+	// Archived posts sub-view (self only, inside the Drafts tab)
+	const [showArchived, setShowArchived] = useState(false);
 	const [openMenuPostId, setOpenMenuPostId] = useState<string | null>(null);
+	// Collections (self only) — server-side CRUD at /api/collections
+	const [collections, setCollections] = useState<any[]>([]);
+	const [loadingCollections, setLoadingCollections] = useState(false);
+	const [activeCollectionId, setActiveCollectionId] = useState<string | null>(
+		null,
+	);
+	const [collectionPosts, setCollectionPosts] = useState<Post[]>([]);
+	const [loadingCollectionPosts, setLoadingCollectionPosts] =
+		useState(false);
+	const [collectionCursor, setCollectionCursor] = useState<string | null>(
+		null,
+	);
+	const [collectionHasMore, setCollectionHasMore] = useState(false);
+	const [loadingMoreCollectionPosts, setLoadingMoreCollectionPosts] =
+		useState(false);
+	const [deleteConfirmCollectionId, setDeleteConfirmCollectionId] =
+		useState<string | null>(null);
+	const [newCollectionName, setNewCollectionName] = useState("");
+	const [creatingCollection, setCreatingCollection] = useState(false);
+	// Pinned posts (up to 3) shown at the top of the Posts tab
+	const [pinnedPosts, setPinnedPosts] = useState<Post[]>([]);
 
 	// Pagination states for posts
 	const [postsCursor, setPostsCursor] = useState<string | null>(null);
@@ -125,6 +174,7 @@ export default function Profile({
 	// Edit Forms State
 	const [fullName, setFullName] = useState("");
 	const [bio, setBio] = useState("");
+	const bioRef = useAutoGrow<HTMLTextAreaElement>(bio);
 	const [profilePicFile, setProfilePicFile] = useState<File | null>(null);
 	const [bannerPicFile, setBannerPicFile] = useState<File | null>(null);
 
@@ -149,6 +199,7 @@ export default function Profile({
 	>(null);
 	const [editPostTitle, setEditPostTitle] = useState("");
 	const [editPostContent, setEditPostContent] = useState("");
+	const editPostContentRef = useAutoGrow<HTMLTextAreaElement>(editPostContent);
 	const [editPostExistingImages, setEditPostExistingImages] = useState<
 		{ public_id: string; url: string }[]
 	>([]);
@@ -268,6 +319,10 @@ export default function Profile({
 	// follow action begins; loadProfile only applies its result if it started
 	// after the last action (its server data is then guaranteed fresh).
 	const lastFollowActionAtRef = useRef(0);
+	// Tracks which username the CURRENT in-flight fetch belongs to — a slow
+	// response for user A that lands after the user has already navigated to
+	// user B must not overwrite B's freshly-painted profile/posts.
+	const profileFetchUsernameRef = useRef<string>("");
 
 	// Pull-to-refresh state
 	const [pullDistance, setPullDistance] = useState(0);
@@ -383,7 +438,19 @@ export default function Profile({
 	});
 
 	const loadProfile = async () => {
-		setLoading(true);
+		const username = targetUsername;
+		profileFetchUsernameRef.current = username;
+		// Only show the full-page skeleton when nothing is painted for this
+		// username yet (first visit / cache miss). On a return visit the cached
+		// profile stays visible and this refresh runs silently in the
+		// background — no skeleton flash, no "user disappeared" blink.
+		if (!profile || profile.username !== username) {
+			setProfile(null);
+			setPosts([]);
+			setPostsCursor(null);
+			setPostsHasMore(false);
+			setLoading(true);
+		}
 		// Snapshot when this fetch STARTS so a stale in-flight response that
 		// began before a follow/unfollow action can't overwrite its result.
 		const fetchStartedAt = Date.now();
@@ -393,7 +460,7 @@ export default function Profile({
 			// cached copy (pre-follow) would overwrite the fresh follow state
 			// via onProfileLoaded, flipping the button back to "Follow".
 			// Instant first paint still comes from the mount cache-read effect.
-			const res = await apiFetch(`/api/users/username/${targetUsername}`, {
+			const res = await apiFetch(`/api/users/username/${username}`, {
 				bypassCache: true,
 			});
 			const data = await res.json();
@@ -401,6 +468,9 @@ export default function Profile({
 				setLoading(false);
 				return;
 			}
+			// Superseded — the user navigated to another profile while this
+			// request was in flight; its data must not overwrite the new one.
+			if (profileFetchUsernameRef.current !== username) return;
 
 			setProfile(data.user);
 			setFullName(data.user.fullName || "");
@@ -426,37 +496,51 @@ export default function Profile({
 				});
 			}
 
+			// Profile header is ready — paint it NOW instead of also waiting
+			// for the posts round-trip (previously the whole page was blocked
+			// on both sequential requests).
+			setLoading(false);
+
+			// Fetch pinned posts in the background — they render above the grid.
+			void apiFetch(`/api/users/${data.user._id}/pinned`, {
+				bypassCache: true,
+			})
+				.then(async (r) => {
+					if (profileFetchUsernameRef.current !== username) return;
+					const d = await r.json();
+					if (r.ok && d.success) setPinnedPosts(d.posts || []);
+				})
+				.catch((e) => logger.error(e));
+
 			const targetId = data.user._id;
 
-			// 2. Fetch posts + saved/reposted in parallel
-			const promises: Promise<void>[] = [
-				apiFetch(`/api/users/${targetId}/posts?limit=10`, {
-					bypassCache: true,
-				}).then(
-					async (postRes) => {
-						const postData = await postRes.json();
-						if (postRes.ok && postData.success) {
-							setPosts(postData.posts || []);
-							setPostsCursor(postData.nextCursor || null);
-							setPostsHasMore(postData.hasMore || false);
-						}
-					},
-				),
-			];
+			// 2. Fetch posts in the BACKGROUND (not awaited) — the header is
+			// already on screen and the grid fills in the moment it arrives.
+			setPostsLoading(true);
+			void apiFetch(`/api/users/${targetId}/posts?limit=10`, {
+				bypassCache: true,
+			})
+				.then(async (postRes) => {
+					if (profileFetchUsernameRef.current !== username) return;
+					const postData = await postRes.json();
+					if (postRes.ok && postData.success) {
+						setPosts(postData.posts || []);
+						setPostsCursor(postData.nextCursor || null);
+						setPostsHasMore(postData.hasMore || false);
+					}
+				})
+				.catch((e) => logger.error(e))
+				.finally(() => setPostsLoading(false));
 
 			// 3. Warm saved/reposted lists for own profile in the BACKGROUND.
-			// They're cache-first with instant render, so they don't need to
-			// block the profile page render (Promise.all above would otherwise
-			// wait for two extra network round-trips on every profile visit).
-			if (user && user.username === targetUsername) {
+			// They're cache-first with instant render, so they never block the
+			// profile page render.
+			if (user && user.username === username) {
 				void fetchSavedPosts();
 				void fetchRepostedPosts();
 			}
-
-			await Promise.all(promises);
 		} catch (e) {
 			logger.error(e);
-		} finally {
 			setLoading(false);
 		}
 	};
@@ -488,6 +572,91 @@ export default function Profile({
 			loadProfile();
 		}
 	};
+
+	// ─── Archive / unarchive own posts ─────────────────────────────────
+	const [archivedPosts, setArchivedPosts] = useState<Post[]>([]);
+	const [loadingArchived, setLoadingArchived] = useState(false);
+
+	const handleArchivePost = async (postId: string) => {
+		try {
+			const res = await apiFetch(`/api/posts/${postId}/archive`, {
+				method: "POST",
+			});
+			if (res.ok) {
+				setOpenMenuPostId(null);
+				setPosts((prev) => prev.filter((p) => p._id !== postId));
+				void evictCachedResponse("/api/posts/archived");
+				window.dispatchEvent(
+					new CustomEvent("showToast", {
+						detail: {
+							message: "Post archived — hidden from your profile.",
+							type: "success",
+						},
+					}),
+				);
+			}
+		} catch (e) {
+			logger.error("Archive failed", e);
+		}
+	};
+
+	const fetchArchivedPosts = async () => {
+		setLoadingArchived(true);
+		try {
+			const res = await apiFetch("/api/posts/archived");
+			const data = await res.json();
+			if (res.ok && data.success) {
+				setArchivedPosts(data.posts || []);
+			}
+		} catch (e) {
+			logger.error("Failed to load archived posts", e);
+		} finally {
+			setLoadingArchived(false);
+		}
+	};
+
+	const handleUnarchivePost = async (postId: string) => {
+		try {
+			const res = await apiFetch(`/api/posts/${postId}/unarchive`, {
+				method: "POST",
+			});
+			if (res.ok) {
+				// Restore the post to the Posts tab immediately so it's
+				// visible without a refetch.
+				const restoredPost = archivedPosts.find(
+					(p) => p._id === postId,
+				);
+				setArchivedPosts((prev) =>
+					prev.filter((p) => p._id !== postId),
+				);
+				if (restoredPost) {
+					setPosts((prev) => [
+						{ ...restoredPost, status: "published" },
+						...prev.filter((p) => p._id !== postId),
+					]);
+				}
+				void evictCachedResponse("/api/posts/archived");
+				window.dispatchEvent(
+					new CustomEvent("showToast", {
+						detail: {
+							message: "Post restored to your profile.",
+							type: "success",
+						},
+					}),
+				);
+			}
+		} catch (e) {
+			logger.error("Unarchive failed", e);
+		}
+	};
+
+	// Load archived posts when the Archived sub-view opens
+	useEffect(() => {
+		if (profileTab === "drafts" && showArchived && isSelf) {
+			fetchArchivedPosts();
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [profileTab, showArchived]);
 
 	// Listen for realtime comment count updates from other users
 	useEffect(() => {
@@ -1215,11 +1384,20 @@ export default function Profile({
 		return () => clearTimeout(timer);
 	}, [error]);
 
+	// Post view tracking (3s visibility → one view) across ALL profile post
+	// surfaces: the Posts tab, Saved, and Reposts. Cards carry data-post-id.
+	usePostViewTracking({
+		enabled: !loading,
+		deps: [posts, savedPosts, repostedPosts, profileTab, loading],
+	});
+
 	useEffect(() => {
-		// Clear previous profile to prevent flash when switching users
-		setProfile(null);
-		setLoading(true);
+		// loadProfile decides whether to show the skeleton: when the cache
+		// already has this user's profile (return visit / navigated back) it
+		// stays visible and refreshes silently in the background instead of
+		// flashing a loading skeleton.
 		loadProfile();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [targetUsername, user?._id]);
 
 	// Load saved & reposted when switching to those tabs (self only)
@@ -1240,6 +1418,9 @@ export default function Profile({
 		}
 		if (profileTab === "drafts" && isSelf !== undefined) {
 			fetchDrafts();
+		}
+		if (profileTab === "collections" && isSelf !== undefined) {
+			fetchCollections();
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [profileTab]);
@@ -1355,6 +1536,62 @@ export default function Profile({
 			logger.error(`Error loading ${type}:`, e);
 		} finally {
 			setListLoading(false);
+		}
+	};
+
+	const fetchPinnedPosts = async () => {
+		try {
+			const res = await apiFetch(`/api/users/${profile?._id}/pinned`, {
+				bypassCache: true,
+			});
+			const data = await res.json();
+			if (res.ok && data.success) setPinnedPosts(data.posts || []);
+		} catch (err) {
+			logger.error("Failed to fetch pinned posts", err);
+		}
+	};
+
+	const handleTogglePin = async (post: Post) => {
+		const isPinned = post.pinnedByMe;
+		setOpenMenuPostId(null);
+		try {
+			const res = await apiFetch(
+				`/api/users/${profile?._id}/${isPinned ? "unpin" : "pin"}`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ postId: post._id }),
+				},
+			);
+			const data = await res.json();
+			if (!res.ok || !data.success) {
+				throw new Error(data.message || "Could not update pin.");
+			}
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: {
+						message: isPinned
+							? "Post unpinned from profile"
+							: "Post pinned to profile",
+						type: "success",
+					},
+				}),
+			);
+			// Refresh pinned + the grid so both stay consistent.
+			await fetchPinnedPosts();
+			const fresh = await apiFetch(
+				`/api/users/${profile?._id}/posts?limit=${posts.length || 10}`,
+				{ bypassCache: true },
+			);
+			const freshData = await fresh.json();
+			if (fresh.ok && freshData.success) setPosts(freshData.posts || []);
+		} catch (err: any) {
+			logger.error(err);
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: { message: err.message || "Failed to update pin.", type: "error" },
+				}),
+			);
 		}
 	};
 
@@ -1513,6 +1750,162 @@ export default function Profile({
 		}
 	};
 
+	// ─── Collections (self only) ───────────────────────────────────────
+	const fetchCollections = async () => {
+		setLoadingCollections(true);
+		try {
+			const res = await apiFetch("/api/collections");
+			const data = await res.json();
+			if (res.ok && data.success) {
+				setCollections(data.collections || []);
+			}
+		} catch (e) {
+			logger.error("Failed to fetch collections", e);
+		} finally {
+			setLoadingCollections(false);
+		}
+	};
+
+	const handleCreateCollection = async () => {
+		if (!newCollectionName.trim() || creatingCollection) return;
+		setCreatingCollection(true);
+		try {
+			const res = await apiFetch("/api/collections", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name: newCollectionName.trim() }),
+			});
+			const data = await res.json();
+			if (!res.ok)
+				throw new Error(data.message || "Failed to create collection.");
+			void evictCachedResponse("/api/collections");
+			setCollections((prev) => [data.collection, ...prev]);
+			setNewCollectionName("");
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: {
+						message: "Collection created!",
+						type: "success",
+					},
+				}),
+			);
+		} catch (err: any) {
+			logger.error("Create collection failed", err);
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: {
+						message: err.message || "Failed to create collection.",
+						type: "error",
+					},
+				}),
+			);
+		} finally {
+			setCreatingCollection(false);
+		}
+	};
+
+	const confirmDeleteCollection = async () => {
+		const collectionId = deleteConfirmCollectionId;
+		setDeleteConfirmCollectionId(null);
+		if (!collectionId) return;
+		try {
+			const res = await apiFetch(`/api/collections/${collectionId}`, {
+				method: "DELETE",
+			});
+			if (res.ok) {
+				void evictCachedResponse("/api/collections");
+				setCollections((prev) =>
+					prev.filter((c) => c._id !== collectionId),
+				);
+				if (activeCollectionId === collectionId) {
+					setActiveCollectionId(null);
+					setCollectionPosts([]);
+					setCollectionCursor(null);
+					setCollectionHasMore(false);
+				}
+				window.dispatchEvent(
+					new CustomEvent("showToast", {
+						detail: {
+							message: "Collection deleted.",
+							type: "success",
+						},
+					}),
+				);
+			}
+		} catch (e) {
+			logger.error("Delete collection failed", e);
+		}
+	};
+
+	const handleOpenCollection = async (collectionId: string) => {
+		setActiveCollectionId(collectionId);
+		setCollectionPosts([]);
+		setCollectionCursor(null);
+		setCollectionHasMore(false);
+		setLoadingCollectionPosts(true);
+		try {
+			const res = await apiFetch(`/api/collections/${collectionId}`);
+			const data = await res.json();
+			if (res.ok && data.success) {
+				setCollectionPosts(data.posts || []);
+				setCollectionCursor(data.nextCursor || null);
+				setCollectionHasMore(data.hasMore || false);
+			}
+		} catch (e) {
+			logger.error("Failed to load collection posts", e);
+		} finally {
+			setLoadingCollectionPosts(false);
+		}
+	};
+
+	const loadMoreCollectionPosts = async () => {
+		if (!activeCollectionId || !collectionCursor || loadingMoreCollectionPosts)
+			return;
+		setLoadingMoreCollectionPosts(true);
+		try {
+			const res = await apiFetch(
+				`/api/collections/${activeCollectionId}?cursor=${collectionCursor}`,
+			);
+			const data = await res.json();
+			if (res.ok && data.success) {
+				setCollectionPosts((prev) => {
+					const keys = new Set(prev.map((p) => p._id));
+					const newOnes = (data.posts || []).filter(
+						(p: any) => !keys.has(p._id),
+					);
+					return [...prev, ...newOnes];
+				});
+				setCollectionCursor(data.nextCursor || null);
+				setCollectionHasMore(data.hasMore || false);
+			}
+		} catch (e) {
+			logger.error("Load more collection posts failed", e);
+		} finally {
+			setLoadingMoreCollectionPosts(false);
+		}
+	};
+
+	const handleRemoveFromCollection = async (postId: string) => {
+		if (!activeCollectionId) return;
+		try {
+			const res = await apiFetch(
+				`/api/collections/${activeCollectionId}/posts/${postId}`,
+				{ method: "DELETE" },
+			);
+			if (res.ok) {
+				void evictCachedResponse("/api/collections");
+				void evictCachedResponse(
+					`/api/collections/${activeCollectionId}`,
+				);
+				setCollectionPosts((prev) =>
+					prev.filter((p) => p._id !== postId),
+				);
+			}
+		} catch (e) {
+			logger.error("Remove from collection failed", e);
+		}
+	};
+
 	// Publish a draft (or an early-published scheduled post)
 	const handlePublishDraft = async (postId: string) => {
 		try {
@@ -1627,7 +2020,27 @@ export default function Profile({
 
 		try {
 			// Call the global toggle function (handles global optimistic state + rollback + toast)
-			await onToggleFollow(profile._id);
+			const outcome = await onToggleFollow(profile._id);
+
+			// Private account → a follow REQUEST was sent, not a follow. Undo the
+			// optimistic local follow state so the header doesn't show a bogus
+			// +1 follower / "Following" until reload (the button itself shows
+			// "Requested" via the requestedFollows prop).
+			if (outcome?.requested) {
+				setProfile((prev) =>
+					prev
+						? ({
+								...prev,
+								isFollowing: false,
+								followingByMe: false,
+								followersCount: Math.max(
+									0,
+									(prev.followersCount || 0) - 1,
+								),
+							} as any)
+						: null,
+				);
+			}
 		} catch (err) {
 			// 2. Rollback local profile state if server failed
 			setProfile((prev) =>
@@ -1645,26 +2058,136 @@ export default function Profile({
 		}
 	};
 
-	const handleShareProfile = async () => {
+	// Copy the profile link to the clipboard and count the share
+	const handleCopyProfileLink = async () => {
 		if (!profile) return;
+		setShareMenuOpen(false);
+		const urlLink = `${window.location.origin}/u/${profile.username}`;
 		try {
-			const res = await apiFetch(`/api/users/${profile._id}/share`, {
-				method: "POST",
-			});
-			const data = await res.json();
-			if (res.ok && data.success) {
-				setProfile((prev) =>
-					prev ? { ...prev, sharesCount: data.count } : null,
-				);
-
-				// Copy profile landing page URL to system clipboard
-				const url_link = `${window.location.origin}/u/${profile.username}`;
-				navigator.clipboard.writeText(url_link);
-			}
+			await navigator.clipboard.writeText(urlLink);
 		} catch (e) {
-			logger.error(e);
+			// Fallback for browsers without the async clipboard API
+			try {
+				const ta = document.createElement("textarea");
+				ta.value = urlLink;
+				ta.style.position = "fixed";
+				ta.style.opacity = "0";
+				document.body.appendChild(ta);
+				ta.select();
+				document.execCommand("copy");
+				document.body.removeChild(ta);
+			} catch {
+				logger.error("Clipboard copy failed", e);
+			}
+		}
+		// Count the share (fire-and-forget)
+		apiFetch(`/api/users/${profile._id}/share`, { method: "POST" })
+			.then((res) => res.json())
+			.then((data) => {
+				if (data?.success) {
+					setProfile((prev) =>
+						prev
+							? {
+									...prev,
+									sharesCount: data.shares ?? data.count,
+								}
+							: null,
+					);
+				}
+			})
+			.catch(() => {});
+		window.dispatchEvent(
+			new CustomEvent("showToast", {
+				detail: { message: "Profile link copied!", type: "success" },
+			}),
+		);
+	};
+
+	// Forward the profile to one or more chat partners (notifies each recipient)
+	const handleForwardProfile = async (
+		partners: ForwardPartner[],
+	): Promise<boolean> => {
+		if (!profile || partners.length === 0) return false;
+		try {
+			const results = await Promise.all(
+				partners.map(async (partner) => {
+					try {
+						const res = await apiFetch(
+							`/api/users/${profile._id}/forward`,
+							{
+								method: "POST",
+								headers: { "Content-Type": "application/json" },
+								body: JSON.stringify({ recipientId: partner._id }),
+							},
+						);
+						const data = await res.json();
+						return res.ok && data.success;
+					} catch {
+						return false;
+					}
+				}),
+			);
+			const okCount = results.filter(Boolean).length;
+			if (okCount > 0) {
+				window.dispatchEvent(
+					new CustomEvent("showToast", {
+						detail: {
+							message:
+								okCount === partners.length
+									? "Profile sent!"
+									: `Profile sent to ${okCount} of ${partners.length} conversations.`,
+								type: "success",
+							},
+					}),
+				);
+				return true;
+			}
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: {
+						message: "Failed to send the profile. Please try again.",
+						type: "error",
+					},
+				}),
+			);
+			return false;
+		} catch (e) {
+			logger.error("Failed to forward profile", e);
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: {
+						message: "Failed to send the profile. Please try again.",
+						type: "error",
+					},
+				}),
+			);
+			return false;
 		}
 	};
+
+	// Close the share menu on outside click / Escape
+	useEffect(() => {
+		if (!shareMenuOpen) return;
+		const handleOutside = (e: MouseEvent | TouchEvent) => {
+			if (
+				shareMenuRef.current &&
+				!shareMenuRef.current.contains(e.target as Node)
+			) {
+				setShareMenuOpen(false);
+			}
+		};
+		const handleKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setShareMenuOpen(false);
+		};
+		document.addEventListener("mousedown", handleOutside);
+		document.addEventListener("touchstart", handleOutside);
+		document.addEventListener("keydown", handleKey);
+		return () => {
+			document.removeEventListener("mousedown", handleOutside);
+			document.removeEventListener("touchstart", handleOutside);
+			document.removeEventListener("keydown", handleKey);
+		};
+	}, [shareMenuOpen]);
 
 	const handleUpdateSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -1741,6 +2264,13 @@ export default function Profile({
 
 	const isSelf = user?._id === profile._id;
 
+	// Pinned posts render at the top of the Posts tab (deduped against the
+	// paginated list so a pinned post never appears twice).
+	const displayPosts = [
+		...pinnedPosts,
+		...posts.filter((p) => !pinnedPosts.some((pp) => pp._id === p._id)),
+	];
+
 	return (
 		<>
 			<div
@@ -1767,8 +2297,9 @@ export default function Profile({
 							);
 						}}>
 						<img
-							loading="lazy"
-							src={bannerPicPreview}
+							loading="eager"
+							decoding="async"
+							src={optimizeImageUrl(bannerPicPreview, 1200)}
 							alt="User banner"
 							className="h-full w-full object-cover transition-transform duration-1000 group-hover:scale-102"
 						/>
@@ -1817,18 +2348,47 @@ export default function Profile({
 						</div>
 
 						<div className="flex flex-wrap items-center gap-2 self-end sm:self-auto">
-							<button
-								onClick={handleShareProfile}
-								className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-slate-800 dark:hover:text-zinc-150 transition-colors shadow-sm cursor-pointer">
-								<Share2 className="h-4.5 w-4.5" />
-							</button>
-
+							{/* Report user (other profiles only) */}
 							{!isSelf && profile && (
-								<>
-									<CloseFriendButton targetUserId={profile._id} />
-									<BlockButton targetUserId={profile._id} />
-								</>
+								<ReportButton
+									contentType="user"
+									contentId={profile._id}
+									iconOnly
+									className="!h-10 !w-10 !p-0 items-center justify-center rounded-full border border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-red-400 shadow-sm"
+								/>
 							)}
+
+							<div className="relative" ref={shareMenuRef}>
+								<button
+									onClick={() => setShareMenuOpen((v) => !v)}
+									className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-slate-800 dark:hover:text-zinc-150 transition-colors shadow-sm cursor-pointer"
+									aria-label="Share profile"
+									aria-haspopup="menu"
+									aria-expanded={shareMenuOpen}>
+									<Share2 className="h-4.5 w-4.5" />
+								</button>
+
+								{/* Share menu — Forward / Copy link */}
+								{shareMenuOpen && (
+									<div className="absolute right-0 top-full mt-1 z-[100] w-48 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl overflow-hidden">
+										<button
+											onClick={() => {
+												setShareMenuOpen(false);
+												setForwardOpen(true);
+											}}
+											className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left cursor-pointer">
+											<Send className="h-3.5 w-3.5 text-zinc-400" />
+											Forward
+										</button>
+										<button
+											onClick={handleCopyProfileLink}
+											className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left cursor-pointer">
+											<Link2 className="h-3.5 w-3.5 text-zinc-400" />
+											Copy link
+										</button>
+									</div>
+								)}
+							</div>
 
 							{isSelf ? (
 								<button
@@ -1846,16 +2406,25 @@ export default function Profile({
 										(profile as any).followingByMe ??
 										(profile as any).isFollowing ??
 										false;
+									const isRequested =
+										!amIFollowing &&
+										!!requestedFollows?.[profile._id];
 									return (
 										<button
 											onClick={(e) => {
 												e.stopPropagation();
 												handleFollowToggle();
 											}}
-											className={`text-xs font-semibold px-4 py-2 rounded-full transition-all cursor-pointer transform hover:scale-105 active:scale-95 ${amIFollowing ? "bg-zinc-900 text-white dark:bg-zinc-800 dark:text-white border border-zinc-300 dark:border-zinc-600 shadow-md" : "bg-black text-white hover:bg-zinc-800 shadow-lg"}`}>
-											{amIFollowing
-												? "Following"
-												: "Follow"}
+											className={`text-xs font-semibold px-4 py-2 rounded-full transition-all cursor-pointer transform hover:scale-105 active:scale-95 ${isRequested
+												? "bg-amber-500/10 text-amber-400 border border-amber-500/30"
+												: amIFollowing
+													? "bg-zinc-900 text-white dark:bg-zinc-800 dark:text-white border border-zinc-300 dark:border-zinc-600 shadow-md"
+													: "bg-black text-white hover:bg-zinc-800 shadow-lg"}`}>
+											{isRequested
+												? "Requested"
+												: amIFollowing
+													? "Following"
+													: "Follow"}
 										</button>
 									);
 								})()
@@ -1876,9 +2445,17 @@ export default function Profile({
 					</div>
 
 					{profile.bio && (
-						<p className="text-sm text-zinc-300 leading-relaxed max-w-lg">
+						<p className="text-sm text-zinc-300 leading-relaxed max-w-lg whitespace-pre-wrap break-words">
 							{profile.bio}
 						</p>
+					)}
+					{profile.bio && extractFirstUrl(profile.bio) && (
+						<div className="mt-2.5 max-w-lg">
+							<LinkPreviewCard
+								url={extractFirstUrl(profile.bio)!}
+								compact
+							/>
+						</div>
 					)}
 
 					{profile.createdAt && (
@@ -1952,6 +2529,12 @@ export default function Profile({
 											count:
 												drafts.length + scheduledPosts.length,
 										},
+										{
+											id: "collections" as const,
+											label: "Collections",
+											icon: FolderOpen,
+											count: collections.length,
+										},
 									]
 								: []),
 						].map((tab) => {
@@ -1990,7 +2573,13 @@ export default function Profile({
 								</div>
 							)}
 
-							{posts.length === 0 ? (
+							{postsLoading && posts.length === 0 ? (
+								<div className="space-y-5 max-w-2xl mx-auto w-full">
+									{[1, 2, 3].map((i) => (
+										<Skeleton key={i} className="h-44 w-full" />
+									))}
+								</div>
+							) : displayPosts.length === 0 ? (
 								<GlassCard className="flex flex-col items-center justify-center py-12 text-center shadow-sm">
 									<h4 className="text-sm font-bold text-white">
 										No posts yet
@@ -2001,16 +2590,21 @@ export default function Profile({
 									</p>
 								</GlassCard>
 							) : (
-								<div className="space-y-5 max-w-2xl mx-auto w-full">
-									<AnimatePresence>
-										{posts.map((post) => (
-											<GlassCard
-												key={post._id}
-												animate={true}
-												className="group relative flex flex-col justify-between overflow-hidden p-6 text-left rounded-4xl border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all"
-												showMacControls={false}>
-												{" "}
-												<>
+								<div className="space-y-5 max-w-2xl mx-auto w-full">									<AnimatePresence>
+										{displayPosts.map((post) => (
+										<GlassCard
+											key={post._id}
+											dataPostId={post._id}
+											animate={true}
+											className="group relative flex flex-col justify-between overflow-hidden p-6 text-left rounded-4xl border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all"
+											showMacControls={false}>
+										{" "}
+										<>												{post.pinnedByMe && (
+													<div className="mb-3 flex w-fit items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-[10px] font-bold tracking-wider text-amber-200">
+														<Pin className="h-3 w-3" />
+														PINNED
+													</div>
+												)}
 													{user?._id ===
 														profile?._id && (
 														<div className="absolute top-4 right-4 opacity-100 transition-opacity flex items-center gap-1.5 z-20">
@@ -2024,11 +2618,18 @@ export default function Profile({
 																																									<MoreHorizontal className="h-3.5 w-3.5" />
 																																								</button>
 																																								{openMenuPostId === post._id && (
-																																									<div className="absolute right-0 top-full mt-1 z-[100] w-40 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl overflow-hidden">
-																																										<button
-																																											onClick={() => {
-																																												setOpenMenuPostId(null);
-																																												setEditPostId(post._id);
+																																									<div className="absolute right-0 top-full mt-1 z-[100] w-40 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl overflow-hidden">																				<button
+																					onClick={() => handleTogglePin(post)}
+																					className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left">
+																					<Pin className="h-3.5 w-3.5 text-zinc-400" />
+																					{post.pinnedByMe
+																						? "Unpin from Profile"
+																						: "Pin to Profile"}
+																				</button>
+																				<button
+																					onClick={() => {
+																						setOpenMenuPostId(null);
+																						setEditPostId(post._id);
 																																												setEditPostTitle(post.title || "");
 																																												setEditPostContent(post.content || "");
 																																												const existingImgs: { public_id: string; url: string }[] = [];
@@ -2045,20 +2646,28 @@ export default function Profile({
 																																												setEditPostNewPreviews([]);
 																																												setEditPostDrawerOpen(true);
 																																											}}
-																																											className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left">
-																																											<Edit3 className="h-3.5 w-3.5 text-amber-400" />
-																																											Edit Post
-																																										</button>
-																																										<button
-																																											onClick={(e) => {
-																																												setOpenMenuPostId(null);
-																																												handleDeletePost(e, post._id);
-																																											}}
-																																											className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-red-400 transition-colors text-left">
-																																											<X className="h-3.5 w-3.5" />
-																																											Delete Post
-																																										</button>
-																																									</div>
+																																											className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left">																		<Edit3 className="h-3.5 w-3.5 text-amber-400" />
+																		Edit Post
+																	</button>
+																	<button
+																		onClick={() => {
+																			setOpenMenuPostId(null);
+																			void handleArchivePost(post._id);
+																		}}
+																		className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left">
+																		<Archive className="h-3.5 w-3.5 text-zinc-400" />
+																		Archive Post
+																	</button>
+																	<button
+																		onClick={(e) => {
+																			setOpenMenuPostId(null);
+																			handleDeletePost(e, post._id);
+																		}}
+																		className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-red-400 transition-colors text-left">
+																		<X className="h-3.5 w-3.5" />
+																		Delete Post
+																	</button>
+																</div>
 																																								)}
 </div>
 
@@ -2267,6 +2876,7 @@ export default function Profile({
 									{savedPosts.map((post) => (
 										<GlassCard
 											key={post._id}
+											dataPostId={post._id}
 											animate={true}
 											className="group relative flex flex-col justify-between overflow-hidden p-6 text-left rounded-4xl border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all"
 											showMacControls={false}>
@@ -2463,6 +3073,7 @@ export default function Profile({
 									{repostedPosts.map((post) => (
 										<GlassCard
 											key={post._id}
+											dataPostId={post._id}
 											animate={true}
 											className="group relative flex flex-col justify-between overflow-hidden p-6 text-left rounded-4xl border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all"
 											showMacControls={false}>
@@ -2625,7 +3236,96 @@ export default function Profile({
 					{/* Drafts & Scheduled Tab (self only) */}
 					{profileTab === "drafts" && isSelf && (
 						<>
-							{loadingDrafts ? (
+							{/* Drafts / Archived sub-toggle */}
+							<div className="mb-5 flex max-w-2xl mx-auto w-full items-center gap-2">
+								<button
+									onClick={() => setShowArchived(false)}
+									className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-[11px] font-bold transition-all cursor-pointer ${
+										!showArchived
+											? "bg-white text-black"
+											: "border border-zinc-800 text-zinc-400 hover:text-white"
+									}`}>
+									<FilePenLine className="h-3.5 w-3.5" /> Drafts
+								</button>
+								<button
+									onClick={() => setShowArchived(true)}
+									className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-[11px] font-bold transition-all cursor-pointer ${
+										showArchived
+											? "bg-white text-black"
+											: "border border-zinc-800 text-zinc-400 hover:text-white"
+									}`}>
+									<Archive className="h-3.5 w-3.5" /> Archived
+								</button>
+							</div>
+
+							{showArchived ? (
+								<div className="max-w-2xl mx-auto w-full">
+									{loadingArchived ? (
+										<div className="grid gap-3.5 sm:grid-cols-2">
+											{[1, 2].map((n) => (
+												<div
+													key={n}
+													className="animate-pulse rounded-3xl border border-zinc-800 bg-zinc-900/40 p-4.5 space-y-3">
+													<div className="h-4 w-3/4 rounded bg-zinc-800" />
+													<div className="h-3 w-full rounded bg-zinc-800" />
+												</div>
+											))}
+										</div>
+									) : archivedPosts.length === 0 ? (
+										<GlassCard className="flex flex-col items-center justify-center py-12 text-center shadow-sm">
+											<Archive className="mx-auto h-8 w-8 text-zinc-400 mb-3" />
+											<h4 className="text-sm font-bold text-white">
+												No archived posts
+											</h4>
+											<p className="mt-1 text-xs text-zinc-500 max-w-xs">
+												Archive posts to tidy your profile without
+												deleting them. Use the ⋮ menu on your
+												posts to archive.
+											</p>
+										</GlassCard>
+									) : (
+										<div className="space-y-3">
+											{archivedPosts.map((post) => (
+												<GlassCard
+													key={post._id}
+													animate={true}
+													className="p-5 rounded-4xl border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all"
+													showMacControls={false}>
+													<div className="flex items-start justify-between gap-3">
+												<div className="min-w-0">
+													<p className="text-sm font-semibold text-white line-clamp-2">
+														{post.content || "(No text)"}
+													</p>
+													{(() => {
+														const n =
+															(post.images?.length || 0) +
+															(post.image ? 1 : 0) +
+															(post.video ? 1 : 0);
+														return n > 0 ? (
+															<span className="mt-1 inline-block text-[10px] text-zinc-500">
+																{n} media
+															</span>
+														) : null;
+													})()}
+												</div>
+														<div className="flex shrink-0 items-center gap-2">
+															<button
+																onClick={() =>
+																	void handleUnarchivePost(
+																		post._id,
+																	)
+																}
+																className="rounded-full border border-emerald-500/30 px-3 py-1.5 text-[10px] font-bold text-emerald-400 hover:bg-emerald-500/10 transition-all cursor-pointer">
+																Restore
+															</button>
+														</div>
+													</div>
+												</GlassCard>
+											))}
+										</div>
+									)}
+								</div>
+							) : loadingDrafts ? (
 								<div className="grid gap-3.5 sm:grid-cols-2">
 									{[1, 2].map((n) => (
 										<div
@@ -2767,6 +3467,199 @@ export default function Profile({
 							)}
 						</>
 					)}
+
+					{/* Collections Tab (self only) */}
+					{profileTab === "collections" && isSelf && (
+						<>
+							{/* Create collection bar */}
+							<div className="mb-5 max-w-2xl mx-auto w-full">
+								<div className="flex items-center gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-2">
+									<input
+										value={newCollectionName}
+										onChange={(e) =>
+											setNewCollectionName(e.target.value)
+										}
+										onKeyDown={(e) => {
+											if (e.key === "Enter")
+												void handleCreateCollection();
+										}}
+										placeholder="New collection name..."
+										maxLength={100}
+										className="flex-1 bg-transparent px-2 text-sm text-zinc-200 placeholder-zinc-500 outline-none"
+									/>
+									<button
+										onClick={() => void handleCreateCollection()}
+										disabled={
+											!newCollectionName.trim() || creatingCollection
+										}
+										className="flex shrink-0 items-center gap-1 rounded-full bg-white px-3 py-1.5 text-[10px] font-bold text-black hover:bg-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer">
+										{creatingCollection ? (
+											<Loader2 className="h-3.5 w-3.5 animate-spin" />
+										) : (
+											<Plus className="h-3.5 w-3.5" />
+										)}
+										Create
+									</button>
+								</div>
+							</div>
+
+							{/* Collection detail view */}
+							{activeCollectionId ? (
+								<div className="max-w-2xl mx-auto w-full">
+									<button
+										onClick={() => {
+											setActiveCollectionId(null);
+											setCollectionPosts([]);
+										}}
+										className="mb-4 flex items-center gap-1.5 rounded-full border border-zinc-800 px-3 py-1.5 text-[11px] font-bold text-zinc-300 hover:bg-zinc-900 transition-all cursor-pointer">
+										<ArrowLeft className="h-3.5 w-3.5" /> All collections
+									</button>
+									{loadingCollectionPosts ? (
+										<div className="space-y-4">
+											{[1, 2].map((n) => (
+												<div
+													key={n}
+													className="animate-pulse rounded-3xl border border-zinc-800 bg-zinc-900/40 p-5 space-y-3">
+													<div className="h-4 w-2/3 rounded bg-zinc-800" />
+													<div className="h-3 w-full rounded bg-zinc-800" />
+												</div>
+											))}
+										</div>
+									) : collectionPosts.length === 0 ? (
+										<GlassCard className="flex flex-col items-center justify-center py-12 text-center shadow-sm">
+											<FolderOpen className="mx-auto h-8 w-8 text-zinc-400 mb-3" />
+											<h4 className="text-sm font-bold text-white">
+												No posts in this collection
+											</h4>
+											<p className="mt-1 text-xs text-zinc-500 max-w-xs">
+												Save posts to this collection from any
+												post's menu to keep them organized.
+											</p>
+										</GlassCard>
+									) : (
+										<div className="space-y-3">
+											{collectionPosts.map((post) => (
+												<GlassCard
+													key={post._id}
+													animate={true}
+													className="p-5 rounded-4xl border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all"
+													showMacControls={false}>
+													<div className="flex items-start justify-between gap-3">
+												<div className="min-w-0">
+													<p className="text-sm font-semibold text-white line-clamp-2">
+														{post.content || "(No text)"}
+													</p>
+													{(() => {
+														const n =
+															(post.images?.length || 0) +
+															(post.image ? 1 : 0) +
+															(post.video ? 1 : 0);
+														return n > 0 ? (
+															<span className="mt-1 inline-block text-[10px] text-zinc-500">
+																{n} media
+															</span>
+														) : null;
+													})()}
+												</div>
+														<div className="flex shrink-0 items-center gap-2">
+															<button
+																onClick={() =>
+																	void handleRemoveFromCollection(
+																		post._id,
+																	)
+																}
+																className="rounded-full border border-red-500/30 px-3 py-1.5 text-[10px] font-bold text-red-400 hover:bg-red-500/10 transition-all cursor-pointer">
+																Remove
+																</button>
+														</div>
+													</div>													</GlassCard>
+											))}
+											{collectionHasMore && (
+												<button
+													onClick={() =>
+														void loadMoreCollectionPosts()
+													}
+													disabled={loadingMoreCollectionPosts}
+													className="w-full rounded-full border border-zinc-800 py-2.5 text-[11px] font-bold text-zinc-300 hover:bg-zinc-900 disabled:opacity-50 transition-all cursor-pointer flex items-center justify-center gap-2">
+													{loadingMoreCollectionPosts ? (
+														<Loader2 className="h-3.5 w-3.5 animate-spin" />
+													) : (
+														"Load more"
+													)}
+												</button>
+											)}
+										</div>
+									)}
+								</div>
+							) : loadingCollections ? (
+								<div className="max-w-2xl mx-auto w-full grid gap-3.5 sm:grid-cols-2">
+									{[1, 2].map((n) => (
+										<div
+											key={n}
+											className="animate-pulse rounded-3xl border border-zinc-800 bg-zinc-900/40 p-4.5 space-y-3">
+											<div className="h-4 w-3/4 rounded bg-zinc-800" />
+											<div className="h-3 w-1/2 rounded bg-zinc-800" />
+										</div>
+									))}
+								</div>
+							) : collections.length === 0 ? (
+								<GlassCard className="flex flex-col items-center justify-center py-12 text-center shadow-sm">
+									<FolderPlus className="mx-auto h-8 w-8 text-zinc-400 mb-3" />
+									<h4 className="text-sm font-bold text-white">
+										No collections yet
+									</h4>
+									<p className="mt-1 text-xs text-zinc-500 max-w-xs">
+										Create a collection above to organize saved
+										posts into folders.
+									</p>
+								</GlassCard>
+							) : (
+								<div className="max-w-2xl mx-auto w-full grid gap-3.5 sm:grid-cols-2">
+									{collections.map((c) => (
+										<GlassCard
+											key={c._id}
+											animate={true}
+											className="p-4.5 rounded-4xl border-white/5 bg-zinc-950/20 hover:border-white/10 transition-all"
+											showMacControls={false}>
+											<div className="flex items-center justify-between gap-3">
+												<button
+													onClick={() =>
+															void handleOpenCollection(
+																c._id,
+																)
+														}
+													className="min-w-0 flex-1 text-left cursor-pointer group">
+													<div className="flex items-center gap-2.5">
+														<div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-zinc-900 text-zinc-300 group-hover:bg-zinc-800 transition-colors">
+															<FolderOpen className="h-4 w-4" />
+														</div>
+														<div className="min-w-0">
+															<h5 className="truncate text-sm font-bold text-white">
+																{c.name}
+															</h5>
+															<p className="text-[11px] text-zinc-500">
+																{(c.posts || []).length} post
+																{(c.posts || []).length === 1 ? "" : "s"}
+															</p>
+														</div>
+													</div>
+												</button>												<button
+													onClick={() =>
+														setDeleteConfirmCollectionId(
+															c._id,
+														)
+													}
+													className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-red-500/10 hover:text-red-400 transition-all cursor-pointer"
+													title="Delete collection">
+													<Trash2 className="h-3.5 w-3.5" />
+												</button>
+											</div>
+										</GlassCard>
+									))}
+								</div>
+							)}
+						</>
+					)}
 				</div>
 
 					{editOpen && (
@@ -2778,8 +3671,8 @@ export default function Profile({
 
 							<div
 								onClick={(e) => e.stopPropagation()}
-								className="relative z-[310] w-full max-w-xl rounded-3xl border border-white/10 bg-zinc-950 p-5 md:p-6 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] mb-12">
-								<div className="mb-5 pb-5 flex items-center justify-between border-b border-white/5">
+								className="relative z-[310] w-full max-w-xl rounded-3xl border border-white/10 bg-zinc-950 p-4 md:p-5 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] mb-12">
+								<div className="mb-4 pb-4 flex items-center justify-between border-b border-white/5">
 									<div>
 										<h3 className="text-display-xs text-white">
 											Edit Profile
@@ -2805,13 +3698,13 @@ export default function Profile({
 								<form
 									onSubmit={handleUpdateSubmit}
 									className="space-y-4">
-									<div className="grid grid-cols-2 gap-4">
+									<div className="grid grid-cols-2 gap-3">
 										{/* Avatar Upload */}
 										<div className="space-y-1.5 text-center">
 											<label className="text-[12px] md:text-sm font-medium text-zinc-400">
 												Profile Pic
 											</label>{" "}
-											<div className="relative flex h-20 w-20 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
+											<div className="relative flex h-16 w-16 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
 												<input
 													type="file"
 													accept="image/*"
@@ -2888,7 +3781,7 @@ export default function Profile({
 											<label className="text-[12px] md:text-sm font-medium text-zinc-400">
 												Banner
 											</label>
-											<div className="relative flex h-20 w-full items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
+											<div className="relative flex h-16 w-full items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
 												<input
 													type="file"
 													accept="image/*"
@@ -2973,7 +3866,7 @@ export default function Profile({
 												onChange={(e) =>
 													setFullName(e.target.value)
 												}
-												className="w-full rounded-full border border-zinc-800 bg-zinc-900/50 py-3.5 px-5 text-[12px] md:text-sm text-white focus:outline-none focus:border-zinc-600 focus:bg-zinc-900 transition-all font-medium"
+												className="w-full rounded-lg border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
 											/>
 										</div>
 
@@ -2987,7 +3880,7 @@ export default function Profile({
 												onChange={(e) =>
 													setBio(e.target.value)
 												}
-												placeholder="Write something about yourself..."
+												ref={bioRef} placeholder="Write something about yourself..."
 												className="w-full !rounded-lg border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all resize-none leading-relaxed"
 												maxLength={150}
 											/>
@@ -2998,13 +3891,13 @@ export default function Profile({
 										<button
 											type="button"
 											onClick={() => setEditOpen(false)}
-											className="flex-1 rounded-full border border-zinc-800 py-3.5 text-[12px] md:text-sm font-medium text-zinc-400 hover:bg-zinc-800 hover:text-white shadow-sm cursor-pointer">
+											className="flex-1 rounded-full border border-zinc-800 py-2.5 text-[12px] md:text-sm font-medium text-zinc-400 hover:bg-zinc-800 hover:text-white shadow-sm cursor-pointer">
 											Cancel
 										</button>
 										<button
 											type="submit"
 											disabled={saving}
-											className="flex-1 rounded-full bg-white py-3.5 text-[12px] md:text-sm font-semibold text-black hover:bg-zinc-200 disabled:opacity-50 transition-all shadow-md cursor-pointer">
+											className="flex-1 rounded-full bg-white py-2.5 text-[12px] md:text-sm font-semibold text-black hover:bg-zinc-200 disabled:opacity-50 transition-all shadow-md cursor-pointer">
 											{saving ? "Saving..." : "Save"}
 										</button>
 									</div>
@@ -3063,7 +3956,7 @@ export default function Profile({
 								<textarea
 									value={editPostContent}
 									onChange={(e) => setEditPostContent(e.target.value)}
-									placeholder="Post content"
+									ref={editPostContentRef} placeholder="Post content"
 									rows={5}
 									className="w-full !rounded-lg border border-zinc-800 bg-zinc-900/55 py-3.5 px-5 text-[12px] md:text-sm text-white outline-none focus:border-white transition-all resize-none"
 								/>
@@ -3221,6 +4114,23 @@ export default function Profile({
 					document.body
 				)}
 
+				{deleteConfirmCollectionId !== null &&
+					createPortal(
+						<ConfirmDialog
+							isOpen={deleteConfirmCollectionId !== null}
+							title="Delete Collection"
+							message="Are you sure you want to delete this collection? The posts inside it will not be deleted, only removed from this folder."
+							confirmLabel="Delete"
+							cancelLabel="Cancel"
+							variant="danger"
+							onConfirm={() => void confirmDeleteCollection()}
+							onCancel={() =>
+								setDeleteConfirmCollectionId(null)
+							}
+						/>,
+						document.body,
+					)}
+
 				{createPortal(
 					<AnimatePresence>
 						{activeList && (
@@ -3356,6 +4266,21 @@ export default function Profile({
 				document.body
 			)}
 			</div>
+
+	{/* Forward Profile Modal (shared message-forward UI) */}
+	<ForwardModal
+		open={forwardOpen}
+		onClose={() => setForwardOpen(false)}
+		title="Forward Profile"
+		subtitle={
+			profile ? (
+				<span>										{profile.fullName || "Profile"} (@{profile.username})
+									</span>
+			) : undefined
+		}
+		myUserId={user?._id}
+		onForward={handleForwardProfile}
+	/>
 
 			{/* Pull-to-refresh indicator */}
 			{(pullDistance > 0 || isRefreshing) && (

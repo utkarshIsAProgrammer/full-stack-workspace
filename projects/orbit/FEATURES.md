@@ -1,747 +1,491 @@
-# Mandatory -> **freebuff --continue 2026-08-02T21-57-04.421Z**
+# Orbit — Complete Feature Catalog (August 2026)
 
-# Orbit — Complete Feature Catalog
-
-> **Status:** ✅ 100% Complete — Zero TypeScript errors, zero `@ts-ignore` directives.
-> All backend endpoints are built, all frontend components are wired, all realtime socket events are connected.
+> Every feature currently implemented in Orbit across the client, server, and realtime layers.
+> ✅ = fully implemented and wired.
 
 ---
 
 ## Table of Contents
 
-1. [Authentication & Account Management](#1-authentication--account-management)
+1. [Authentication & Accounts](#1-authentication--accounts)
 2. [User Profiles](#2-user-profiles)
 3. [Posts & Content Creation](#3-posts--content-creation)
 4. [Feed & Discovery](#4-feed--discovery)
 5. [Social Interactions](#5-social-interactions)
 6. [Chat / Direct Messages](#6-chat--direct-messages)
 7. [Communities](#7-communities)
-8. [Notifications](#8-notifications)
-9. [Glances (Ephemeral Stories)](#9-glances-ephemeral-stories)
-10. [Reels (Short Video)](#10-reels-short-video)
-11. [Collections & Saves](#11-collections--saves)
-12. [Gamification: XP, Streaks, Daily Missions](#12-gamification-xp-streaks-daily-missions)
-13. [Search](#13-search)
-14. [Moderation & Safety](#14-moderation--safety)
-15. [Admin Dashboard](#15-admin-dashboard)
-16. [Translation & Link Previews](#16-translation--link-previews)
-17. [Push Notifications](#17-push-notifications)
-18. [Invite System](#18-invite-system)
-19. [Close Friends](#19-close-friends)
-20. [Post Scheduling & Drafts](#20-post-scheduling--drafts)
-21. [Polls & Collaboration](#21-polls--collaboration)
-22. [Analytics & Reach Stats](#22-analytics--reach-stats)
-23. [Anonymous Browsing](#23-anonymous-browsing)
-24. [Real-time Features (Socket Events)](#24-real-time-features-socket-events)
-25. [Data Models](#25-data-models)
-26. [Security Features](#26-security-features)
-27. [UX Polish](#27-ux-polish)
+8. [Audio & Video Calls](#8-audio--video-calls)
+9. [Glances (Stories)](#9-glances-stories)
+10. [Search](#10-search)
+11. [Notifications](#11-notifications)
+12. [Push Notifications (On-Device)](#12-push-notifications-on-device)
+13. [Close Friends](#13-close-friends)
+14. [Settings](#14-settings)
+15. [Moderation & Blocking](#15-moderation--blocking)
+16. [Admin Dashboard](#16-admin-dashboard)
+17. [Gamification: XP, Streaks, Missions, Leaderboard](#17-gamification)
+18. [Translation & Link Previews](#18-translation--link-previews)
+19. [Invite System](#19-invite-system)
+20. [Offline & Performance](#20-offline--performance)
+21. [UI / UX Polish](#21-ui--ux-polish)
+22. [Realtime (Socket Events)](#22-realtime-socket-events)
+23. [Security](#23-security)
+24. [Data Models](#24-data-models)
 
 ---
 
-## 1. Authentication & Account Management
+## 1. Authentication & Accounts
 
-| Feature                 | Backend | Frontend | Details                                                                          |
-| ----------------------- | ------- | -------- | -------------------------------------------------------------------------------- |
-| Email/Password Signup   | ✅      | ✅       | `POST /api/auth/signup` — validates with Zod schema, hashes password with bcrypt |
-| Email/Password Login    | ✅      | ✅       | `POST /api/auth/login` — JWT token + HTTP-only cookie                            |
-| Logout                  | ✅      | ✅       | `POST /api/auth/logout` — clears cookie                                          |
-| Get Current User        | ✅      | ✅       | `GET /api/auth/me` — returns user profile from JWT session                       |
-| Forgot Password         | ✅      | ✅       | Request OTP via email, verify OTP, reset password                                |
-| Session Persistence     | ✅      | ✅       | JWT stored in httpOnly cookie, checked on page load                              |
-| Auth Form Toggle        | —       | ✅       | Switch between Login / Signup without page reload                                |
-| Email Verification Flag | ✅      | —        | `isEmailVerified` field on User model                                            |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Email/Password Signup | ✅ | ✅ | `POST /api/auth/signup` — Zod validated, bcrypt hashed |
+| Email/Password Login | ✅ | ✅ | `POST /api/auth/login` — JWT in httpOnly cookie |
+| OAuth (Google) | ✅ | ✅ | `GET /api/auth/google` — OAuth flow |
+| Logout | ✅ | ✅ | Clears auth cookie, wipes caches, stops background refresh |
+| Session Check on Load | ✅ | ✅ | `GET /api/auth/me` on mount |
+| Forgot / Reset Password | ✅ | ✅ | OTP email → verify → reset |
+| Delete Account | ✅ | ✅ | `DELETE /api/users/delete-account` — cascades all data |
+| Auth Expiry Handling | ✅ | ✅ | Socket disconnect + full cache wipe on `auth:expired` |
 
 ---
 
 ## 2. User Profiles
 
-| Feature                 | Backend | Frontend | Details                                                                          |
-| ----------------------- | ------- | -------- | -------------------------------------------------------------------------------- |
-| View User by ID         | ✅      | ✅       | `GET /api/users/:userId` — populated with post counts, bio, etc.                 |
-| View User by Username   | ✅      | ✅       | `GET /api/users/username/:username` — slug-based profile lookup                  |
-| View Own Profile        | ✅      | ✅       | `GET /api/auth/me`                                                               |
-| Update Profile          | ✅      | ✅       | `PUT /api/users/profile` — name, bio, profile pic, cover photo, privacy settings |
-| Profile Picture Upload  | ✅      | ✅       | Upload to Cloudinary, with cropping support                                      |
-| Delete Account          | ✅      | ✅       | `DELETE /api/users/delete-account` — removes user + all associated data          |
-| Share Profile           | ✅      | ✅       | `GET /api/users/share/:username` — returns shareable link                        |
-| Get User Posts          | ✅      | ✅       | `GET /api/users/:userId/posts` — paginated                                       |
-| Get Suggested Users     | ✅      | ✅       | `GET /api/users/suggestions` — algorithm-based recommendations                   |
-| Private Accounts        | ✅      | ✅       | Follow request/approve/decline flow                                              |
-| Follow Requests         | ✅      | ✅       | `sendFollowRequest`, `approveFollowRequest`, `declineFollowRequest`              |
-| Pinned Posts            | ✅      | ✅       | Pin up to 3 posts to profile top                                                 |
-| Profile Views Counter   | ✅      | ✅       | `GET /api/users/profile-views/:userId`                                           |
-| XP Display on Profile   | —       | ✅       | Shows level badge + XP progress                                                  |
-| Block User              | ✅      | ✅       | `blockUser`, `unblockUser`, `getBlockedUsers`, `checkBlocked`                    |
-| Mute User               | ✅      | ✅       | `muteUser`, `unmuteUser`                                                         |
-| Blocked Users List      | —       | ✅       | Settings page — view and unblock                                                 |
-| Block Button on Profile | —       | ✅       | Inline block/unblock toggle on other users' profiles                             |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| View by ID / Username | ✅ | ✅ | `/api/users/:id`, `/api/users/username/:username` |
+| Edit Profile | ✅ | ✅ | Name, bio, links, avatar, banner |
+| Avatar & Banner Upload | ✅ | ✅ | Cloudinary upload, cropped & downscaled before upload |
+| Avatar/Banner Crop Modal | ✅ | ✅ | Portal-centered cropper — no scrolling needed |
+| Profile Share / Forward | ✅ | ✅ | Share menu → forward to chat + copy link (toast + in-app & device notification) |
+| Followers / Following | ✅ | ✅ | Lists + follow/unfollow |
+| Follow Requests (Private) | ✅ | ✅ | Send / approve / decline flow |
+| Pinned Posts | ✅ | ✅ | Up to 3 posts pinned to profile top |
+| Profile Tabs | ✅ | ✅ | Posts, Saved, Reposts, Drafts, Collections |
+| Profile View Counter | ✅ | ✅ | Tracks visits |
+| XP + Level Display | ✅ | ✅ | Badge + progress in header |
+| Block / Mute on Profile | ✅ | ✅ | Inline block/unblock toggle |
+| Suggestions | ✅ | ✅ | `GET /api/users/suggestions` — affinity-based |
+| Post View Tracking | ✅ | ✅ | 3s-in-view increments view count app-wide |
 
 ---
 
 ## 3. Posts & Content Creation
 
-| Feature                 | Backend | Frontend | Details                                                                                 |
-| ----------------------- | ------- | -------- | --------------------------------------------------------------------------------------- |
-| Create Post             | ✅      | ✅       | `POST /api/posts` — text, images, video support                                         |
-| Create Post with Images | ✅      | ✅       | Multiple image upload (max 10), Cloudinary hosting                                      |
-| Create Post with Video  | ✅      | ✅       | Single video upload per post                                                            |
-| Edit Post               | ✅      | ✅       | `PUT /api/posts/:postId` — edit text, replace images                                    |
-| Edit History            | ✅      | ✅       | Track `isEdited` flag + history of edits                                                |
-| Delete Post             | ✅      | ✅       | `DELETE /api/posts/:postId` — cascading deletes (comments, likes, saves, notifications) |
-| Get Single Post         | ✅      | ✅       | `GET /api/posts/:postId` — with caching                                                 |
-| Get Post by Slug        | ✅      | ✅       | `GET /api/posts/slug/:slug` — for permalink sharing                                     |
-| Hashtag Support         | ✅      | ✅       | Extract `#hashtags` from title/content, clickable in UI                                 |
-| Get Posts by Hashtag    | ✅      | ✅       | `GET /api/posts/hashtag/:hashtag` — paginated                                           |
-| Trending Hashtags       | ✅      | ✅       | `GET /api/posts/trending/hashtags` — aggregated from last 7 days                        |
-| Mention Support         | ✅      | ✅       | `@username` parsing with autocomplete dropdown                                          |
-| Mention Notifications   | ✅      | ✅       | Creates notification for mentioned users                                                |
-| Slug Generation         | ✅      | —        | Auto-generated from title, deduplicated                                                 |
-| Cursor-based Pagination | ✅      | ✅       | All post endpoints use `cursor` + `limit`                                               |
-| Media Cleanup on Delete | ✅      | —        | Deletes Cloudinary images/video on post deletion                                        |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Create Post | ✅ | ✅ | Text, up to 10 images, single video |
+| Image Downscale Before Upload | ✅ | ✅ | Client-side compression → fast publish |
+| Edit Post | ✅ | ✅ | Tracked `isEdited` + history |
+| Delete Post | ✅ | ✅ | Cascading cleanup + Cloudinary media deletion |
+| Hashtags | ✅ | ✅ | Extraction, clickable, hashtag page |
+| Mentions | ✅ | ✅ | `@username` autocomplete + notification |
+| Quote Reposts | ✅ | ✅ | Commentary on repost, count on original |
+| Repost | ✅ | ✅ | Toggle with optimistic UI |
+| Audience (Public / Close Friends) | ✅ | ✅ | Green indication for close-friends-only posts |
+| View Count | ✅ | ✅ | Deduped per-session counter |
+| Reach Stats | ✅ | ✅ | Views / likes / shares / saves on card |
 
-### Post Sub-features
+### Polls
+| Feature | Details |
+| --- | --- |
+| Create Poll with Post | ✅ Multiple options, optional expiry |
+| Vote (once, locked) | ✅ One vote per user, cannot be changed after selection |
+| Results Display | ✅ Live counts; white + golden-glow selected style |
+| Expiry | ✅ `expiresAt` blocks late votes |
+| Notification on Vote | ✅ Notifies author |
 
-#### Polls
+### Scheduling & Drafts
+| Feature | Details |
+| --- | --- |
+| Save Draft | ✅ Not visible in feed |
+| Publish Draft | ✅ Instant optimistic publish + feed cache prepend |
+| Draft Manager | ✅ View/edit/delete drafts in Profile tab with confirm dialog |
+| Schedule Post | ✅ `scheduledAt` auto-publish via cron (feeds update in place) |
 
-| Feature                | Backend | Frontend | Details                                            |
-| ---------------------- | ------- | -------- | -------------------------------------------------- |
-| Create Poll with Post  | ✅      | ✅       | Multiple options, optional expiry                  |
-| Vote on Poll           | ✅      | ✅       | `POST /api/posts/:postId/vote` — one vote per user |
-| Change Vote            | ✅      | ✅       | Re-voting removes old vote first                   |
-| Poll Expiry            | ✅      | ✅       | `expiresAt` check before allowing votes            |
-| Poll Results           | ✅      | ✅       | Returns updated poll state after voting            |
-| Poll Vote Notification | ✅      | —        | Notifies post author on first vote                 |
-
-#### Collaboration
-
-| Feature              | Backend | Frontend | Details                                 |
-| -------------------- | ------- | -------- | --------------------------------------- |
-| Invite Collaborator  | ✅      | ✅       | `POST /api/posts/:postId/collab-invite` |
-| Accept Collaboration | ✅      | ✅       | `POST /api/posts/:postId/collab-accept` |
-| Collab Notification  | ✅      | —        | Sends `collab_invite` notification      |
-| Collab Badge         | —       | ✅       | Shows collaborator on post card         |
-
-#### Quote Reposts
-
-| Feature                   | Backend | Frontend | Details                                                                     |
-| ------------------------- | ------- | -------- | --------------------------------------------------------------------------- |
-| Create Quote Repost       | ✅      | ✅       | `POST /api/posts/:postId/quote-repost` — creates new Post + Repost document |
-| Quote Content             | ✅      | ✅       | User adds commentary to shared post                                         |
-| Repost Count Tracking     | ✅      | ✅       | Increments `repostsCount` on original                                       |
-| Quote Repost Notification | ✅      | —        | Notifies original author                                                    |
-| Quote Button in UI        | —       | ✅       | "Quote" button next to "Repost" in post actions                             |
-
-#### Scheduling & Drafts
-
-| Feature              | Backend | Frontend | Details                                                           |
-| -------------------- | ------- | -------- | ----------------------------------------------------------------- |
-| Draft Status         | ✅      | ✅       | Post can be saved as `draft`                                      |
-| Scheduled Publishing | ✅      | ✅       | Post can be scheduled with `scheduledAt`                          |
-| Publish Draft        | ✅      | ✅       | `POST /api/posts/:postId/publish` — changes status to `published` |
-| Archived Status      | ✅      | —        | `archived` added to valid status enum                             |
-
-#### Pinning
-
-| Feature             | Backend | Frontend | Details                                      |
-| ------------------- | ------- | -------- | -------------------------------------------- |
-| Pin Post to Profile | ✅      | ✅       | `POST /api/posts/:postId/pin` — max 3 pinned |
-| Unpin Post          | ✅      | ✅       | `POST /api/posts/:postId/unpin`              |
-| Pinned Posts List   | ✅      | ✅       | `GET /api/users/:userId/pinned`              |
-| Realtime Pin Events | ✅      | —        | Socket event `post:pinned` / `post:unpinned` |
-| Pin Icon in UI      | —       | ✅       | Visual indicator on pinned posts             |
+### Collaboration
+| Feature | Details |
+| --- | --- |
+| Invite Collaborator | ✅ Backend wired (`collab-invite`) — **button disabled for now** |
+| Accept Collaboration | ✅ Backend wired |
+| Collab Badge | ✅ Shows collaborator on card |
 
 ---
 
 ## 4. Feed & Discovery
 
-| Feature                | Backend | Frontend | Details                                                         |
-| ---------------------- | ------- | -------- | --------------------------------------------------------------- |
-| Main Feed              | ✅      | ✅       | `GET /api/feed` — ranked feed with affinity scoring             |
-| All Posts (Public)     | ✅      | ✅       | `GET /api/posts` — chronological fallback                       |
-| Trending Feed          | ✅      | ✅       | Sort by likes, views, recency                                   |
-| Algorithmic Ranking    | ✅      | —        | Multi-signal scoring: affinity, velocity, recency, follow boost |
-| Candidate Generation   | ✅      | —        | Posts from followed + high-affinity + 10-15% discovery          |
-| Diversity Re-ranking   | ✅      | —        | No 2 consecutive same-author posts                              |
-| Freshness Guarantee    | ✅      | —        | 2-3 reserved slots for posts <2hrs old                          |
-| Affinity Scores        | ✅      | —        | Per-author scores, scheduled recomputation                      |
-| Interaction Logging    | ✅      | —        | Logs likes, comments, saves, shares, DMs, profile visits        |
-| In-memory Feed Caching | ✅      | —        | Per-user cache, 5-10min TTL, invalidated on new post/follow     |
-| Post Reach Stats       | —       | ✅       | Views, likes, shares, saves aggregated on post card             |
-| Pull-to-Refresh        | —       | ✅       | Touch gesture to reload feed                                    |
-| Infinite Scroll        | —       | ✅       | IntersectionObserver-based lazy loading                         |
-| Swipe-to-Like/Repost   | —       | ✅       | Left swipe = repost, right swipe = like                         |
-| Realtime New Posts     | ✅      | ✅       | Socket event `post:created` prepends to feed                    |
-| Realtime Post Updates  | ✅      | ✅       | Socket event `post:updated` updates in place                    |
-| Realtime Post Deletion | ✅      | ✅       | Socket event `post:deleted` removes from feed                   |
-| Reposts-Only View      | ✅      | ✅       | Filter feed to show only reposted content                       |
-| Saves-Only View        | ✅      | ✅       | Filter feed to show only saved content                          |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Ranked Feed | ✅ | ✅ | Affinity + velocity + recency + follow boost |
+| For-You Feed | ✅ | ✅ | `/api/feed/for-you` |
+| Explore | ✅ | ✅ | Trending + discovery |
+| Trending | ✅ | ✅ | Posts / users / hashtags (7-day window) |
+| Infinite Scroll | ✅ | ✅ | IntersectionObserver pagination |
+| Pull-to-Refresh | ✅ | ✅ | Touch gesture |
+| Swipe to Like/Repost | ✅ | ✅ | Left = repost, right = like |
+| Realtime Post Events | ✅ | ✅ | Created/updated/deleted sync via socket |
+| Saves / Reposts Views | ✅ | ✅ | Filter views |
+| Feed Cache | ✅ | ✅ | Per-user in-memory + CacheStorage prepend on publish |
 
 ---
 
 ## 5. Social Interactions
 
-| Feature                           | Backend | Frontend | Details                                                                        |
-| --------------------------------- | ------- | -------- | ------------------------------------------------------------------------------ |
-| Like Post                         | ✅      | ✅       | `POST /api/likes/post/:postId` — toggle with optimistic UI                     |
-| Like Comment                      | ✅      | ✅       | `POST /api/likes/comment/:commentId`                                           |
-| Like Count Display                | —       | ✅       | Animated counter on post cards                                                 |
-| Like Notification                 | ✅      | —        | Sends to post author on first like                                             |
-| Comment on Post                   | ✅      | ✅       | `POST /api/comments/:postId` — with content validation                         |
-| View Comments                     | ✅      | ✅       | `GET /api/comments/:postId` — with pagination                                  |
-| Edit Comment                      | ✅      | ✅       | `PUT /api/comments/:commentId` — tracked as edited                             |
-| Delete Comment                    | ✅      | ✅       | `DELETE /api/comments/:commentId` — soft delete                                |
-| Reply to Comment (Threaded)       | ✅      | ✅       | Nested replies with parent tracking                                            |
-| View Comment Replies              | ✅      | ✅       | `GET /api/comments/:commentId/replies`                                         |
-| Comment Reactions (Emoji)         | ✅      | ✅       | `POST /api/comments/:commentId/reactions` — toggle emoji reactions on comments |
-| Comment Likes                     | ✅      | ✅       | Toggle likes on individual comments                                            |
-| Follow User                       | ✅      | ✅       | `POST /api/follow/:userId` — toggle, with mutual follow tracking               |
-| Followers / Following Lists       | ✅      | ✅       | `GET /api/follow/followers/:userId`, `GET /api/follow/following/:userId`       |
-| Save Post (Bookmark)              | ✅      | ✅       | `POST /api/saves/:postId` — toggle with optimistic UI                          |
-| Get Saved Posts                   | ✅      | ✅       | `GET /api/saves` — paginated                                                   |
-| Save Folders                      | ✅      | ✅       | Organize saved posts into folders                                              |
-| Update Save Folder                | ✅      | ✅       | `PUT /api/saves/:postId/folder` — move to different folder                     |
-| Repost / Share Post               | ✅      | ✅       | `POST /api/reposts/:postId` — toggle                                           |
-| Get Reposted Posts                | ✅      | ✅       | `GET /api/reposts`                                                             |
-| Share to External (Web Share API) | —       | ✅       | Native share sheet on supported devices                                        |
-| Share Count                       | ✅      | ✅       | `POST /api/posts/:postId/share` — increments share counter + returns share URL |
-| Realtime Like Mutation            | ✅      | ✅       | Socket event syncs likes across open windows                                   |
-| Realtime Comment Added            | ✅      | ✅       | Socket event adds comment to live drawer                                       |
-| Realtime Comment Deleted          | ✅      | ✅       | Socket event removes comment from drawer                                       |
-| Realtime Comment Like Change      | ✅      | ✅       | Socket event updates comment likes count                                       |
-| Read Receipts                     | ✅      | ✅       | Track if recipient has seen a message                                          |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Like / Unlike Post | ✅ | ✅ | Optimistic toggle; own state isolated per-device |
+| Like / Unlike Comment | ✅ | ✅ | Optimistic, red heart persists after reload |
+| Comment on Post | ✅ | ✅ | With validation |
+| Comment Drawer | ✅ | ✅ | Load-more pagination (`nextCursor`/`hasMore`) + prefetch on hover |
+| Nested Replies | ✅ | ✅ | Threaded with parent tracking |
+| Edit / Delete Comment | ✅ | ✅ | Edit tracked; delete with confirm |
+| Comment Emoji Reactions | ✅ | ✅ | Emoji picker, animated pill open/close, latest emoji first, clear option |
+| Follow / Unfollow | ✅ | ✅ | Consistent from feed, search, profile — never flips back |
+| Save to Collection | ✅ | ✅ | Bookmark + folder organization |
+| Repost | ✅ | ✅ | Toggle + reposts-only view |
+| Share / Forward | ✅ | ✅ | Posts, profiles, glances, comments → forward modal + copy link |
+| External Share | ✅ | ✅ | Web Share API + share count |
+| Read Receipts | ✅ | ✅ | Seen tracking in chats |
 
 ---
 
 ## 6. Chat / Direct Messages
 
-| Feature                       | Backend | Frontend | Details                                                                     |
-| ----------------------------- | ------- | -------- | --------------------------------------------------------------------------- |
-| Get or Create Conversation    | ✅      | ✅       | `GET /api/chats/conversation/:userId` — finds or creates DM                 |
-| List Conversations            | ✅      | ✅       | `GET /api/chats/conversations` — sorted by latest message                   |
-| Get Messages                  | ✅      | ✅       | `GET /api/chats/messages/:conversationId` — paginated                       |
-| Send Message                  | ✅      | ✅       | `POST /api/chats/messages/:conversationId` — text + attachments             |
-| Edit Message                  | ✅      | ✅       | `PUT /api/chats/messages/:messageId` — 5-minute edit window                 |
-| Delete Message                | ✅      | ✅       | `DELETE /api/chats/messages/:messageId` — soft delete                       |
-| Delete for Me                 | ✅      | ✅       | `DELETE /api/chats/messages/:messageId/for-me` — hide from own view         |
-| Undo Send                     | ✅      | ✅       | `DELETE /api/chats/messages/:messageId/undo` — hard delete within 5 seconds |
-| Delete Conversation           | ✅      | ✅       | `DELETE /api/chats/conversations/:conversationId` — remove entire thread    |
-| Clear Conversation Messages   | ✅      | ✅       | `DELETE /api/chats/clear/:conversationId` — clear all messages              |
-| Forward Message               | ✅      | ✅       | Forward message with `forwardedFrom` metadata                               |
-| Forwarded Message UI          | —       | ✅       | Visual "Forwarded from" banner on forwarded messages                        |
-| Reply to Message              | ✅      | ✅       | Inline reply with quoted original message                                   |
-| Reply Preview UI              | —       | ✅       | Shows replied-to message above input                                        |
-| React to Message (Emoji)      | ✅      | ✅       | `POST /api/chats/messages/:messageId/reaction`                              |
-| Search Messages               | ✅      | ✅       | `GET /api/chats/messages/search/:conversationId?q=`                         |
-| Typing Indicator              | ✅      | ✅       | Socket `chat:typing` — realtime typing status                               |
-| User Presence (Online Status) | ✅      | ✅       | Redis-backed presence tracking                                              |
-| Presence Heartbeat            | ✅      | ✅       | 25-second interval to keep presence alive                                   |
-| Voice Note Recording          | —       | ✅       | Microphone recording with waveform preview                                  |
-| Send Voice Note               | ✅      | ✅       | Upload as attachment with `voice_note` type                                 |
-| Voice Note Playback           | —       | ✅       | Play/pause inline in message bubble                                         |
-| Camera Capture                | —       | ✅       | Take photo and send directly                                                |
-| Image Attachment              | ✅      | ✅       | Send images with Cloudinary upload                                          |
-| GIF Picker                    | —       | ✅       | Browse/search Tenor GIFs and send                                           |
-| File Attachments              | ✅      | ✅       | Generic file upload support                                                 |
-| Chat Search (User Discovery)  | ✅      | ✅       | Search users to start new conversations                                     |
-| Unread Count Badge            | ✅      | ✅       | Per-conversation + aggregate badge in Dock                                  |
-| Conversation List Item        | —       | ✅       | Shows avatar, last message, timestamp, unread dot                           |
-| Realtime Message New          | ✅      | ✅       | Socket event `message:new` — instant delivery                               |
-| Realtime Message Delete       | ✅      | ✅       | Socket event `message:delete` — syncs deletions                             |
-| Confirm Delete Modal          | —       | ✅       | Confirmation dialog before destructive actions                              |
-| Confirm Clear Chat Modal      | —       | ✅       | Confirmation dialog for clearing entire conversation                        |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Conversation List | ✅ | ✅ | Avatar, last message, timestamp, unread dot + count badge |
+| Last-Action Preview | ✅ | ✅ | "reacted ❤️ to your message", "image sent", "voice note" etc. |
+| Get/Create Conversation | ✅ | ✅ | `/api/chats/conversation/:userId` |
+| Send Text Message | ✅ | ✅ | Optimistic send |
+| WhatsApp-Style Auto-Grow Input | ✅ | ✅ | Text wraps before the edge, box grows upward, no scrollbar |
+| Voice Notes | ✅ | ✅ | Record, waveform preview, play/pause, delete — identical in community chat |
+| Image Attachments | ✅ | ✅ | Downscaled before upload, media icon in circle container |
+| Camera Capture | ✅ | ✅ | Take & send directly |
+| GIF Picker | ✅ | ✅ | Tenor search/send |
+| File Attachments | ✅ | ✅ | Generic files |
+| Reply to Message | ✅ | ✅ | Inline quoted reply preview |
+| Edit Message | ✅ | ✅ | 5-minute window |
+| Delete / Delete for Me | ✅ | ✅ | Soft delete + per-user hide |
+| Undo Send | ✅ | ✅ | Hard delete within 5 seconds |
+| Forward Message | ✅ | ✅ | With "Forwarded from" banner |
+| Emoji Reactions | ✅ | ✅ | Long-press menu with reaction pill — toggle system, one active emoji |
+| Long-Press Message Menu | ✅ | ✅ | Reply, react, copy, pin, forward, delete |
+| Three-Dot Menu (Header) | ✅ | ✅ | Search messages, **mute/unmute**, clear chat, block/unblock |
+| Mute Conversation | ✅ | ✅ | Long-press list item + three-dot menu; state syncs to header |
+| Pinned Messages | ✅ | ✅ | Pin/unpin from menu, pinned panel (newest first), unpin from panel |
+| Pin Highlight | ✅ | ✅ | Clean identifier style on the pinned message |
+| Message Search | ✅ | ✅ | Debounced, in-conversation search |
+| Typing Indicator | ✅ | ✅ | Realtime via socket |
+| Presence (Online Status) | ✅ | ✅ | Redis-backed, 25s heartbeat |
+| Active Users Panel | ✅ | ✅ | See who's online in a conversation |
+| User Search (New Chat) | ✅ | ✅ | Debounced (300ms) + stale-response guard → fast |
+| Unread Badges | ✅ | ✅ | Aggregate badge in Dock + per-conversation |
 
 ---
 
 ## 7. Communities
 
-| Feature                       | Backend | Frontend | Details                                                                   |
-| ----------------------------- | ------- | -------- | ------------------------------------------------------------------------- |
-| Create Community              | ✅      | ✅       | `POST /api/communities` — name, description, profile image                |
-| Create Community with Image   | ✅      | ✅       | Upload profile image on creation                                          |
-| List All Communities (Browse) | ✅      | ✅       | `GET /api/communities` — browse discoverable communities                  |
-| List My Communities           | ✅      | ✅       | `GET /api/communities/my` — communities user has joined                   |
-| Get Community Detail          | ✅      | ✅       | `GET /api/communities/:communityId`                                       |
-| Get Community Members         | ✅      | ✅       | `GET /api/communities/:communityId/members` — with join dates             |
-| Update Community              | ✅      | ✅       | `PUT /api/communities/:communityId` — edit name, description, image       |
-| Delete Community              | ✅      | ✅       | `DELETE /api/communities/:communityId` — creator only (with confirmation) |
-| Join Community                | ✅      | ✅       | `POST /api/communities/:communityId/join`                                 |
-| Leave Community               | ✅      | ✅       | `POST /api/communities/:communityId/leave` (with confirmation)            |
-| Leave with Confirmation       | —       | ✅       | Confirmation dialog before leaving                                        |
-| Loading State on Join         | —       | ✅       | Button shows spinner during join request                                  |
-
-### Community Messaging
-
-| Feature                  | Backend | Frontend | Details                                                            |
-| ------------------------ | ------- | -------- | ------------------------------------------------------------------ |
-| Get Community Messages   | ✅      | ✅       | `GET /api/communities/:communityId/messages` — paginated           |
-| Send Message             | ✅      | ✅       | `POST /api/communities/:communityId/messages` — text + attachments |
-| Edit Message             | ✅      | ✅       | `PUT /api/communities/messages/:messageId` — 5-minute window       |
-| Delete Message           | ✅      | ✅       | `DELETE /api/communities/messages/:messageId` — soft delete        |
-| Delete for Me            | ✅      | ✅       | `DELETE /api/communities/messages/:messageId/for-me`               |
-| React to Message (Emoji) | ✅      | ✅       | `POST /api/communities/messages/:messageId/reaction` — toggle      |
-| Reply to Message         | ✅      | ✅       | Inline reply with quoted original                                  |
-| Reply Preview UI         | —       | ✅       | Shows replied-to message above input                               |
-| Pin Message              | ✅      | ✅       | `POST /api/communities/:communityId/pin/:messageId`                |
-| Unpin Message            | ✅      | ✅       | `POST /api/communities/:communityId/unpin/:messageId`              |
-| Get Pinned Messages      | ✅      | ✅       | `GET /api/communities/:communityId/pinned`                         |
-| Pinned Messages Banner   | —       | ✅       | Shows pinned message at top of chat                                |
-
-### Community Realtime (Socket Events)
-
-| Feature                      | Details                                    |
-| ---------------------------- | ------------------------------------------ |
-| `community:join`             | Join a community room on socket            |
-| `community:leave`            | Leave a community room on socket           |
-| `community:typing`           | Realtime typing indicator                  |
-| `community:message:new`      | Instant message delivery to all members    |
-| `community:message:edit`     | Live message edit sync                     |
-| `community:message:delete`   | Live message deletion sync                 |
-| `community:message:reaction` | Live emoji reaction sync                   |
-| `community:message:pinned`   | Live pinned message update                 |
-| `community:message:unpinned` | Live unpinned message update               |
-| `community:member-joined`    | Live member count update                   |
-| `community:member-left`      | Live member count update                   |
-| `community:updated`          | Live community name/desc/image update      |
-| `community:deleted`          | Redirect members when community is deleted |
-
-### Community UI
-
-| Feature                  | Details                                      |
-| ------------------------ | -------------------------------------------- |
-| Community List View      | Two tabs: "My Communities" and "Browse"      |
-| Community Chat View      | Full message list with input bar             |
-| Create Community Modal   | Form with name, description, optional image  |
-| Community Settings Modal | Edit name, description, image; delete option |
-| Member List Panel        | All members with join dates                  |
-| Context Menu on Messages | Edit, delete, pin, react options             |
-| Unread Badge             | Unread count indicator on community list     |
-| Visual Feedback          | Loading states for join/leave/create         |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Create / Edit / Delete | ✅ | ✅ | With avatar upload (downscaled) + confirm dialogs |
+| My Communities / Browse Tabs | ✅ | ✅ | Cache-evicted on join/leave for instant updates |
+| Join / Leave | ✅ | ✅ | Leave = hidden from "My", still visible in browse |
+| Long-Press List Menu | ✅ | ✅ | Mute community / leave community |
+| Community Mute | ✅ | ✅ | Long-press menu |
+| Member List | ✅ | ✅ | With join dates |
+| Active Users | ✅ | ✅ | See who's online in the community |
+| Community Messaging | ✅ | ✅ | Same feature set as personal chat |
+| Community Voice Notes | ✅ | ✅ | Identical to personal chat (record, waveform, playback) |
+| Reactions | ✅ | ✅ | Long-press pill + emoji picker, toggle system |
+| Pinned Messages | ✅ | ✅ | Pin/unpin, pinned panel |
+| Message Search | ✅ | ✅ | Debounced |
+| Last-Action Preview | ✅ | ✅ | "Name reacted ❤️ to your message" on list items |
+| Community Settings | ✅ | ✅ | Name, image, audio/video call toggles |
+| Audio/Video Calls in Community | ✅ | ✅ | Group call floor |
+| Call Toggles in Settings | ✅ | ✅ | Smooth, functional switches |
+| Real-time Sync | ✅ | ✅ | All message/typing/member events via socket |
 
 ---
 
-## 8. Notifications
+## 8. Audio & Video Calls
 
-| Feature                 | Backend | Frontend | Details                                                                                                       |
-| ----------------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------- |
-| Get Unread Count        | ✅      | ✅       | `GET /api/notifications/unread-count` — badge in Dock                                                         |
-| List Notifications      | ✅      | ✅       | `GET /api/notifications` — paginated feed                                                                     |
-| Mark as Read            | ✅      | ✅       | `PUT /api/notifications/:notificationId/read`                                                                 |
-| Mark All as Read        | ✅      | ✅       | `PUT /api/notifications/read-all`                                                                             |
-| Delete Notification     | ✅      | ✅       | `DELETE /api/notifications/:notificationId`                                                                   |
-| Clear All Notifications | ✅      | ✅       | `DELETE /api/notifications/clear-all`                                                                         |
-| Notification Types      | ✅      | ✅       | like, comment, follow, mention, repost, message, collab_invite, poll_vote, glimpse_reaction, community_invite |
-| Realtime Push (Socket)  | ✅      | ✅       | Socket event `notification` — instant toast + badge update                                                    |
-| Toast Notification UI   | —       | ✅       | In-app toast with message preview                                                                             |
-| Clear Badge on View     | ✅      | ✅       | Badge resets when notification tab opened                                                                     |
-| Screen-specific Routing | —       | ✅       | Clicking notification navigates to relevant tab                                                               |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| 1-on-1 Audio Calls | ✅ | ✅ | WebRTC (LiveKit) |
+| 1-on-1 Video Calls | ✅ | ✅ | WebRTC with full CallUI |
+| Group Calls (Community) | ✅ | ✅ | GroupCallFloor |
+| Incoming Call UI | ✅ | ✅ | Accept / decline, ICE candidate queueing |
+| Call State Handling | ✅ | ✅ | Outgoing / incoming / active / missed / ended |
+| Call Notifications | ✅ | ✅ | Socket-based |
 
 ---
 
-## 9. Glances (Ephemeral Stories)
+## 9. Glances (Stories)
 
-| Feature                    | Backend | Frontend | Details                                                 |
-| -------------------------- | ------- | -------- | ------------------------------------------------------- |
-| Get Glimpse Feed           | ✅      | ✅       | `GET /api/glances/feed` — story-style horizontal row    |
-| Create Glimpse             | ✅      | ✅       | `POST /api/glances` — image with optional caption       |
-| View Glimpse               | ✅      | ✅       | `GET /api/glances/:glimpseId` — marks as viewed         |
-| React to Glimpse (Emoji)   | ✅      | ✅       | `POST /api/glances/:glimpseId/react`                    |
-| Reply to Glimpse           | ✅      | ✅       | `POST /api/glances/:glimpseId/reply` — DM-like response |
-| Delete Glimpse             | ✅      | ✅       | `DELETE /api/glances/:glimpseId` — creator only         |
-| Auto-expire Glimpses       | ✅      | ✅       | Glimpses expire after 24 hours                          |
-| Realtime Glimpse Reactions | ✅      | ✅       | Socket event `glimpse:reacted`                          |
-| Realtime Glimpse Expiry    | ✅      | ✅       | Socket event `glimpse:expired`                          |
-| View Count per Glimpse     | ✅      | ✅       | Tracks unique viewers                                   |
-| Glimpse Viewer List        | ✅      | ✅       | Shows who has viewed                                    |
-| Story-like UI              | —       | ✅       | Full-screen viewer with progress bar                    |
-| Reply-to-Glimpse UI        | —       | ✅       | Quick reply to start a DM about a glimpse               |
-
----
-
-## 10. Reels (Short Video)
-
-| Feature               | Backend | Frontend | Details                         |
-| --------------------- | ------- | -------- | ------------------------------- |
-| Upload Video          | ✅      | ✅       | Video posts displayed as Reels  |
-| Reels Feed            | —       | ✅       | Full-screen vertical swipe feed |
-| Play/Pause            | —       | ✅       | Tap to toggle                   |
-| Mute/Unmute           | —       | ✅       | Sound control overlay           |
-| Replay                | —       | ✅       | Replay button when video ends   |
-| Like on Reel          | ✅      | ✅       | Toggle like from Reels feed     |
-| Comment on Reel       | ✅      | ✅       | Open comments from Reels        |
-| Share Reel            | ✅      | ✅       | Share action from Reels         |
-| Swipe Between Reels   | —       | ✅       | Vertical swipe navigation       |
-| Video Player Controls | —       | ✅       | Play/pause, mute, replay        |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Glance Feed Row | ✅ | ✅ | Story-style horizontal strip (compact on mobile) |
+| Add Glance (+ container) | ✅ | ✅ | Tap → pick media → opens editor; loading spinner while uploading |
+| 9:16 Glance Frame | ✅ | ✅ | Full-bleed when matching; centered + zoom/drag when not |
+| Text on Glance | ✅ | ✅ | Editable, non-curved outline |
+| Drawing on Glance | ✅ | ✅ | Finger drawing with color palette, scaled strokes |
+| Zoom & Reposition | ✅ | ✅ | Pinch/gesture zoom, drag to position |
+| Free Crop | ✅ | ✅ | Removed — glance editor uses zoom/pan (no forced crop box) |
+| Audience (Public / Close Friends) | ✅ | ✅ | Default public; toggle to close-friends-only (green outline, lock icon) |
+| Privacy Enforcement | ✅ | ✅ | Close-friends glances hidden from non-close-friends everywhere |
+| View Glance | ✅ | ✅ | Full-screen viewer, progress bar, content never clipped |
+| Like / Reply | ✅ | ✅ | White send button, reply opens a DM thread in chat list |
+| Share Glance | ✅ | ✅ | Share menu (forward + copy link) |
+| Reaction to Glance | ✅ | ✅ | Emoji reactions, realtime |
+| Viewers List | ✅ | ✅ | Who has seen it |
+| Expiry | ✅ | ✅ | Auto-expire (24h) |
+| Notification for Replies | ✅ | ✅ | In-app + device: "replied to your glance" |
 
 ---
 
-## 11. Collections & Saves
+## 10. Search
 
-| Feature                     | Backend | Frontend | Details                                      |
-| --------------------------- | ------- | -------- | -------------------------------------------- |
-| Create Collection           | ✅      | ✅       | `POST /api/collections` — named collection   |
-| List Collections            | ✅      | ✅       | `GET /api/collections` — user's collections  |
-| Get Collection Posts        | ✅      | ✅       | `GET /api/collections/:collectionId/posts`   |
-| Add Post to Collection      | ✅      | ✅       | `POST /api/collections/:collectionId/add`    |
-| Remove Post from Collection | ✅      | ✅       | `POST /api/collections/:collectionId/remove` |
-| Delete Collection           | ✅      | ✅       | `DELETE /api/collections/:collectionId`      |
-| Save to Collection UI       | —       | ✅       | Save dialog with collection picker           |
-| Collections Tab in Profile  | —       | ✅       | Grid view of collections                     |
-| Dynamic Collection Count    | —       | ✅       | Live badge count for collections tab         |
-| Skeleton Loading            | —       | ✅       | Loading state for collection lists           |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Search Users | ✅ | ✅ | Text index + regex fallback, debounced client-side |
+| Search Posts | ✅ | ✅ | Full-text + hashtag |
+| Search Messages | ✅ | ✅ | In-conversation + in-community, debounced |
+| Search in Chat Header | ✅ | ✅ | Via three-dot menu only (icon removed) |
+| Trending Hashtags | ✅ | ✅ | Top 10, 7-day window, cached |
+| Result Caching | ✅ | ✅ | Fast repeat searches |
 
 ---
 
-## 12. Gamification: XP, Streaks, Daily Missions
+## 11. Notifications
 
-### XP & Leveling
-
-| Feature             | Backend | Frontend | Details                                      |
-| ------------------- | ------- | -------- | -------------------------------------------- |
-| Get My XP           | ✅      | ✅       | `GET /api/xp/me` — total XP, level           |
-| Get User XP         | ✅      | ✅       | `GET /api/xp/:userId`                        |
-| Award XP on Actions | ✅      | —        | CREATE_POST, LIKE, COMMENT actions award XP  |
-| XP Level Display    | —       | ✅       | Level badge + progress bar in profile header |
-
-### Daily Missions
-
-| Feature                         | Backend | Frontend | Details                                                 |
-| ------------------------------- | ------- | -------- | ------------------------------------------------------- |
-| Get Missions                    | ✅      | ✅       | `GET /api/missions` — daily tasks                       |
-| Claim Mission                   | ✅      | ✅       | `POST /api/missions/claim`                              |
-| Progress Missions Automatically | ✅      | —        | `progressMission()` called on post/comment/like actions |
-| Missions Panel                  | —       | ✅       | Home feed panel showing today's missions with progress  |
-
-### Streaks & Daily Rewards
-
-| Feature               | Backend | Frontend | Details                                                 |
-| --------------------- | ------- | -------- | ------------------------------------------------------- |
-| Get My Streaks        | ✅      | ✅       | `GET /api/streaks` — current streak, longest streak     |
-| Claim Daily Reward    | ✅      | ✅       | `POST /api/streaks/claim` — day-based reward            |
-| Get Reward Status     | ✅      | ✅       | `GET /api/streaks/rewards` — what's claimable           |
-| Update Partner Streak | ✅      | ✅       | `POST /api/streaks/partner` — mutual streak with friend |
-| Streaks UI Panel      | —       | ✅       | Profile tab — streak calendar + rewards list            |
-| Skeleton Loading      | —       | ✅       | Loading shimmer for streaks/rewards                     |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Notification Feed | ✅ | ✅ | Slim, elegant rows with top-right close icon |
+| Categories | ✅ | ✅ | All / Likes / Comments / Follows / Mentions / Messages — text-only until icons overflow |
+| Badge Counts | ✅ | ✅ | Live unread badge (notifications + chat) |
+| Mark Read / Mark All | ✅ | ✅ | Compact buttons |
+| Clear All / Delete | ✅ | ✅ | With confirm |
+| Deep-Link Routing | ✅ | ✅ | Click → jumps to exact place (post, profile, chat) |
+| Realtime Push | ✅ | ✅ | Socket `notification` → instant toast + badge |
+| Types | ✅ | ✅ | like, comment, follow, mention, repost, message, collab, poll_vote, glimpse_reply, community_invite |
+| Fit-to-Screen Layout | ✅ | ✅ | Non-scrollable on all dimensions |
 
 ---
 
-## 13. Search
+## 12. Push Notifications (On-Device)
 
-| Feature                | Backend | Frontend | Details                                               |
-| ---------------------- | ------- | -------- | ----------------------------------------------------- |
-| Search Users           | ✅      | ✅       | `GET /api/search/users?q=` — username/fullName search |
-| Search Posts           | ✅      | ✅       | `GET /api/search/posts?q=` — text search on posts     |
-| Hashtag-based Browsing | ✅      | ✅       | Click a hashtag to browse related posts               |
-| Search in Chat         | ✅      | ✅       | Message search within conversations                   |
-| Search Loading States  | —       | ✅       | Skeleton while searching                              |
-
----
-
-## 14. Moderation & Safety
-
-| Feature                 | Backend | Frontend | Details                                                   |
-| ----------------------- | ------- | -------- | --------------------------------------------------------- |
-| Report Content          | ✅      | ✅       | `POST /api/reports` — report posts with reason            |
-| Get Reports (Admin)     | ✅      | ✅       | `GET /api/reports` — review submitted reports             |
-| Review Report (Admin)   | ✅      | ✅       | `PUT /api/reports/:reportId/review` — dismiss or action   |
-| Block User              | ✅      | ✅       | `POST /api/block/:userId` — prevents all interaction      |
-| Unblock User            | ✅      | ✅       | `POST /api/unblock/:userId`                               |
-| Get Blocked Users       | ✅      | ✅       | `GET /api/block/blocked`                                  |
-| Check Blocked Status    | ✅      | ✅       | `GET /api/block/check/:userId`                            |
-| Mute User               | ✅      | ✅       | `POST /api/mute/:userId` — hides content without blocking |
-| Unmute User             | ✅      | ✅       | `POST /api/unmute/:userId`                                |
-| ReportButton Component  | —       | ✅       | Report button on post cards with reason selection         |
-| Report Reason Selection | —       | ✅       | Multiple reasons: spam, harassment, hate speech, etc.     |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| VAPID Key | ✅ | ✅ | `GET /api/push/vapid-key` |
+| Device Subscription | ✅ | ✅ | Subscribe/unsubscribe per device |
+| Service Worker | ✅ | ✅ | PWA push handling + notification click routing |
+| Permission Flow | ✅ | ✅ | Requested on relevant actions |
+| Push for All Major Events | ✅ | ✅ | Messages, likes, comments, follows, mentions, reposts, glance replies |
+| Notification Text | ✅ | ✅ | "replied to your glance", "reacted to your message", etc. |
 
 ---
 
-## 15. Admin Dashboard
+## 13. Close Friends
 
-| Feature                 | Backend | Frontend | Details                                                         |
-| ----------------------- | ------- | -------- | --------------------------------------------------------------- |
-| Create Feature Flag     | ✅      | ✅       | `POST /api/admin/flags` — name, description, rollout %, enabled |
-| Get Feature Flags       | ✅      | ✅       | `GET /api/admin/flags`                                          |
-| Update Feature Flag     | ✅      | ✅       | `PUT /api/admin/flags/:flagId`                                  |
-| Get User Flags          | ✅      | ✅       | `GET /api/admin/user-flags` — check user feature flag overrides |
-| Toggle User Mute/Unmute | ✅      | —        | Moderation action                                               |
-| Toggle User Ban         | ✅      | —        | Moderation action                                               |
-| Admin Panel UI          | —       | ✅       | Three tabs: Reports, Users, Feature Flags                       |
-| Feature Flag Hooks      | —       | ✅       | `useFeatureFlag` hook for A/B testing                           |
-| Admin Nav Button        | —       | ✅       | Shield icon in LeftSidebar                                      |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Add / Remove | ✅ | ✅ | Settings → Close Friends tab (only place) |
+| List Close Friends | ✅ | ✅ | Manageable list |
+| Close-Friends-Only Posts | ✅ | ✅ | Green indication; visible to CF + author only |
+| Close-Friends-Only Glances | ✅ | ✅ | Green outline + lock; hard-hidden from others |
+| Status Checks | ✅ | ✅ | `GET /api/close-friends/check/:userId` |
 
 ---
 
-## 16. Translation & Link Previews
+## 14. Settings
 
-| Feature              | Backend | Frontend | Details                                                         |
-| -------------------- | ------- | -------- | --------------------------------------------------------------- |
-| Translate Text       | ✅      | ✅       | `POST /api/translate` — translate post/comment content          |
-| Detect Language      | ✅      | ✅       | `POST /api/translate/detect`                                    |
-| Get Link Preview     | ✅      | ✅       | `GET /api/link-preview?url=` — OG metadata (title, desc, image) |
-| Link Preview Display | —       | ✅       | Rich link card in posts                                         |
-
----
-
-## 17. Push Notifications
-
-| Feature                            | Backend | Frontend | Details                                                   |
-| ---------------------------------- | ------- | -------- | --------------------------------------------------------- |
-| Get VAPID Key                      | ✅      | ✅       | `GET /api/push/vapid-key`                                 |
-| Subscribe                          | ✅      | ✅       | `POST /api/push/subscribe` — register device subscription |
-| Unsubscribe                        | ✅      | ✅       | `POST /api/push/unsubscribe`                              |
-| Push Notification Permissions Flow | —       | ✅       | Request permission on relevant actions                    |
-| Service Worker                     | —       | ✅       | `sw.js` for push event handling                           |
+| Feature | Details |
+| --- | --- |
+| Profile (edit) | ✅ Bio field "ABOUT" style inputs; uploads crop-centered |
+| Password | ✅ Change password with OTP |
+| Account | ✅ Username, email, delete account (no animated icon) |
+| Notifications | ✅ Per-category toggles |
+| Privacy | ✅ Private account, close friends |
+| Invites | ✅ InvitesTab — generate, copy, share, stats |
+| Blocked Users | ✅ View + manage (unblock) from settings |
+| Responsive Options | ✅ Desktop sidebar; mobile icon-only expand-on-tap (no scroll, no cut text) |
+| Dark-Only Theme | ✅ No light theme; theme-switching code removed |
 
 ---
 
-## 18. Invite System
+## 15. Moderation & Blocking
 
-| Feature              | Backend | Frontend | Details                                                    |
-| -------------------- | ------- | -------- | ---------------------------------------------------------- |
-| Generate Invite Code | ✅      | ✅       | `POST /api/invite/generate` — create shareable code        |
-| Get My Invites       | ✅      | ✅       | `GET /api/invite/my-invites` — list codes + usage stats    |
-| Redeem Invite Code   | ✅      | ✅       | `POST /api/invite/redeem` — join via code                  |
-| Get Invite Stats     | ✅      | ✅       | `GET /api/invite/stats` — total invites, accepted, rewards |
-| InvitesTab Component | —       | ✅       | Settings tab showing invite codes with copy/share          |
-
----
-
-## 19. Close Friends
-
-| Feature                   | Backend | Frontend | Details                                  |
-| ------------------------- | ------- | -------- | ---------------------------------------- |
-| Add Close Friend          | ✅      | ✅       | `POST /api/close-friends/add/:userId`    |
-| Remove Close Friend       | ✅      | ✅       | `POST /api/close-friends/remove/:userId` |
-| Get Close Friends         | ✅      | ✅       | `GET /api/close-friends`                 |
-| Check Close Friend Status | ✅      | ✅       | `GET /api/close-friends/check/:userId`   |
-| Close Friends Badge       | —       | ✅       | Visual indicator in profile              |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Block User | ✅ | ✅ | Settings + user chat three-dot menu only (removed from profile) |
+| Mutual Block Enforcement | ✅ | ✅ | Either direction = both sides blocked everywhere |
+| Blocked Feed Filtering | ✅ | ✅ | Posts/comments/glances hidden from feed, trending, search |
+| Blocked Chat Enforcement | ✅ | ✅ | No messages, no calls, no presence |
+| Blocked Notification Filtering | ✅ | ✅ | No notifications from blocked users |
+| Unblock Management | ✅ | ✅ | Settings → Blocked Users |
+| Mute User | ✅ | ✅ | Hide content without blocking |
+| Report Content | ✅ | ✅ | Posts/comments/users with reason categories |
+| Moderation Queue | ✅ | ✅ | Admin review; auto-hide at 3 flags |
 
 ---
 
-## 20. Post Scheduling & Drafts
+## 16. Admin Dashboard
 
-| Feature         | Backend | Frontend | Details                                               |
-| --------------- | ------- | -------- | ----------------------------------------------------- |
-| Draft Status    | ✅      | ✅       | Posts saved as `draft` — not visible in feed          |
-| Scheduled Posts | ✅      | ✅       | Posts with `scheduledAt` date — auto-publish via cron |
-| Publish Draft   | ✅      | ✅       | `POST /api/posts/:postId/publish`                     |
-| Drafts Manager  | —       | ✅       | View/edit scheduled/draft posts                       |
-
----
-
-## 21. Polls & Collaboration
-
-See [Polls](#polls) and [Collaboration](#collaboration) under Posts.
+| Feature | Details |
+| --- | --- |
+| Reports Queue | ✅ Review/dismiss/action |
+| User Moderation | ✅ Mute / ban / flag |
+| Feature Flags | ✅ Create, update, rollout %, A/B hooks |
+| System Stats | ✅ Overview metrics |
+| Nav Entry | ✅ Shield icon in sidebar |
 
 ---
 
-## 22. Analytics & Reach Stats
+## 17. Gamification
 
-| Feature                            | Backend | Frontend | Details                                  |
-| ---------------------------------- | ------- | -------- | ---------------------------------------- |
-| View Count per Post                | ✅      | ✅       | 3-second visibility threshold tracking   |
-| Like Count                         | ✅      | ✅       | Real-time count updates                  |
-| Share Count                        | ✅      | ✅       | Tracked on each share action             |
-| Repost Count                       | ✅      | ✅       | Tracked on each repost/quote             |
-| Comment Count                      | ✅      | ✅       | Updated on add/delete                    |
-| Save Count                         | ✅      | ✅       | Tracked on save toggle                   |
-| Post Reach Stats View              | —       | ✅       | Aggregated stats card on posts           |
-| Profile View Count                 | ✅      | ✅       | Tracks profile visits                    |
-| Interaction Logging (Feed Ranking) | ✅      | —        | Logs all user interactions for algorithm |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| XP System | ✅ | ✅ | Earn on posts/likes/comments; level + progress |
+| Streaks | ✅ | ✅ | Calendar, daily rewards, partner streaks |
+| Daily Missions | ✅ | ✅ | Panel with progress; auto-progress on actions |
+| Leaderboard | ✅ | ✅ | Top users by XP/engagement |
+| Reputation Display | ✅ | ✅ | Badge component |
 
 ---
 
-## 23. Anonymous Browsing
+## 18. Translation & Link Previews
 
-| Feature               | Backend | Frontend | Details                         |
-| --------------------- | ------- | -------- | ------------------------------- |
-| Toggle Anonymous Mode | ✅      | ✅       | `POST /api/anonymous/toggle`    |
-| Get Anonymous Status  | ✅      | ✅       | `GET /api/anonymous/status`     |
-| Anonymous Browsing UI | —       | ✅       | Visual indicator when anonymous |
-
----
-
-## 24. Real-time Features (Socket Events)
-
-### Connection Lifecycle
-
-| Event                | Direction       | Details                 |
-| -------------------- | --------------- | ----------------------- |
-| `connect`            | Server → Client | Socket connected        |
-| `disconnect`         | Server → Client | Socket disconnected     |
-| `reconnect_attempt`  | Client → Server | Attempting reconnection |
-| `connect_error`      | Server → Client | Connection failed       |
-| `presence:heartbeat` | Client → Server | 25s keepalive           |
-
-### Chat Events
-
-| Event              | Direction       | Details                 |
-| ------------------ | --------------- | ----------------------- |
-| `chat:join`        | Client → Server | Join conversation room  |
-| `chat:leave`       | Client → Server | Leave conversation room |
-| `chat:typing`      | Bidirectional   | Typing indicator        |
-| `message:new`      | Server → Client | New message delivered   |
-| `message:delete`   | Server → Client | Message deleted sync    |
-| `presence:online`  | Server → Client | User came online        |
-| `presence:offline` | Server → Client | User went offline       |
-
-### Community Events
-
-| Event                        | Direction       | Details                  |
-| ---------------------------- | --------------- | ------------------------ |
-| `community:join`             | Client → Server | Join community room      |
-| `community:leave`            | Client → Server | Leave community room     |
-| `community:typing`           | Bidirectional   | Typing in community      |
-| `community:message:new`      | Server → Client | New community message    |
-| `community:message:edit`     | Server → Client | Message edited           |
-| `community:message:delete`   | Server → Client | Message deleted          |
-| `community:message:reaction` | Server → Client | Emoji reaction added     |
-| `community:message:pinned`   | Server → Client | Message pinned           |
-| `community:message:unpinned` | Server → Client | Message unpinned         |
-| `community:member-joined`    | Server → Client | Member count update      |
-| `community:member-left`      | Server → Client | Member count update      |
-| `community:updated`          | Server → Client | Community detail updated |
-| `community:deleted`          | Server → Client | Community deleted        |
-
-### Post Events
-
-| Event                | Direction       | Details                |
-| -------------------- | --------------- | ---------------------- |
-| `post:created`       | Server → Client | New post in feed       |
-| `post:deleted`       | Server → Client | Post removed           |
-| `post:updated`       | Server → Client | Post edited            |
-| `postCommentAdded`   | Server → Client | New comment on post    |
-| `postCommentDeleted` | Server → Client | Comment removed        |
-| `post:pinned`        | Server → Client | Post pinned to profile |
-| `post:unpinned`      | Server → Client | Post unpinned          |
-| `post:view`          | Server → Client | View count updated     |
-
-### Glimpse Events
-
-| Event             | Direction       | Details              |
-| ----------------- | --------------- | -------------------- |
-| `glimpse:reacted` | Server → Client | Reaction on glimpse  |
-| `glimpse:expired` | Server → Client | Glimpse auto-expired |
-
-### Call Events (Voice/Video)
-
-| Event                | Direction       | Details               |
-| -------------------- | --------------- | --------------------- |
-| `call:offer`         | Server → Client | Incoming call         |
-| `call:answer`        | Server → Client | Call accepted         |
-| `call:ice-candidate` | Bidirectional   | WebRTC ICE candidates |
-| `call:end`           | Server → Client | Call ended            |
-| `call:missed`        | Server → Client | Call not answered     |
-
-### Notification Events
-
-| Event          | Direction       | Details                |
-| -------------- | --------------- | ---------------------- |
-| `notification` | Server → Client | New notification toast |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Translate Text | ✅ | ✅ | Post/comment translation |
+| Detect Language | ✅ | ✅ | |
+| Link Previews | ✅ | ✅ | OG metadata → rich link card |
 
 ---
 
-## 25. Data Models
+## 19. Invite System
 
-| Model                  | Purpose                                                                                 |
-| ---------------------- | --------------------------------------------------------------------------------------- |
-| **User**               | Core user data, profile, privacy settings, following, followers, blocked/muted lists    |
-| **Post**               | Posts with text, images, video, polls, collab, quote repost, scheduling, edit history   |
-| **Comment**            | Nested comments with parent support, reactions, edit tracking                           |
-| **Like**               | Polymorphic likes (posts + comments)                                                    |
-| **Repost**             | User+post repost tracking (unique index)                                                |
-| **Save**               | Post saving with folder support                                                         |
-| **Conversation**       | DM thread between 2 users with unread counts                                            |
-| **Message**            | Chat messages with text, attachments, edit/delete tracking, forward metadata            |
-| **Community**          | Group chat with name, description, image, creator, member count                         |
-| **CommunityMessage**   | Community messages with reactions, pins, reply tracking                                 |
-| **Notification**       | All notification types with sender, recipient, post/comment refs                        |
-| **Glimpse**            | Ephemeral stories with 24hr TTL, viewer tracking                                        |
-| **Follow**             | Follow relationships with follow request support                                        |
-| **Block**              | Blocked user pairs                                                                      |
-| **Interaction**        | Feed ranking interaction logs (like, comment, save, share, dm, profileVisit, storyView) |
-| **Report**             | Content reports with reason and review status                                           |
-| **Collection**         | User-created post collections                                                           |
-| **FeatureFlag**        | A/B testing feature flag configuration                                                  |
-| **DeviceSubscription** | Push notification device subscriptions                                                  |
-| **DailyReward**        | Daily reward claims tracking                                                            |
-| **DailyMission**       | User daily missions with progress                                                       |
-| **UserStreak**         | Streak tracking with partner support                                                    |
-| **XP**                 | Experience points and level tracking                                                    |
-| **UserInvite**         | Invite code generation and redemption                                                   |
-| **UserEvent**          | User activity event log                                                                 |
+| Feature | Details |
+| --- | --- |
+| Generate Invite Code | ✅ |
+| My Invites + Stats | ✅ |
+| Redeem Code | ✅ |
+| Copy / Share Codes | ✅ Toast on copy |
 
 ---
 
-## 26. Security Features
+## 20. Offline & Performance
 
-| Feature                      | Status | Details                                                                   |
-| ---------------------------- | ------ | ------------------------------------------------------------------------- |
-| JWT Authentication           | ✅     | HttpOnly cookie-based auth tokens                                         |
-| Password Hashing             | ✅     | bcrypt with salt rounds                                                   |
-| Input Validation (Zod)       | ✅     | Schema validation on all input endpoints                                  |
-| Input Sanitization           | ✅     | `sanitize-html` for HTML/text content                                     |
-| Rate Limiting                | ✅     | Upstash sliding window — auth, OTP, comments, interactions, notifications |
-| CSRF Protection              | ✅     | Double-submit cookie pattern                                              |
-| CORS                         | ✅     | Configured allowlist                                                      |
-| Helmet Security Headers      | ✅     | HTTP security headers                                                     |
-| Auth Middleware              | ✅     | `protect` middleware on all protected routes                              |
-| Ownership Checks             | ✅     | Forbidden access on unauthorized resource mutations                       |
-| Media Cleanup on Delete      | ✅     | Cloudinary cleanup for deleted posts                                      |
-| Environment Variables        | ✅     | All secrets via `process.env`                                             |
-| No `eval()` Usage            | ✅     | Zero occurrences                                                          |
-| No `dangerouslySetInnerHTML` | ✅     | Zero occurrences in production code                                       |
-
----
-
-## 27. UX Polish
-
-| Feature                    | Status | Details                                                          |
-| -------------------------- | ------ | ---------------------------------------------------------------- |
-| Optimistic UI Updates      | ✅     | Likes, saves, reposts update instantly before API response       |
-| Rollback on Error          | ✅     | State reverts if API call fails                                  |
-| Skeleton Loading States    | ✅     | Feed, Chat, Communities, Collections, Streaks, Profile, Settings |
-| Shimmer Animation          | ✅     | Animated gradient shimmer for all skeletons                      |
-| Pull-to-Refresh            | ✅     | Touch gesture reload on feed                                     |
-| Infinite Scroll            | ✅     | IntersectionObserver-based pagination on feed, comments, chat    |
-| Animated Tab Transitions   | ✅     | Motion/AnimatePresence for tab changes                           |
-| Micro-interactions         | ✅     | Hover/tap animations on buttons, icons                           |
-| Swipe Gestures             | ✅     | Swipe to like/repost on post cards                               |
-| Toast Notifications        | ✅     | In-app toast for success/error messages                          |
-| Dynamic Page Title         | ✅     | Tab title updates based on current view                          |
-| Responsive Design          | ✅     | Mobile-first, adapts to tablet/desktop                           |
-| Bottom Dock (Mobile)       | ✅     | Mobile navigation bar                                            |
-| Left Sidebar (Desktop)     | ✅     | Desktop navigation sidebar                                       |
-| Right Sidebar (Desktop)    | ✅     | Suggestions + Trending panels                                    |
-| Empty States               | ✅     | Custom empty state illustrations for no posts, no results, etc.  |
-| Error Boundaries           | ✅     | React error boundary wrapping entire app                         |
-| Composer with Image/Video  | ✅     | Post composer with image crop modal                              |
-| Image Cropping             | ✅     | Sequential multi-image cropping before upload                    |
-| Image Carousel             | ✅     | Multi-image post navigation                                      |
-| Pinch-to-Zoom              | ✅     | PinchZoom component for images                                   |
-| Fullscreen Image Viewer    | ✅     | Tap image to view fullscreen                                     |
-| Keyboard Awareness         | ✅     | `useKeyboardOpen` hook for mobile                                |
-| Large Screen Optimizations | ✅     | Background gradients/globals hidden on mobile for performance    |
-| Code Splitting             | ✅     | React.lazy on heavy components                                   |
-| Preloading on Idle         | ✅     | Browser idle callback for component preloading                   |
-| Blob URL Cleanup           | ✅     | Revokes object URLs on unmount to prevent memory leaks           |
-| Undo Send Timeout Cleanup  | ✅     | Clears undo timer on component unmount                           |
-| Typing Indicators          | ✅     | Animated dots for typing status                                  |
+| Feature | Backend | Frontend | Details |
+| --- | --- | --- | --- |
+| Offline Viewing | ✅ | ✅ | Dexie (IndexedDB) offline store — everything readable offline |
+| Offline Sync Queue | ✅ | ✅ | Actions queued, flushed when online |
+| Cache-First API Layer | ✅ | ✅ | CacheStorage + TTL + eviction + warm-up |
+| Cache Warming | ✅ | ✅ | Idle-time preload of all tab endpoints |
+| Cache Refresh Timer | ✅ | ✅ | Background refresh of active-tab data |
+| Cache Eviction on Mutation | ✅ | ✅ | Join/leave/like/publish evict affected keys |
+| Instant Feed Publish | ✅ | ✅ | Optimistic prepend to cached feeds |
+| Image Optimization | ✅ | ✅ | Cloudinary `w_<w>,q_auto,f_auto` thumbnails — avatars (96px), banners, carousels, chats; GIF-safe |
+| Downscale Before Upload | ✅ | ✅ | Images compressed client-side for posts, glances, chats, avatars → fast uploads |
+| Debounced Search | ✅ | ✅ | User/message search — 1 request per pause |
+| Preconnect CDN | ✅ | ✅ | Cloudinary + fonts |
+| Code Splitting | ✅ | ✅ | Lazy-loaded heavy components |
+| Request Dedup (Views) | ✅ | ✅ | One view count per post per session |
+| Toast Speed | ✅ | ✅ | Instant on action, auto-dismiss quickly |
 
 ---
 
-## Quick Stats
+## 21. UI / UX Polish
 
-| Metric                | Count   |
-| --------------------- | ------- |
-| Backend Controllers   | **34**  |
-| Backend Routes        | **31**  |
-| Backend Models        | **26**  |
-| Frontend Components   | **52**  |
-| Socket Events         | **40+** |
-| TypeScript Errors     | **0**   |
-| @ts-ignore Directives | **0**   |
+| Feature | Details |
+| --- | --- |
+| Black & White Glass Theme | ✅ Liquid-glass, dark-only, gold accents on selections |
+| Premium Font Pairing | ✅ Cursive display font for headings + refined body font |
+| Sonner Toasts | ✅ Sleek, slim, no left color bar, theme-matched |
+| Three-Dot Menus | ✅ Replace raw dustbin icons app-wide (comments, chats, communities) |
+| Emoji-Free UI | ✅ No emojis in app chrome |
+| WhatsApp-Style Inputs | ✅ Every large-text input auto-grows, wraps, no scrollbar |
+| Keyboard Shortcuts | ✅ `g` + `h/e/n/c/m/p/s`, `?` help |
+| Long-Press Menus | ✅ Chats, community list (mute/leave), messages |
+| Skeleton Shimmers | ✅ Everywhere |
+| Empty States | ✅ Custom |
+| Avatar/Banner Cropping | ✅ Posts, avatars, banners — centered modals (posts keep natural aspect, no crop box) |
+| Pinch Zoom | ✅ Fullscreen viewer |
+| Responsive Settings | ✅ Sidebar on desktop; icon-expand on mobile/tablet |
+| Swipe-Back Gesture | ✅ Mobile navigation history |
+| Dynamic Page Titles | ✅ |
+| Error Boundary | ✅ |
 
 ---
 
-_Last updated: July 20, 2026_
+## 22. Realtime (Socket Events)
+
+| Area | Events |
+| --- | --- |
+| Connection | `connect`, `disconnect`, `reconnect_attempt`, `presence:heartbeat` |
+| Chat | `chat:join`, `chat:leave`, `chat:typing`, `message:new`, `message:edit`, `message:delete`, `message:reaction`, `message:seen` |
+| Presence | `presence:online`, `presence:offline` |
+| Community | `community:join/leave/typing`, `community:message:new/edit/delete/reaction/pinned/unpinned`, `community:member-joined/left`, `community:updated`, `community:deleted` |
+| Posts | `post:created`, `post:deleted`, `post:updated`, `postCommentAdded`, `postCommentDeleted`, `post:pinned`, `post:unpinned`, `post:view` |
+| Glances | `glimpse:reacted`, `glimpse:expired`, `glimpse:viewed` |
+| Calls | `call:offer`, `call:answer`, `call:ice-candidate`, `call:end`, `call:missed` |
+| Notifications | `notification` |
+
+---
+
+## 23. Security
+
+| Feature | Details |
+| --- | --- |
+| JWT httpOnly Cookie | ✅ |
+| bcrypt Password Hashing | ✅ |
+| Zod Validation | ✅ All input endpoints |
+| Rate Limiting | ✅ Auth, OTP, comments, interactions, search |
+| CSRF Protection | ✅ Double-submit cookie |
+| Helmet Headers | ✅ |
+| CORS Allowlist | ✅ |
+| Ownership Checks | ✅ |
+| Input Sanitization | ✅ |
+| Media Cleanup | ✅ Cloudinary deletion on cascade |
+| Blocked-User Hard Filters | ✅ Server-side on feeds, chats, search, notifications |
+
+---
+
+## 24. Data Models
+
+| Model | Purpose |
+| --- | --- |
+| User | Profile, privacy, follow/block/mute lists, close friends |
+| Post | Content, images/video, poll, collab, quote, scheduling, edit history |
+| Comment | Nested, reactions, edit tracking |
+| Like / Repost / Save | Polymorphic interactions |
+| Conversation / Message | DMs, attachments, forwards, pins, reactions |
+| Community / CommunityMessage | Groups, pins, reactions, last-action preview |
+| Glimpse | 24h stories, viewers, replies |
+| Notification | All types with deep-link refs |
+| Follow / Block | Relationships + requests |
+| Interaction | Feed-ranking signals |
+| Report / ModerationItem | Reports + queue |
+| Collection | Saved-post folders |
+| FeatureFlag | A/B config |
+| DeviceSubscription | Push subscriptions |
+| DailyReward / DailyMission / UserStreak / XP | Gamification |
+| UserInvite | Invite codes |
+| UserEvent | Activity log |
+| AudioRoom | Live audio rooms |
+| Group / GroupMessage | Group chats |
+
+---
+
+## Quick Stats (August 2026)
+
+| Metric | Count |
+| --- | --- |
+| Backend Routes | 43 |
+| Backend Models | 30+ |
+| Frontend Components | 80+ |
+| Socket Events | 45+ |
+| Client Tests | 37 passing |
+| TypeScript Errors | 0 |
+
+_Last updated: August 6, 2026_

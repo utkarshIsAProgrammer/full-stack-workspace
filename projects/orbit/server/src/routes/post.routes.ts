@@ -6,6 +6,7 @@ import {
   updatePost,
   deletePost,
   sharePost,
+  forwardPost,
   viewsCount,
   getPostBySlug,
   getPostsByHashtag,
@@ -134,6 +135,7 @@ router.delete("/:postId", protect, deletePost);
 
 router.post("/:postId/view", protectViews, interactionLimiter, viewsCount);
 router.post("/:postId/share", protect, interactionLimiter, sharePost);
+router.post("/:postId/forward", protect, interactionLimiter, forwardPost);
 router.post("/:postId/pin", protect, pinPost);
 router.post("/:postId/unpin", protect, unpinPost);
 router.post("/:postId/archive", protect, interactionLimiter, archivePost);

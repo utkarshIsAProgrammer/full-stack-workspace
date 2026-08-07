@@ -1,65 +1,59 @@
-import UserAvatar from "./UserAvatar";
-import ImageCropModal from "./ImageCropModal";
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { useKeyboardOpen } from "../hooks/useKeyboardOpen";
 import {
-	Trash2,
 	LogOut,
-	Camera,
 	CheckCircle,
 	AlertCircle,
 	Eye,
 	EyeOff,
-	X,
-	User,
 	UserCog,
 	Lock,
 	Users,
 	Mail,
 	Ban,
+	Shield,
+	Bell,
 } from "lucide-react";
 import { User as UserType } from "../types";
 import GlassCard from "./GlassCard";
 import ValidationMessage from "./ValidationMessage";
-import CharCounter from "./CharCounter";
 import BlockedUsersList from "./BlockedUsersList";
 import CloseFriendsTab from "./CloseFriendsTab";
 import InvitesTab from "./InvitesTab";
+import NotificationSettings from "./NotificationSettings";
+import PrivacySettings from "./PrivacySettings";
 import { apiFetch } from "../utils/api";
 import {
-	validateProfile,
 	validatePasswordChange,
 	validateDeleteAccount,
 } from "../utils/validation";
-import { downscaleImageFile } from "../utils/imageCompression";
 
 interface SettingsProps {
 	user: UserType;
-	onUserUpdate: (newUser: UserType) => void;
 	onLogout: () => void;
-	onEditProfileOpenChange?: (open: boolean) => void;
-}	export default function Settings({
+}
+export default function Settings({
 	user,
-	onUserUpdate,
 	onLogout,
-	onEditProfileOpenChange,
 }: SettingsProps) {
 	// Navigation Tabs for settings sections
 	const [activeSubTab, setActiveSubTab] = useState<
-		| "profile"
 		| "password"
 		| "account"
+		| "privacy"
+		| "notifications"
 		| "blocked"
 		| "close-friends"
 		| "invites"
 		| "logout"
-	>("profile");
+	>("password");
 
 	const switchSubTab = (
 		tab:
-			| "profile"
 			| "password"
 			| "account"
+			| "privacy"
+			| "notifications"
 			| "blocked"
 			| "close-friends"
 			| "invites"
@@ -75,9 +69,10 @@ interface SettingsProps {
 	// label so it's always obvious what's selected).
 	const settingsNav: {
 		id:
-			| "profile"
 			| "password"
 			| "account"
+			| "privacy"
+			| "notifications"
 			| "blocked"
 			| "close-friends"
 			| "invites"
@@ -85,44 +80,15 @@ interface SettingsProps {
 		label: string;
 		icon: React.ComponentType<{ className?: string }>;
 	}[] = [
-		{ id: "profile", label: "Profile", icon: User },
 		{ id: "password", label: "Password", icon: Lock },
 		{ id: "account", label: "Account", icon: UserCog },
+		{ id: "privacy", label: "Privacy", icon: Shield },
+		{ id: "notifications", label: "Notifications", icon: Bell },
 		{ id: "close-friends", label: "Close Friends", icon: Users },
 		{ id: "invites", label: "Invites", icon: Mail },
 		{ id: "blocked", label: "Blocked", icon: Ban },
 		{ id: "logout", label: "Log Out", icon: LogOut },
 	];
-
-	// Notify parent when edit profile tab opens/closes (for dock hiding)
-	useEffect(() => {
-		onEditProfileOpenChange?.(activeSubTab === "profile");
-	}, [activeSubTab, onEditProfileOpenChange]);
-
-	// Also notify on mount/unmount
-	useEffect(() => {
-		return () => onEditProfileOpenChange?.(false);
-	}, [onEditProfileOpenChange]);
-
-	// Profile Edit fields
-	const [fullName, setFullName] = useState(user.fullName || "");
-	const [bio, setBio] = useState(user.bio || "");
-	const [profilePicFile, setProfilePicFile] = useState<File | null>(null);
-	const [bannerPicFile, setBannerPicFile] = useState<File | null>(null);
-	const [profilePicPreview, setProfilePicPreview] = useState(
-		user.profilePic?.url || "",
-	);
-	const [bannerPicPreview, setBannerPicPreview] = useState(
-		user.bannerImage?.url || "",
-	);
-	// Crop modal state
-	const [cropModalOpen, setCropModalOpen] = useState(false);
-	const [cropSrc, setCropSrc] = useState("");
-	const [cropType, setCropType] = useState<"profile" | "banner">("profile");
-	const [cropFileName, setCropFileName] = useState("");
-	const [savingProfile, setSavingProfile] = useState(false);
-	const [profileError, setProfileError] = useState<string | null>(null);
-	const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
 
 	// Field-level validation errors
 	const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -155,82 +121,23 @@ interface SettingsProps {
 
 	// Auto-clear error messages after 6 seconds
 	useEffect(() => {
-		if (!profileError) return;
-		const timer = setTimeout(() => setProfileError(null), 6000);
-		return () => clearTimeout(timer);
-	}, [profileError]);
-
-	useEffect(() => {
 		if (!passwordError) return;
 		const timer = setTimeout(() => setPasswordError(null), 6000);
 		return () => clearTimeout(timer);
 	}, [passwordError]);
 
-	// Crop complete handler
-	const handleCropComplete = useCallback((croppedBlob: Blob) => {
-		const originalName = cropFileName || `${cropType}_cropped.jpg`;
-		const croppedFile = new File([croppedBlob], originalName, { type: "image/jpeg" });
-		const previewUrl = URL.createObjectURL(croppedBlob);
-
-		if (cropType === "profile") {
-			setProfilePicFile(croppedFile);
-			setProfilePicPreview(previewUrl);
-		} else {
-			setBannerPicFile(croppedFile);
-			setBannerPicPreview(previewUrl);
-		}
-}, [cropType, cropFileName]);
-
-	const handleProfileSubmit = async (e: React.FormEvent) => {
-		e.preventDefault();
-		setProfileError(null);
-		setProfileSuccess(null);
-
-		const errs = validateProfile({ fullName, bio });
-		if (Object.keys(errs).length > 0) {
-			setFieldErrors(errs);
-			return;
-		}
-		setFieldErrors({});
-
-		setSavingProfile(true);
-
+	// A shared /invite/<code> deep link lands here — jump to the Invites tab.
+	// Handles both the already-mounted event and a cold load via sessionStorage.
+	useEffect(() => {
+		const onInviteDeepLink = () => setActiveSubTab("invites");
+		window.addEventListener("orbit:redeem-invite", onInviteDeepLink);
 		try {
-			const formData = new FormData();
-			formData.append("fullName", fullName.trim());
-			formData.append("bio", bio.trim());
-
-			if (profilePicFile) {
-				formData.append("profilePic", await downscaleImageFile(profilePicFile));
-			} else if (!profilePicPreview && user.profilePic?.url) {
-				formData.append("removeProfilePic", "true");
+			if (sessionStorage.getItem("orbit_pending_invite")) {
+				setActiveSubTab("invites");
 			}
-			if (bannerPicFile) {
-				formData.append("bannerImage", await downscaleImageFile(bannerPicFile));
-			} else if (!bannerPicPreview && user.bannerImage?.url) {
-				formData.append("removeBannerImage", "true");
-			}
-
-			const res = await apiFetch("/api/users/update-profile", {
-				method: "PUT",
-				body: formData,
-			});
-
-			const data = await res.json();
-			if (!res.ok || !data.success) {
-				throw new Error(data.message || "Failed to update profile.");
-			}
-
-			onUserUpdate(data.user);
-			setProfileSuccess(
-				"Your profile details have been saved successfully.",
-			);
-		} catch (err: any) {
-			setProfileError(err.message || "An unexpected error occurred.");
-		} finally {
-			setSavingProfile(false);
-		}
-	};
+		} catch { /* private mode */ }
+		return () => window.removeEventListener("orbit:redeem-invite", onInviteDeepLink);
+	}, []);
 
 	// Password Submit handler
 	const handlePasswordSubmit = async (e: React.FormEvent) => {
@@ -334,7 +241,7 @@ interface SettingsProps {
 							Account Settings
 						</h2>
 						<p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-							Manage your profile, password, and account
+							Manage your password, account, and app
 							preferences.
 						</p>
 					</div>
@@ -413,222 +320,6 @@ interface SettingsProps {
 
 					{/* Main interactive cards area */}
 					<div className="w-full min-h-75">
-					{activeSubTab === "profile" && (
-						<GlassCard
-							animate={true}
-							className={`transition-all duration-200 ${
-								isKeyboardOpen ? "!p-4" : "!p-6"
-							}`}>
-							<h3
-							className={`font-bold text-white uppercase tracking-wider mb-4 border-b border-zinc-900 pb-2 transition-all duration-200 ${
-								isKeyboardOpen ? "text-[11px]" : "text-sm"
-							}`}>
-								Edit Profile
-							</h3>
-
-							{profileSuccess && (
-								<div className="mb-4 flex items-start gap-2.5 rounded-3xl border border-white/20 bg-white/5 p-4 text-xs text-zinc-300">
-									<CheckCircle className="h-4 w-4 shrink-0 text-white" />
-									<span>{profileSuccess}</span>
-								</div>
-							)}
-
-							{profileError && (
-								<div className="mb-4 flex items-start gap-2.5 rounded-3xl border border-rose-500/20 bg-rose-500/5 p-4 text-xs text-rose-500">
-									<AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
-									<span>{profileError}</span>
-								</div>
-							)}
-
-							<form
-								onSubmit={handleProfileSubmit}
-								noValidate
-								className={`transition-all duration-200 ${
-									isKeyboardOpen ? "space-y-3" : "space-y-4"
-								}`}>
-								{/* Images Upload */}
-								<div className="grid grid-cols-2 gap-4">
-									<div className="space-y-1 col-span-1 text-center">
-										<span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-											Profile Pic
-										</span>
-										<div className="relative flex h-16 w-16 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
-											<input
-												type="file"
-												accept="image/*"
-												onChange={(e) => {
-													const file =
-														e.target.files?.[0];
-													if (file) {
-														setCropType("profile");
-														setCropFileName(file.name);
-														setCropSrc(URL.createObjectURL(file));
-														setCropModalOpen(true);
-													}
-												}}
-												className="absolute inset-0 opacity-0 cursor-pointer rounded-full animate-none"
-											/>
-											{profilePicPreview ? (
-												<>
-													<UserAvatar
-														key={profilePicPreview}
-														src={profilePicPreview}
-														alt="Profile preview"
-														className="absolute inset-0 h-full w-full rounded-full object-cover pointer-events-none"
-													/>
-													<button
-														type="button"
-														onClick={(e) => {
-															e.stopPropagation();
-															setProfilePicFile(
-																null,
-															);
-															setProfilePicPreview(
-																"",
-															);
-														}}
-														className="absolute top-3 right-3 h-4 w-4 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-md cursor-pointer transition-colors z-20"
-														title="Remove avatar">
-														<X className="h-2.5 w-2.5 text-white" />
-													</button>
-													<span className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[9px] text-zinc-500 dark:text-zinc-400 z-10 whitespace-nowrap pointer-events-none">
-														Tap to change
-													</span>
-												</>
-											) : (
-												<div className="text-center space-y-1">
-													<Camera className="mx-auto h-5 w-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-300 transition-colors" />
-													<span className="block text-[8px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-														Upload avatar
-													</span>
-												</div>
-											)}
-										</div>
-									</div>
-
-									<div className="space-y-1 col-span-1 text-center">
-										<span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-											Banner Image
-										</span>
-										<div className="relative flex h-16 w-full items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 transition-colors group mx-auto overflow-hidden">
-											<input
-												type="file"
-												accept="image/*"
-										onChange={(e) => {
-											const file =
-												e.target.files?.[0];
-											if (file) {
-												setCropType("banner");
-												setCropFileName(file.name);
-												setCropSrc(URL.createObjectURL(file));
-												setCropModalOpen(true);
-											}
-										}}
-										className="absolute inset-0 opacity-0 cursor-pointer rounded-full animate-none"
-											/>
-											{bannerPicPreview ? (
-												<>
-													<UserAvatar
-														key={bannerPicPreview}
-														src={bannerPicPreview}
-														alt="Banner preview"
-														className="absolute inset-0 h-full w-full rounded-full object-cover pointer-events-none"
-													/>
-													<button
-														type="button"
-														onClick={(e) => {
-															e.stopPropagation();
-															setBannerPicFile(
-																null,
-															);
-															setBannerPicPreview(
-																"",
-															);
-														}}
-														className="absolute top-3 right-3 h-4 w-4 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-md cursor-pointer transition-colors z-20"
-														title="Remove banner">
-														<X className="h-2.5 w-2.5 text-white" />
-													</button>
-													<span className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[9px] text-zinc-500 dark:text-zinc-400 z-10 whitespace-nowrap pointer-events-none">
-														Tap to change
-													</span>
-												</>
-											) : (
-												<div className="text-center space-y-1">
-													<Camera className="mx-auto h-5 w-5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-300 transition-colors" />
-													<span className="block text-[8px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-														Upload banner
-													</span>
-												</div>
-											)}
-										</div>
-									</div>
-								</div>
-
-								<div className="space-y-1.5 label text-left">
-									<label
-										htmlFor="settings-fullname"
-										className="text-[12px] md:text-sm font-semibold text-zinc-300 pl-4">
-										Full Name
-									</label>
-									<input
-										id="settings-fullname"
-										type="text"
-										required
-										value={fullName}
-										onChange={(e) => {
-											setFullName(e.target.value);
-											clearFieldError("fullName");
-										}}
-										maxLength={50}
-										className="w-full rounded-lg border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
-									/>
-									<div className="flex items-center justify-between px-1">
-										<ValidationMessage
-											message={fieldErrors.fullName}
-										/>
-										<CharCounter
-											current={fullName.length}
-											max={50}
-										/>
-									</div>
-								</div>
-
-								<div className="space-y-1.5 label text-left">
-									<label
-										htmlFor="settings-bio"
-										className="text-[12px] md:text-sm font-semibold text-zinc-300 pl-4">
-										About
-									</label>
-									<textarea
-										id="settings-bio"
-										rows={3}
-										value={bio}
-										onChange={(e) => setBio(e.target.value)}
-										className="w-full !rounded-lg border border-zinc-800 bg-zinc-900/55 py-2.5 px-3.5 text-[12px] md:text-sm font-medium text-white focus:outline-none focus:border-white focus:bg-zinc-900 transition-all resize-none leading-relaxed"
-										maxLength={300}
-										spellCheck={false}
-									/>
-									<div className="flex justify-end px-1">
-										<CharCounter
-											current={bio.length}
-											max={300}
-										/>
-									</div>
-								</div>
-
-								<button
-									type="submit"
-									disabled={savingProfile}
-									className="w-full rounded-full bg-black py-3 text-[12px] md:text-sm font-bold tracking-widest uppercase text-white dark:bg-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-100 font-sans transition-all disabled:opacity-40 shadow-md cursor-pointer">
-									{savingProfile
-										? "Saving..."
-										: "Save Changes"}
-								</button>
-							</form>
-						</GlassCard>
-					)}
-
 					{activeSubTab === "password" && (
 						<GlassCard
 							animate={true}
@@ -793,7 +484,6 @@ interface SettingsProps {
 								isKeyboardOpen ? "!p-4" : "!p-6"
 							}`}>
 							<div className="flex items-center gap-2 mb-3 border-b border-rose-500/20 pb-2">
-								<Trash2 className="h-4 w-4 text-rose-500 animate-bounce" />
 								<h3 className="text-sm font-bold text-rose-500 uppercase tracking-wider">
 									Delete Account
 								</h3>
@@ -914,6 +604,14 @@ interface SettingsProps {
 						</GlassCard>
 					)}
 
+					{activeSubTab === "privacy" && (
+						<PrivacySettings user={user} />
+					)}
+
+					{activeSubTab === "notifications" && (
+						<NotificationSettings />
+					)}
+
 					{activeSubTab === "close-friends" && (
 						<CloseFriendsTab user={user} />
 					)}
@@ -947,7 +645,7 @@ interface SettingsProps {
 							<div className="flex flex-col sm:flex-row gap-3 justify-center pt-1">
 								<button
 									type="button"
-									onClick={() => switchSubTab("profile")}
+									onClick={() => switchSubTab("password")}
 									className="rounded-full border border-zinc-800 bg-zinc-950/20 px-6 py-2.5 text-[12px] md:text-sm font-bold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-all cursor-pointer uppercase tracking-wider">
 									Cancel
 								</button>
@@ -965,17 +663,6 @@ interface SettingsProps {
 			</div>
 		</div>
 
-		{/* Crop Modal */}
-		<ImageCropModal
-			isOpen={cropModalOpen}
-			onClose={() => {
-				setCropModalOpen(false);
-				if (cropSrc) URL.revokeObjectURL(cropSrc);
-			}}
-			imageSrc={cropSrc}
-			title={`Adjust ${cropType === 'profile' ? 'Avatar' : 'Banner'} Crop`}
-			onCropComplete={handleCropComplete}
-		/>
 	</>
 	);
 }

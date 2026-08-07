@@ -94,12 +94,28 @@ describe("Posts API", () => {
         .expect(401);
     });
 
-    it("should reject empty title", async () => {
+    it("should allow content-only posts (title is optional)", async () => {
       await request(app)
         .post("/api/posts")
         .set("Cookie", getAuthCookies(user1.cookies))
         .send({ content: "No title here" })
+        .expect(201);
+    });
+
+    it("should reject empty posts (no title, content, image or poll)", async () => {
+      await request(app)
+        .post("/api/posts")
+        .set("Cookie", getAuthCookies(user1.cookies))
+        .send({ title: "", content: "" })
         .expect(400);
+    });
+
+    it("should allow image-only posts (no title or content)", async () => {
+      await request(app)
+        .post("/api/posts")
+        .set("Cookie", getAuthCookies(user1.cookies))
+        .send({ image: "https://example.com/image.jpg" })
+        .expect(201);
     });
 
     it("should reject excessively long content", async () => {

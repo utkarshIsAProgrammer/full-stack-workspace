@@ -4,6 +4,7 @@ import { motion } from "motion/react";
 import { createPortal } from "react-dom";
 import { apiFetch } from "../utils/api";
 import { logger } from "../utils/logger";
+import { useAutoGrow } from "../hooks/useAutoGrow";
 
 interface ReportButtonProps {
 	contentType: "post" | "comment" | "user" | "message";
@@ -32,6 +33,7 @@ export default function ReportButton({
 	const [showModal, setShowModal] = useState(false);
 	const [selectedReason, setSelectedReason] = useState("");
 	const [description, setDescription] = useState("");
+	const descriptionRef = useAutoGrow<HTMLTextAreaElement>(description);
 	const [submitting, setSubmitting] = useState(false);
 	const [submitted, setSubmitted] = useState(false);
 	const [error, setError] = useState("");
@@ -175,7 +177,7 @@ export default function ReportButton({
 								<textarea
 									value={description}
 									onChange={(e) => setDescription(e.target.value)}
-									placeholder="Additional details (optional)..."
+									ref={descriptionRef} placeholder="Additional details (optional)..."
 									maxLength={500}
 									rows={2}
 									className="w-full bg-zinc-900/50 border border-zinc-800 !rounded-lg px-3 py-2 text-[11px] text-zinc-300 placeholder-zinc-600 resize-none outline-none focus:border-zinc-600 transition-colors"

@@ -21,19 +21,63 @@ interface SafeUser {
 }
 
 /**
- * Resolve a user from cache or database.
+ * In-memory user cache (process-local).
+ *
+ * Upstash Redis is an HTTPS REST round-trip (~100-200ms on free tier) and
+ * resolveUser runs on EVERY protected request — so without this, every
+ * API call (feed, chat, search, …) pays that latency. An in-memory Map
+ * with a short TTL makes repeated requests from the same user resolve in
+ * microseconds while staying fresher than the 5-minute Redis cache.
+ */
+const memUserCache = new Map<
+  string,
+  { user: SafeUser; expiresAt: number }
+>();
+const MEM_USER_CACHE_TTL_MS = 60_000; // 60s
+const MEM_USER_CACHE_MAX = 500;
+
+/**
+ * Remove a user from the in-memory cache — call alongside the Redis
+ * `auth:user:` invalidation whenever profile / logout / ban state changes
+ * so the next request reflects the change immediately.
+ */
+export function clearMemUserCache(userId: string): void {
+  memUserCache.delete(userId);
+}
+
+function setMemUser(userId: string, user: SafeUser): void {
+  if (memUserCache.size >= MEM_USER_CACHE_MAX) {
+    const oldest = memUserCache.keys().next().value;
+    if (oldest !== undefined) memUserCache.delete(oldest);
+  }
+  memUserCache.set(userId, { user, expiresAt: Date.now() + MEM_USER_CACHE_TTL_MS });
+}
+
+/**
+ * Resolve a user from in-memory cache → Redis cache → database.
  * Returns null if not found.
  */
 async function resolveUser(userId: string): Promise<SafeUser | null> {
-  const cacheKey = `auth:user:${userId}`;
-  const cached = await getCache<SafeUser>(cacheKey);
-  if (cached) return cached;
+  // 1. In-memory (fastest) — avoids the Upstash HTTPS round trip entirely.
+  const mem = memUserCache.get(userId);
+  if (mem && Date.now() < mem.expiresAt) return mem.user;
 
+  const cacheKey = `auth:user:${userId}`;
+
+  // 2. Redis cache (shared across instances).
+  const cached = await getCache<SafeUser>(cacheKey);
+  if (cached) {
+    setMemUser(userId, cached);
+    return cached;
+  }
+
+  // 3. Database fallback.
   const user = await User.findById(userId).select("-password").lean();
   if (!user) return null;
 
-  // Cache for 5 minutes
+  // Cache for 5 minutes in Redis + 60s in memory
   await setCache(cacheKey, user, 300);
+  setMemUser(userId, user as unknown as SafeUser);
   return user as unknown as SafeUser;
 }
 

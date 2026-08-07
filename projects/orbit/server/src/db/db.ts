@@ -5,7 +5,9 @@ import { logger } from "../utilities/logger";
 const MAX_RETRIES = 5;
 const RETRY_DELAY = 5000;
 
-export const connectDB = async (retryCount = 0): Promise<mongoose.Connection> => {
+export const connectDB = async (
+  retryCount = 0,
+): Promise<mongoose.Connection> => {
   try {
     // Environment-aware pool sizing
     const poolSize = process.env.DB_POOL_SIZE
@@ -25,20 +27,28 @@ export const connectDB = async (retryCount = 0): Promise<mongoose.Connection> =>
       heartbeatFrequencyMS: 10000,
     });
 
-    logger.info(`MongoDB connected successfully!`, { host: conn.connection.host });
+    logger.info(`MongoDB connected successfully!`, {
+      host: conn.connection.host,
+    });
 
     // Clean up old 'glimpses' collection if it exists to ensure it is not created again
     try {
       const db = conn.connection.db;
       if (db) {
-        const collections = await db.listCollections({ name: "glimpses" }).toArray();
+        const collections = await db
+          .listCollections({ name: "glimpses" })
+          .toArray();
         if (collections.length > 0) {
           await db.dropCollection("glimpses");
-          logger.info("Successfully dropped deprecated 'glimpses' collection from MongoDB");
+          logger.info(
+            "Successfully dropped deprecated 'glimpses' collection from MongoDB",
+          );
         }
       }
     } catch (dbErr) {
-      logger.warn("Failed to drop deprecated 'glimpses' collection", { error: (dbErr as Error).message });
+      logger.warn("Failed to drop deprecated 'glimpses' collection", {
+        error: (dbErr as Error).message,
+      });
     }
 
     mongoose.connection.on("error", (err) => {
@@ -80,7 +90,9 @@ export const connectDB = async (retryCount = 0): Promise<mongoose.Connection> =>
           return;
         }
 
-        logger.info(`MongoDB reconnect attempt ${reconnectAttempts}/${maxReconnectAttempts}...`);
+        logger.info(
+          `MongoDB reconnect attempt ${reconnectAttempts}/${maxReconnectAttempts}...`,
+        );
         await mongoose.connect(env.MONGO_URI, {
           maxPoolSize: poolSize,
           minPoolSize: env.NODE_ENV === "production" ? 10 : 2,
@@ -96,7 +108,10 @@ export const connectDB = async (retryCount = 0): Promise<mongoose.Connection> =>
           reconnectTimer = null;
         }
       } catch (err: any) {
-        logger.error("MongoDB explicit reconnect failed", { error: err.message, attempt: reconnectAttempts });
+        logger.error("MongoDB explicit reconnect failed", {
+          error: err.message,
+          attempt: reconnectAttempts,
+        });
       } finally {
         isReconnecting = false;
       }
@@ -122,15 +137,20 @@ export const connectDB = async (retryCount = 0): Promise<mongoose.Connection> =>
 
     return conn.connection;
   } catch (err: any) {
-    logger.error("MongoDB connection failed", { error: err.message, attempt: retryCount + 1 });
+    logger.error("MongoDB connection failed", {
+      error: err.message,
+      attempt: retryCount + 1,
+    });
 
     if (retryCount < MAX_RETRIES) {
-      logger.info(`Retrying MongoDB connection in ${RETRY_DELAY / 1000} seconds...`);
-      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      logger.info(
+        `Retrying MongoDB connection in ${RETRY_DELAY / 1000} seconds...`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
       return connectDB(retryCount + 1);
     } else {
       logger.error("Max retries reached, could not connect to MongoDB");
       throw new Error("Failed to connect to MongoDB after max retries");
     }
   }
-}
+};

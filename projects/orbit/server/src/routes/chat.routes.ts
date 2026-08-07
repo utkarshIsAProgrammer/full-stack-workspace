@@ -10,6 +10,9 @@ import {
   getUserPresence,
   deleteConversation,
   clearConversationMessages,
+  muteConversation,
+  unmuteConversation,
+  getConversationMutedStatus,
   pinMessage,
   unpinMessage,
   getPinnedMessages,
@@ -28,12 +31,17 @@ router.use(protect);
 
 // Conversations routes
 router.post("/conversations", generalLimiter, getOrCreateConversation);
-router.get("/conversations", generalLimiter, cacheMiddleware({ ttl: 30 }), getConversations);
+router.get("/conversations", generalLimiter, getConversations);
 router.delete("/conversations/:conversationId", generalLimiter, deleteConversation);
 router.delete("/conversations/:conversationId/messages", generalLimiter, clearConversationMessages);
 
+// Per-user notification mute settings (any participant)
+router.get("/conversations/:conversationId/muted", generalLimiter, getConversationMutedStatus);
+router.post("/conversations/:conversationId/mute", generalLimiter, muteConversation);
+router.post("/conversations/:conversationId/unmute", generalLimiter, unmuteConversation);
+
 // Messages routes
-router.get("/conversations/:conversationId/messages", generalLimiter, cacheMiddleware({ ttl: 10 }), getMessages);
+router.get("/conversations/:conversationId/messages", generalLimiter, getMessages);
 router.post(
   "/conversations/:conversationId/messages",
   interactionLimiter,

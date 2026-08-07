@@ -1,6 +1,8 @@
 import React, { useRef, useState } from "react";
-import { CornerDownLeft, Play, Pause, AlertCircle, FileText, Volume2, VolumeX } from "lucide-react";
+import { CornerDownLeft, Play, Pause, AlertCircle, FileText, Volume2, VolumeX, Pin } from "lucide-react";
 import UserAvatar from "./UserAvatar";
+import LinkPreviewCard from "./LinkPreviewCard";
+import { extractFirstUrl } from "../utils/links";
 import type { Message } from "../types";
 
 // Helper to get a human-readable label for an attachment type
@@ -67,6 +69,9 @@ interface MessageBubbleProps {
   hideReactionCount?: boolean;
   onCancelUpload?: (pendingId: string) => void;
   onRetrySend?: (pendingId: string) => void;
+  /** True when this message is pinned in the current conversation — shows the
+   *  WhatsApp-style pin badge on the bubble corner. */
+  isPinned?: boolean;
 }
 
 function arePropsEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
@@ -82,6 +87,7 @@ function arePropsEqual(prev: MessageBubbleProps, next: MessageBubbleProps): bool
   if (prev.isFirstInGroup !== next.isFirstInGroup) return false;
   if (prev.isLastInGroup !== next.isLastInGroup) return false;
   if (prev.msg._failed !== next.msg._failed) return false;
+  if (prev.isPinned !== next.isPinned) return false;
 
   if (prev.msg.replyTo?._id !== next.msg.replyTo?._id) return false;
   if (prev.msg.replyTo?.text !== next.msg.replyTo?.text) return false;
@@ -131,6 +137,7 @@ const MessageBubble = React.memo(function MessageBubble({
   hideReactionCount = false,
   onCancelUpload,
   onRetrySend,
+  isPinned = false,
 }: MessageBubbleProps) {
   const [showSwipeBadge, setShowSwipeBadge] = useState(false);
   const swipeBarRef = useRef<HTMLDivElement>(null);
@@ -270,6 +277,29 @@ const MessageBubble = React.memo(function MessageBubble({
     ? `${isFirstInGroup ? "rounded-tr-none" : "rounded-tr-md"} ${isLastInGroup ? "rounded-br-none" : "rounded-br-md"}`
     : `${isFirstInGroup ? "rounded-tl-none" : "rounded-tl-md"} ${isLastInGroup ? "rounded-bl-none" : "rounded-bl-md"}`;
 
+  // Pin indicator — rendered on the bubble corner when this message is pinned.
+  // Group-start bubbles have a CUT corner (rounded-tr-none/tl-none), so the
+  // badge sits on the opposite (uncut) corner to never overlap the notch.
+  const badgeSide = isMe
+    ? isFirstInGroup
+      ? "-left-1.5"
+      : "-right-1.5"
+    : isFirstInGroup
+      ? "-right-1.5"
+      : "-left-1.5";
+  const renderPinBadge = () => (
+    <span
+      title="Pinned message"
+      className={`absolute -top-2 z-10 flex h-4 w-4 items-center justify-center rounded-full shadow-sm ${
+        isMe
+          ? `${badgeSide} bg-zinc-800 border border-amber-200/60`
+          : `${badgeSide} bg-zinc-900 border border-amber-200/60`
+      }`}
+    >
+      <Pin className="h-2 w-2 text-amber-200/90" />
+    </span>
+  );
+
   return (
     <div className="w-full flex flex-col select-none">
       {showDateSeparator && (
@@ -343,12 +373,16 @@ const MessageBubble = React.memo(function MessageBubble({
           )}
 
           <div
-            className={`rounded-2xl text-[12px] border relative select-text ${bubbleRoundClass} $                ${hasOnlyAttachments ? "p-1 pb-1 pt-3" : "px-3 py-1.5"} ${
-              isMe
-                ? "bg-zinc-700/90 text-white border-zinc-600/60"
-                : "bg-zinc-900/80 text-zinc-100 border-zinc-800"
+            data-msg-bubble="true"
+            className={`rounded-2xl text-[12px] border relative select-text ${bubbleRoundClass} ${
+              isPinned ? "border-amber-200/40" : ""
+            } ${hasOnlyAttachments ? "p-1 pb-1 pt-3" : "px-3 py-1.5"} ${
+			  isMe
+				? "bg-gradient-to-br from-slate-700/90 to-slate-800/90 text-white border-slate-500/40 shadow-lg shadow-black/20"
+				: "bg-gradient-to-br from-zinc-800/90 to-zinc-900/95 text-zinc-100 border-zinc-700/60 shadow-md shadow-black/20"
             }`}
           >
+            {isPinned && !msg.isDeleted && renderPinBadge()}
             {msg.isDeleted || deletedForMe ? (
               <span className="italic text-zinc-500 text-[12px] md:text-sm">This message was deleted</span>
             ) : (
@@ -389,6 +423,11 @@ const MessageBubble = React.memo(function MessageBubble({
                   </div>
                 )}
                 {msg.text && <p className="leading-relaxed whitespace-pre-wrap select-text break-word pr-1.5">{msg.text}{msg.isEdited && <span className="text-[10px] text-zinc-400 italic ml-1">(edited)</span>}</p>}
+                {msg.text && !unsent && extractFirstUrl(msg.text) && (
+                  <div className={`mt-1.5 ${msg.attachments && msg.attachments.length > 0 ? "mb-1.5" : ""}`}>
+                    <LinkPreviewCard url={extractFirstUrl(msg.text)!} compact />
+                  </div>
+                )}
                 {msg.attachments && msg.attachments.length > 0 && (
                   <div className={`${msg.text ? "mt-1.5" : ""} space-y-1 max-w-sm rounded-xl overflow-hidden`}>
                     {msg.attachments.map((att, aIdx) => {
@@ -504,21 +543,21 @@ const MessageBubble = React.memo(function MessageBubble({
             )}
           </div>
 
-          {Object.keys(groupedReactions).length > 0 && !msg.isDeleted && !deletedForMe && (
-            <div className="flex gap-1 mt-0.5">
+          {!msg.isDeleted && !deletedForMe && !unsent && (
+            <div className="flex items-center gap-1 mt-0.5">
               {Object.entries(groupedReactions).map(([emoji, data]) => (
                 <button
                   key={emoji}
                   onClick={() => handleReaction(msg, emoji)}
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[12px] md:text-sm border ${
+                  className={`flex items-center gap-0.5 px-1.5 py-px rounded-full text-[11px] md:text-[12px] border transition-colors cursor-pointer ${
                     data.hasReacted
-                      ? "bg-white/15 border-white/25"
-                      : "bg-zinc-800/50 border-zinc-700/50"
+                      ? "bg-white/10 border-white/20 text-white"
+                      : "bg-white/3 border-white/5 text-zinc-400 hover:bg-white/5"
                   }`}
                 >
                   <span>{emoji}</span>
                   {!hideReactionCount && (
-                    <span className="text-[12px] md:text-sm">{data.count}</span>
+                    <span className="text-[8px] font-bold">{data.count}</span>
                   )}
                 </button>
               ))}

@@ -54,21 +54,32 @@ function evictAffectedCaches(url: string): void {
 	// "http://localhost:5173/api/chats/conversations/abc/messages?limit=20".
 	const cacheKey = new URL(url, window.location.origin).pathname;
 
-	// Special-case: membership-changing community mutations (create, update,
-	// delete, join, leave) invalidate the "/api/communities/mine" list.
-	// Without this, a stale cached list (without the new membership) was
-	// served, so newly joined communities didn't appear in "My Communities".
+	// Special-case: community-mutating mutations (create, update, delete, join,
+	// leave, and the settings toggles for messaging / audio calls / video calls)
+	// invalidate the "/api/communities/mine" list.
+	// Without this:
+	//  - a stale cached list (without the new membership) was served, so newly
+	//    joined communities didn't appear in "My Communities".
+	//  - after toggling "Audio/Video Calls" in community settings, the cached
+	//    list still held the OLD flag values, so reopening the community from
+	//    the list served the stale settings and the toggle appeared to revert.
 	// NOTE: deliberately narrow — message/media sub-resource mutations
-	// (e.g. POST /api/communities/:id/messages) do NOT affect membership,
-	// so they must NOT evict the "mine" list on every message sent.
+	// (e.g. POST /api/communities/:id/messages) do NOT affect membership or
+	// settings, so they must NOT evict the "mine" list on every message sent.
 	const segments = cacheKey.split("/").filter(Boolean); // e.g. ["api","communities","<id>","join"]
-	const isCommunityMembershipMutation =
+	// Mutations that change the community LIST data (membership or settings
+	// flags like audio/video calls + messaging) must invalidate cached lists.
+	const isCommunityListMutation =
 		(segments.length === 2 && segments[0] === "api" && segments[1] === "communities") ||
 		(segments.length === 3 && segments[0] === "api" && segments[1] === "communities") ||
 		(segments.length === 4 &&
 			segments[0] === "api" &&
 			segments[1] === "communities" &&
-			(segments[3] === "join" || segments[3] === "leave"));
+			(segments[3] === "join" ||
+				segments[3] === "leave" ||
+				segments[3] === "toggle-audio-calls" ||
+				segments[3] === "toggle-video-calls" ||
+				segments[3] === "toggle-messaging"));
 
 	// Post-interaction mutations (like / save / repost / share / view) change
 	// the interaction flags (likedByMe / savedByMe / repostedByMe / counts)
@@ -136,8 +147,8 @@ function evictAffectedCaches(url: string): void {
 				cachedPath === cacheKey ||
 				cachedPath.startsWith(cacheKey + "/") ||
 				cacheKey.startsWith(cachedPath + "/") ||
-				// Community membership mutations always invalidate the "mine" list
-				(isCommunityMembershipMutation && cachedPath === "/api/communities/mine") ||
+				// Community list mutations always invalidate the "mine" list
+				(isCommunityListMutation && cachedPath === "/api/communities/mine") ||
 				// Post interactions (like/save/repost/share) invalidate ALL cached
 				// post lists/feeds because they embed interaction state
 				(isPostInteractionMutation && isPostCache(cachedPath)) ||
@@ -216,10 +227,18 @@ export async function apiFetch(
 
 	// ── GET: stale-while-revalidate + deduplication ─────────────────
 
+	// Live search queries (/search?q=… and /api/search/users|posts?q=…) are
+	// ALWAYS fetched fresh from the network. Cached search results go stale
+	// the instant new content arrives, and a stale empty result makes search
+	// feel completely broken ("I searched but nothing shows"). This covers
+	// every search endpoint in the app (message search in chats + communities,
+	// user search, post search) without needing bypassCache at each call site.
+	const isLiveSearch = /\/search[\/?]/.test(url);
+
 	// `bypassCache` forces a network fetch (used for hard refreshes like
 	// fetchPosts(true) and tab switches) so new data always shows up
 	// immediately instead of serving a stale cached response.
-	const bypassCache = options.bypassCache === true;
+	const bypassCache = options.bypassCache === true || isLiveSearch;
 
 	// 1. Check cache for instant response (CacheStorage first, then Dexie)
 	let cachedData = bypassCache ? null : await getCachedResponse(url);
@@ -280,7 +299,7 @@ export async function apiFetch(
 		const result = await requestPromise;
 
 		// Cache the result in both CacheStorage and Dexie
-		if (result.ok && result.data !== null) {
+		if (result.ok && result.data !== null && !isLiveSearch) {
 			await setCachedResponse(url, result.data);
 			// Also cache into Dexie for offline structured queries
 			await cacheIntoDexie(url, result.data);
@@ -309,7 +328,7 @@ export { stopCacheRefreshTimer };
  * so the user sees data INSTANTLY when they navigate there.
  */
 const TAB_ENDPOINTS: Record<string, string[]> = {
-	home: ["/api/posts", "/api/glimpses/feed"],
+	home: ["/api/posts", "/api/feed/for-you", "/api/glimpses/feed"],
 	explore: ["/api/posts/trending/hashtags", "/api/posts?limit=5&sort=likesCount"],
 	notifications: ["/api/notifications", "/api/notifications/unread-count"],
 	chat: ["/api/chats/conversations"],

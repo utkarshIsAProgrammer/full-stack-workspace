@@ -52,6 +52,7 @@ export const csrfProtection = (
 	const publicPaths = [
 		"/api/auth/signup",
 		"/api/auth/login",
+		"/api/auth/logout", // idempotent cookie-clear; must work even with a torn-down session
 		"/api/password/request-otp",
 		"/api/password/forgot",
 		"/api/password/verify-and-forgot-password",

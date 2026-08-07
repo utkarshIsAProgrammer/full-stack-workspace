@@ -24,6 +24,9 @@ import {
   VolumeX,
   Lock,
   Globe,
+  ChevronDown,
+  FolderOpen,
+  Plus,
 } from "lucide-react";
 import { Post, Comment, User } from "../types";
 import GlassCard from "./GlassCard";
@@ -37,14 +40,22 @@ import ValidationMessage from "./ValidationMessage";
 import CharCounter from "./CharCounter";
 import GlancesFeed from "./GlancesFeed";
 import MissionsPanel from "./MissionsPanel";
+import TranslateInline from "./TranslateInline";
+import LinkPreviewCard from "./LinkPreviewCard";
 import ReportButton from "./ReportButton";
 import QuoteRepostModal from "./QuoteRepostModal";
 import PollCard from "./PollCard";
-import { sharePostToExternal } from "../utils/shareToExternal";
+import ShareMenu from "./ShareMenu";
+import ForwardModal, { ForwardPartner } from "./ForwardModal";
 import { apiFetch } from "../utils/api";
-import { getCachedResponse } from "../utils/apiCache";
+import { getCachedResponse, evictCachedResponse } from "../utils/apiCache";
 import { downscaleImageFile } from "../utils/imageCompression";
+import { extractFirstUrl } from "../utils/links";
 import { useCacheRefresh } from "../hooks/useCacheRefresh";
+import {
+	usePostViewTracking,
+	registerPostView,
+} from "../hooks/usePostViewTracking";
 import { logger } from "../utils/logger";
 import { validatePost, validateComment } from "../utils/validation";
 
@@ -102,6 +113,9 @@ export default function Feed({
   const [loading, setLoading] = useState(true);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
+  // Feed mode: "home" = chronological feed, "forYou" = affinity-scored For You feed
+  const [feedMode, setFeedMode] = useState<"home" | "forYou">("home");
+  const [forYouPage, setForYouPage] = useState(1);
 
   // New Post Composer State
   const [title, setTitle] = useState("");
@@ -229,6 +243,13 @@ export default function Feed({
 
   // Quote Repost modal state
   const [quoteRepostPost, setQuoteRepostPost] = useState<Post | null>(null);
+  const [forwardPost, setForwardPost] = useState<Post | null>(null);
+  // Save-to-collection modal state
+  const [collectionPost, setCollectionPost] = useState<Post | null>(null);
+  const [myCollections, setMyCollections] = useState<any[]>([]);
+  const [loadingCollections, setLoadingCollections] = useState(false);
+  const [newCollName, setNewCollName] = useState("");
+  const [creatingColl, setCreatingColl] = useState(false);
 
   // Notify parent when comments open/close
   useEffect(() => {
@@ -255,7 +276,28 @@ export default function Feed({
   }, [selectedPost]);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
+  // Pagination for the comments drawer. The server's getComment endpoint
+  // returns nextCursor/hasMore per page (newest-first, cursor = oldest _id
+  // seen so far); these track the live state so "Load more" appends older
+  // comments without losing the already-rendered thread.
+  const [commentCursor, setCommentCursor] = useState<string | null>(null);
+  const [commentHasMore, setCommentHasMore] = useState(false);
+  const [commentsLoadingMore, setCommentsLoadingMore] = useState(false);
+  // In-memory cache of the last-known comment threads per post, so reopening a
+  // drawer renders instantly (stale-while-revalidate) instead of waiting on a
+  // full network round-trip. Stores the loaded thread AND its pagination state
+  // so a partially-scrolled thread reopens exactly where it was. Bounded to the
+  // 20 most recent posts.
+  const commentCacheRef = useRef<
+    Map<string, { comments: Comment[]; cursor: string | null; hasMore: boolean }>
+  >(new Map());
+  // Posts whose thread has been successfully fetched at least once — used to
+  // avoid persisting a transient/never-confirmed empty list into the cache.
+  const commentsFetchedRef = useRef<Set<string>>(new Set());
   const [newCommentText, setNewCommentText] = useState("");
+  // WhatsApp-style comment composer: auto-grows as you type, wraps text
+  // instead of scrolling sideways, and caps at 120px like the chat input.
+  const commentRef = useAutoGrow<HTMLTextAreaElement>(newCommentText, 120);
   const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
   const [submittingComment, setSubmittingComment] = useState(false);
   const [expandedPosts, setExpandedPosts] = useState<Record<string, boolean>>(
@@ -410,8 +452,18 @@ export default function Feed({
   };
 
   // Fetch posts (with support for optional search query or singular slug view)
-  const fetchPosts = async (reset: boolean = false) => {
-    if (reset) setLoading(true);
+  const fetchPosts = async (
+    reset: boolean = false,
+    feedModeOverride?: "home" | "forYou",
+    silent: boolean = false,
+  ) => {
+    // Resolve the active mode here (the override exists because state updates
+    // are async — a fresh click must fetch the NEW feed, not the stale one)
+    const activeMode = feedModeOverride ?? feedMode;
+    // Background refreshes (the 30s cache timer, socket syncs) must NOT swap
+    // the visible feed to skeletons — that was causing a visible 1s blink
+    // every refresh. Only user-initiated loads show the loading state.
+    if (reset && !silent) setLoading(true);
     try {
       let endpoint = "/api/posts?limit=10";
       if (!reset && nextCursor) {
@@ -441,6 +493,11 @@ export default function Feed({
           endpoint += `&cursor=${nextCursor}`;
         }
       }
+
+      // If For You mode is active, hit the affinity-scored feed (page-based)
+      if (activeMode === "forYou") {
+        endpoint = `/api/feed/for-you?limit=10&page=${reset ? 1 : forYouPage}`;
+      }
       const res = await apiFetch(
         endpoint,
         reset ? { bypassCache: true } : undefined,
@@ -460,6 +517,10 @@ export default function Feed({
             return [...prev, ...newOnes];
           });
         }
+        // For You feed paginates by page number, not cursor
+        if (activeMode === "forYou" && !reset) {
+          setForYouPage((p) => p + 1);
+        }
         setNextCursor(data.nextCursor || null);
         setHasMore(data.hasMore || false);
       } else {
@@ -472,17 +533,37 @@ export default function Feed({
     }
   };
 
+  // Switch between the main feed and the For You (affinity-scored) feed
+  const handleFeedModeChange = (mode: "home" | "forYou") => {
+    if (mode === feedMode) return;
+    setFeedMode(mode);
+    setForYouPage(1);
+    setPosts([]);
+    setNextCursor(null);
+    setHasMore(false);
+    // Pass the target mode explicitly so the very first fetch hits the right
+    // endpoint even though the state hasn't re-rendered yet
+    void fetchPosts(true, mode);
+  };
+
   // When the background cache timer refreshes /api/posts data, re-fetch
   // so the feed stays up-to-date without the user lifting a finger.
-  useCacheRefresh("/api/posts", () => fetchPosts(true));
-  useCacheRefresh("/api/saves", () => fetchPosts(true));
-  useCacheRefresh("/api/reposts", () => fetchPosts(true));
+  useCacheRefresh("/api/posts", () => fetchPosts(true, undefined, true));
+  useCacheRefresh("/api/saves", () => fetchPosts(true, undefined, true));
+  useCacheRefresh("/api/reposts", () => fetchPosts(true, undefined, true));
 
   // On mount, try to display cached posts instantly (stale-while-revalidate)
   // This makes repeat visits feel instant — cached data shows immediately,
   // then `fetchPosts(true)` below refreshes in the background.
+  const cachedShownRef = useRef(false);
   useEffect(() => {
-    if (singlePostSlug || searchQuery || showSavesOnly || showRepostsOnly)
+    if (
+      singlePostSlug ||
+      searchQuery ||
+      showSavesOnly ||
+      showRepostsOnly ||
+      feedMode !== "home"
+    )
       return;
 
     (async () => {
@@ -498,12 +579,13 @@ export default function Feed({
           setNextCursor(cached.nextCursor || null);
           setHasMore(cached.hasMore || false);
           setLoading(false);
+          cachedShownRef.current = true;
         }
       } catch {
         // Cache read failures are non-critical
       }
     })();
-  }, [singlePostSlug, searchQuery, showSavesOnly, showRepostsOnly]);
+  }, [singlePostSlug, searchQuery, showSavesOnly, showRepostsOnly, feedMode]);
 
   // Manage deep-linking into specific single post when specified
   const loadSinglePost = async (slug: string) => {
@@ -533,7 +615,9 @@ export default function Feed({
     if (singlePostSlug) {
       loadSinglePost(singlePostSlug);
     } else {
-      fetchPosts(true);
+      // If cached posts were shown above, refresh in the background so the
+      // visible feed never swaps to skeletons (no blink on revisit).
+      fetchPosts(true, undefined, cachedShownRef.current);
     }
   }, [
     singlePostSlug,
@@ -1445,10 +1529,85 @@ export default function Feed({
         }),
       );
     }
-  };
+  };	// ─── Save to collection (organize saved posts into folders) ─────────
+	const openSaveToCollection = async (post: Post) => {
+		setCollectionPost(post);
+		setLoadingCollections(true);
+		try {
+			const res = await apiFetch("/api/collections");
+			const data = await res.json();
+			if (res.ok && data.success) {
+				setMyCollections(data.collections || []);
+			}
+		} catch (e) {
+			logger.error("Failed to load collections", e);
+		} finally {
+			setLoadingCollections(false);
+		}
+	};
 
-  // Repost Toggle Optimistically
-  const handleRepostToggle = async (postId: string, repostedByMe: boolean) => {
+	const handleAddToCollection = async (collectionId: string) => {
+		if (!collectionPost) return;
+		try {
+			const res = await apiFetch(
+				`/api/collections/${collectionId}/posts/${collectionPost._id}`,
+				{ method: "POST" },
+			);
+			if (res.ok) {
+				void evictCachedResponse("/api/collections");
+				void evictCachedResponse(
+					`/api/collections/${collectionId}`,
+				);
+				setCollectionPost(null);
+				window.dispatchEvent(
+					new CustomEvent("showToast", {
+						detail: {
+							message: "Added to collection!",
+							type: "success",
+						},
+					}),
+				);
+			}
+		} catch (e) {
+			logger.error("Add to collection failed", e);
+		}
+	};
+
+	const handleCreateAndAddCollection = async () => {
+		if (!collectionPost || !newCollName.trim() || creatingColl) return;
+		setCreatingColl(true);
+		try {
+			const res = await apiFetch("/api/collections", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name: newCollName.trim() }),
+			});
+			const data = await res.json();
+			if (!res.ok)
+				throw new Error(data.message || "Failed to create collection.");
+			// Keep the open picker list in sync so the new collection shows
+			// immediately (plus evict the stale cached list).
+			setMyCollections((prev) => [data.collection, ...prev]);
+			void evictCachedResponse("/api/collections");
+			await handleAddToCollection(data.collection._id);
+		} catch (err: any) {
+			logger.error("Create collection failed", err);
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: {
+						message: err.message || "Failed to create collection.",
+						type: "error",
+					},
+				}),
+			);
+		} finally {
+			setCreatingColl(false);
+			setNewCollName("");
+		}
+	};
+
+	// Repost Toggle Optimistically
+	const handleRepostToggle = async (postId: string, repostedByMe: boolean) => {
     if (showRepostsOnly && repostedByMe) {
       // If we're in reposts-only mode and unreposting, remove it immediately
       setPosts((prev) => prev.filter((p) => p._id !== postId));
@@ -1640,21 +1799,19 @@ export default function Feed({
     }
   };
 
-  // Increment Share click and open Web Share API
-  const handleSharePost = async (postId: string) => {
-    // Find the post to get its slug, title, and author info
-    const post = posts.find((p) => p._id === postId);
-
+  // Copy a post link to the clipboard (counts the share server-side)
+  const copyPostLink = async (post: Post) => {
     try {
-      // Increment share count on the server
-      const res = await apiFetch(`/api/posts/${postId}/share`, {
+      const res = await apiFetch(`/api/posts/${post._id}/share`, {
         method: "POST",
       });
       const data = await res.json();
       if (res.ok && data.success) {
         setPosts((prev) =>
           prev.map((p) =>
-            p._id === postId ? { ...p, sharesCount: data.count } : p,
+            p._id === post._id
+              ? { ...p, sharesCount: data.shares ?? data.count }
+              : p,
           ),
         );
       }
@@ -1662,98 +1819,225 @@ export default function Feed({
       logger.error(e);
     }
 
-    // Use Web Share API first, fall back to clipboard copy
-    if (post) {
-      await sharePostToExternal(post.slug);
-    } else {
-      // Fallback: copy the link directly
+    const link = `${window.location.origin}/post/${post.slug}`;
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch (e) {
+      // Fallback for browsers without the async clipboard API
       try {
-        const link = `${window.location.origin}/post/${postId}`;
-        await navigator.clipboard.writeText(link);
+        const ta = document.createElement("textarea");
+        ta.value = link;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch (clipErr) {
+        logger.error("Clipboard copy failed", clipErr);
+        window.dispatchEvent(
+          new CustomEvent("showToast", {
+            detail: { message: "Could not copy link", type: "error" },
+          }),
+        );
+        return;
+      }
+    }
+    window.dispatchEvent(
+      new CustomEvent("showToast", {
+        detail: { message: "Post link copied!", type: "success" },
+      }),
+    );
+  };
+
+  // Forward a post to one or more chat partners (notifies each recipient)
+  const handleForwardPost = async (
+    partners: ForwardPartner[],
+  ): Promise<boolean> => {
+    if (!forwardPost || partners.length === 0) return false;
+    try {
+      const results = await Promise.all(
+        partners.map(async (partner) => {
+          try {
+            const res = await apiFetch(
+              `/api/posts/${forwardPost._id}/forward`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ recipientId: partner._id }),
+              },
+            );
+            const data = await res.json();
+            return res.ok && data.success;
+          } catch {
+            return false;
+          }
+        }),
+      );
+      const okCount = results.filter(Boolean).length;
+      if (okCount > 0) {
+        setPosts((prev) =>
+          prev.map((p) =>
+            p._id === forwardPost._id
+              ? { ...p, sharesCount: (p.sharesCount || 0) + okCount }
+              : p,
+          ),
+        );
         window.dispatchEvent(
           new CustomEvent("showToast", {
             detail: {
-              message: "Orbit link copied to clipboard!",
+              message:
+                okCount === partners.length
+                  ? "Post forwarded!"
+                  : `Post forwarded to ${okCount} of ${partners.length} chats.`,
               type: "success",
             },
           }),
         );
-      } catch (clipErr) {
-        logger.error("Clipboard fallback failed", clipErr);
+        return true;
       }
+      window.dispatchEvent(
+        new CustomEvent("showToast", {
+          detail: { message: "Failed to forward post", type: "error" },
+        }),
+      );
+      return false;
+    } catch (e) {
+      logger.error("Failed to forward post", e);
+      window.dispatchEvent(
+        new CustomEvent("showToast", {
+          detail: { message: "Failed to forward post", type: "error" },
+        }),
+      );
+      return false;
     }
   };
 
-  // Trigger post view registration via API
-  const registerViewCount = (postId: string) => {
-    apiFetch(`/api/posts/${postId}/view`, { method: "POST" });
+  // Keep the in-memory comment cache bounded to the 20 most recent posts.
+  // Shared by the persist effect and prefetchComments so the two writers can
+  // never drift apart in eviction behavior.
+  const trimCommentCache = () => {
+    const keys = [...commentCacheRef.current.keys()];
+    while (commentCacheRef.current.size > 20) {
+      commentCacheRef.current.delete(keys[0]);
+      keys.shift();
+    }
   };
 
-  // IntersectionObserver-based view tracking with 3s visibility requirement
-  const viewTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
-    new Map(),
-  );
-  const viewTrackedRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (loading || posts.length === 0) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          const postId = entry.target.getAttribute("data-post-id");
-          if (!postId) return;
-
-          if (entry.isIntersecting) {
-            // Start 3-second timer if not already tracked or pending
-            if (
-              !viewTrackedRef.current.has(postId) &&
-              !viewTimersRef.current.has(postId)
-            ) {
-              const timer = setTimeout(() => {
-                viewTrackedRef.current.add(postId);
-                registerViewCount(postId);
-                viewTimersRef.current.delete(postId);
-              }, 3000);
-              viewTimersRef.current.set(postId, timer);
-            }
-          } else {
-            // Left viewport before 3 seconds — cancel timer
-            const timer = viewTimersRef.current.get(postId);
-            if (timer) {
-              clearTimeout(timer);
-              viewTimersRef.current.delete(postId);
-            }
-          }
+  // Warm a post's comment thread BEFORE the drawer opens so the first open
+  // feels instant. Fired when a card scrolls into view and on hover/focus of
+  // the comments button. Idempotent: skips posts already cached or already
+  // being prefetched, and honors readOnly (no usable drawer there). The
+  // response is written into commentCacheRef in the exact shape loadComments
+  // expects, so when the user taps the button the drawer renders immediately
+  // (stale-while-revalidate) instead of showing a skeleton while page 1 loads.
+  const commentPrefetchingRef = useRef<Set<string>>(new Set());
+  const prefetchComments = (postId: string) => {
+    if (readOnly) return;
+    if (commentCacheRef.current.has(postId)) return;
+    if (commentPrefetchingRef.current.has(postId)) return;
+    commentPrefetchingRef.current.add(postId);
+    apiFetch(`/api/comments/${postId}`)
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data?.success) return;
+        commentsFetchedRef.current.add(postId);
+        commentCacheRef.current.set(postId, {
+          comments: (data.comments || []) as Comment[],
+          cursor: (data.nextCursor as string) || null,
+          hasMore: !!data.hasMore,
         });
-      },
-      { threshold: 0.3 },
-    );
+        trimCommentCache();
+      })
+      .catch(() => {
+        /* best-effort prefetch — a failure here only means the drawer will
+           fetch on open; never log noise for cards users may not open */
+      })
+      .finally(() => {
+        commentPrefetchingRef.current.delete(postId);
+      });
+  };
 
-    // Observe all post cards
-    const postCards = document.querySelectorAll("[data-post-id]");
-    postCards.forEach((card) => observer.observe(card));
+  // Post view tracking (3s visibility → POST /view, deduped per post). Also
+  // prefetches the comment thread as cards scroll into view for an instant
+  // first drawer open.
+  usePostViewTracking({
+    enabled: !loading && posts.length > 0,
+    onIntersect: prefetchComments,
+    deps: [posts, loading],
+  });
 
-    return () => {
-      observer.disconnect();
-      viewTimersRef.current.forEach((timer) => clearTimeout(timer));
-      viewTimersRef.current.clear();
-    };
-  }, [posts, loading]);
+  // Media onPlay/onLoad count a view instantly (shared app-wide dedup).
 
   // Comments Loading mechanics for expanded threads drawer
   const loadComments = async (postId: string) => {
-    setCommentsLoading(true);
+    // Stale-while-revalidate: if we already have this thread in memory, show it
+    // INSTANTLY (zero spinner) while the fresh fetch runs in the background.
+    // The fetch still bypasses the HTTP cache so the drawer always converges on
+    // the freshest server state — other users' comments arrive via socket while
+    // it's open anyway.
+    // `.has()` (not truthiness) so a cached EMPTY thread (a post with zero
+    // comments) is treated as a valid cached thread, not as a cache miss.
+    const cached = commentCacheRef.current.get(postId);
+    if (cached) {
+      setComments(cached.comments);
+      setCommentCursor(cached.cursor);
+      setCommentHasMore(cached.hasMore);
+      setCommentsLoading(false);
+    } else {
+      // Clear any thread from a previously opened post, then show a skeleton.
+      setComments([]);
+      setCommentCursor(null);
+      setCommentHasMore(false);
+      setCommentsLoading(true);
+    }
     try {
-      // Bypass the cache every time the drawer opens — comments from OTHER
-      // users arrive via socket only while the drawer is open, so a cache-first
-      // read after the drawer was closed could serve a stale thread.
       const res = await apiFetch(`/api/comments/${postId}`, {
         bypassCache: true,
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setComments(data.comments || []);
+        commentsFetchedRef.current.add(postId);
+        const fresh: Comment[] = data.comments || [];
+        if (cached && cached.comments.length > 0 && fresh.length > 0) {
+          // We previously loaded deeper than one page (Load more) — MERGE the
+          // fresh first page into the LIVE thread (functional update, so any
+          // socket-driven adds/deletes/reactions that landed while this fetch
+          // was in flight are preserved) instead of replacing it. Newest first,
+          // older loaded pages stay. Sorted by _id (desc) so a brand-new socket
+          // comment always sits at the top.
+          const freshIds = new Set(fresh.map((c) => c._id));
+          setComments((prev) =>
+            [...fresh, ...prev.filter((c) => !freshIds.has(c._id))].sort(
+              (a, b) => (a._id < b._id ? 1 : -1),
+            ),
+          );
+          // If the cached thread reached deeper than the fresh first page,
+          // keep ITS pagination (cursor = oldest loaded, hasMore from the last
+          // page fetched); otherwise adopt the server's page-1 pagination.
+          const hasOlderPages = cached.comments.some(
+            (c) => !freshIds.has(c._id),
+          );
+          if (hasOlderPages) {
+            setCommentCursor(cached.cursor);
+            setCommentHasMore(cached.hasMore);
+          } else {
+            setCommentCursor(data.nextCursor || null);
+            setCommentHasMore(!!data.hasMore);
+          }
+        } else if (fresh.length === 0) {
+          // Server reports zero comments — the whole thread is gone (e.g. all
+          // comments deleted while the app was closed). Adopt the empty state
+          // so stale cached comments are never resurrected.
+          setComments([]);
+          setCommentCursor(null);
+          setCommentHasMore(false);
+        } else {
+          setComments(fresh);
+          setCommentCursor(data.nextCursor || null);
+          setCommentHasMore(!!data.hasMore);
+        }
       }
     } catch (e) {
       logger.error(e);
@@ -1761,6 +2045,65 @@ export default function Feed({
       setCommentsLoading(false);
     }
   };
+
+  // Append the next older page of comments when the user taps "Load more".
+  // Merges server comments into the existing list (deduping by _id so socket
+  // additions during the fetch never duplicate), updates the cursor, and hides
+  // the button once the server reports no more pages.
+  const loadMoreComments = async () => {
+    if (!selectedPost || !commentCursor || commentsLoadingMore) return;
+    setCommentsLoadingMore(true);
+    try {
+      const res = await apiFetch(
+        `/api/comments/${selectedPost._id}?cursor=${encodeURIComponent(commentCursor)}`,
+        { bypassCache: true },
+      );
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setComments((prev) => {
+          const seen = new Set(prev.map((c) => c._id));
+          const merged = [...prev];
+          for (const c of data.comments || []) {
+            if (!seen.has(c._id)) {
+              merged.push(c);
+              seen.add(c._id);
+            }
+          }
+          return merged;
+        });
+        setCommentCursor(data.nextCursor || null);
+        setCommentHasMore(!!data.hasMore);
+      }
+    } catch (e) {
+      logger.error(e);
+    } finally {
+      setCommentsLoadingMore(false);
+    }
+  };
+
+  // Persist the open drawer's thread (comments + pagination state) to the
+  // in-memory cache on EVERY change (socket adds/deletes, optimistic adds,
+  // reactions, likes, load-more) so reopens are instant and resume exactly
+  // where the user left off. Bounded to the 20 most recent posts.
+  useEffect(() => {
+    if (!selectedPost) return;
+    // Never persist an empty thread that hasn't been SUCCESSFULLY fetched yet:
+    // the cache-miss branch clears comments before its fetch resolves, and a
+    // failed fetch would otherwise permanently cache an empty thread for a post
+    // that may have comments. A server-confirmed empty thread IS cached.
+    if (
+      comments.length === 0 &&
+      !commentsFetchedRef.current.has(selectedPost._id)
+    ) {
+      return;
+    }
+    commentCacheRef.current.set(selectedPost._id, {
+      comments,
+      cursor: commentCursor,
+      hasMore: commentHasMore,
+    });
+    trimCommentCache();
+  }, [comments, selectedPost, commentCursor, commentHasMore]);
 
   // Submit dynamic comments inside the drawer
   const handleAddCommentSubmit = async (e: React.FormEvent) => {
@@ -1982,6 +2325,35 @@ export default function Feed({
                     ? "Content you've shared with your followers."
                     : "Stay updated with your network's latest activity."}
             </p>
+
+            {/* Feed mode toggle: Home vs For You (affinity-scored) */}
+            {!searchQuery &&
+              !showSavesOnly &&
+              !showRepostsOnly &&
+              !singlePostSlug && (
+                <div className="mt-1 inline-flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900/60 p-1">
+                  <button
+                    onClick={() => handleFeedModeChange("home")}
+                    className={`rounded-full px-3 py-1 text-[11px] font-bold transition-all cursor-pointer ${
+                      feedMode === "home"
+                        ? "bg-white text-zinc-900 shadow-sm"
+                        : "text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    Home
+                  </button>
+                  <button
+                    onClick={() => handleFeedModeChange("forYou")}
+                    className={`rounded-full px-3 py-1 text-[11px] font-bold transition-all cursor-pointer ${
+                      feedMode === "forYou"
+                        ? "bg-white text-zinc-900 shadow-sm"
+                        : "text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    For You
+                  </button>
+                </div>
+              )}
           </div>
 
           {singlePostSlug && (
@@ -2040,40 +2412,44 @@ export default function Feed({
                         alt="user avatar"
                         onClick={() => onUserSelected(user.username)}
                         className="h-9 w-9 shrink-0 self-start rounded-full object-cover border border-zinc-800 shadow-sm cursor-pointer hover:opacity-80 transition-opacity"
-                      />
+                      />					      <div className="flex-1 min-w-0 space-y-3">
+					        {/* Post Title input — error shown just above the field */}
+					        <ValidationMessage
+					          message={fieldErrors.title}
+					          className="-mx-4"
+					        />
+					        <div className="flex items-center gap-2">
+					          <input
+					            type="text"
+					            maxLength={500}
+					            placeholder="Add a title... (optional)"
+					            value={title}
+					            onChange={(e) => {
+					              setTitle(e.target.value);
+					              clearFieldError("title");
+					            }}
+					            className="flex-1 bg-transparent text-[12px] md:text-sm font-bold text-white placeholder-zinc-500 outline-none focus:placeholder-zinc-400 rounded-none"
+					          />
+					          <CharCounter current={title.length} max={500} />
+					        </div>
 
-                      <div className="flex-1 min-w-0 space-y-3">
-                        {/* Post Title input */}
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            maxLength={500}
-                            placeholder="Add a title... (optional)"
-                            value={title}
-                            onChange={(e) => {
-                              setTitle(e.target.value);
-                              clearFieldError("title");
-                            }}
-                            className="flex-1 bg-transparent text-[12px] md:text-sm font-bold text-white placeholder-zinc-500 outline-none focus:placeholder-zinc-400 rounded-none"
-                          />
-                          <CharCounter current={title.length} max={500} />
-                        </div>
-                        <ValidationMessage message={fieldErrors.title} />
-
-                        {/* Post Content input */}
-                        <div className="relative">
-                          <textarea
-                            ref={contentRef}
-                            rows={3}
-                            placeholder="Share your thoughts... Use #hashtags and @mentions (optional)"
-                            value={content}
-                            onChange={handleContentChange}
-                            className="w-full bg-transparent text-[12px] md:text-sm text-zinc-300 placeholder-zinc-500 outline-none resize-none leading-relaxed focus:placeholder-zinc-400 relative rounded-none px-1"
-                          />
-                          <div className="flex items-center justify-end">
-                            <CharCounter current={content.length} max={5000} />
-                          </div>
-                          <ValidationMessage message={fieldErrors.content} />
+					        {/* Post Content input — error shown just above the field */}
+					        <ValidationMessage
+					          message={fieldErrors.content}
+					          className="-mx-4 px-1"
+					        />
+					        <div className="relative">
+					          <textarea
+					            ref={contentRef}
+					            rows={3}
+					            placeholder="Share your thoughts... Use #hashtags and @mentions (optional)"
+					            value={content}
+					            onChange={handleContentChange}
+					            className="w-full bg-transparent text-[12px] md:text-sm text-zinc-300 placeholder-zinc-500 outline-none resize-none leading-relaxed focus:placeholder-zinc-400 relative rounded-none px-1"
+					          />
+					          <div className="flex items-center justify-end">
+					            <CharCounter current={content.length} max={5000} />
+					          </div>
 
                           {/* Autocomplete suggestions box */}
                           {showMentionDropdown && candidateUsers.length > 0 && (
@@ -2121,6 +2497,7 @@ export default function Feed({
                           >
                             <img
                               loading="lazy"
+                              decoding="async"
                               src={preview}
                               alt=""
                               className="w-full h-full object-cover"
@@ -2433,9 +2810,11 @@ export default function Feed({
                             <div
                               className={`absolute top-1/2 -translate-y-1/2 flex items-center gap-1 ${swipeOffset > 0 ? "left-2" : "right-2"}`}
                             >
-                              <span className="text-[18px]">
-                                {swipeOffset > 0 ? "❤️" : "🔄"}
-                              </span>
+                              {swipeOffset > 0 ? (
+                                <Heart className="h-5 w-5 text-red-400 fill-red-400/80" />
+                              ) : (
+                                <Repeat2 className="h-5 w-5 text-green-400" />
+                              )}
                               <span
                                 className={`text-[10px] font-bold uppercase tracking-wider ${swipeOffset > 0 ? "text-red-400" : "text-green-400"}`}
                               >
@@ -2540,15 +2919,20 @@ export default function Feed({
                                 {post.title}
                               </h3>
                               <div className="space-y-1">
-                                <p className="text-base md:text-lg text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">
-                                  {renderFormattedContent(
+                                <TranslateInline
+                                  text={
                                     post.content &&
-                                      post.content.length > 300 &&
-                                      !expandedPosts[post._id]
+                                    post.content.length > 300 &&
+                                    !expandedPosts[post._id]
                                       ? post.content.slice(0, 300) + "..."
-                                      : post.content,
+                                      : post.content
+                                  }
+                                  render={(t) => (
+                                    <p className="text-base md:text-lg text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">
+                                      {renderFormattedContent(t)}
+                                    </p>
                                   )}
-                                </p>
+                                />
                                 {post.content && post.content.length > 300 && (
                                   <button
                                     onClick={(e) => {
@@ -2564,6 +2948,11 @@ export default function Feed({
                                       ? "See less"
                                       : "See more"}
                                   </button>
+                                )}
+                                {post.content && extractFirstUrl(post.content) && (
+                                  <LinkPreviewCard
+                                    url={extractFirstUrl(post.content)!}
+                                  />
                                 )}
                               </div>
                             </div>
@@ -2662,6 +3051,7 @@ export default function Feed({
                               >
                                 <img
                                   loading="lazy"
+                                  decoding="async"
                                   src={post.image.url}
                                   alt="attachment media"
                                   className="w-full h-auto max-h-200 transition-transform duration-500 group-hover/image:scale-[1.02]"
@@ -2723,6 +3113,8 @@ export default function Feed({
                                   setSelectedPost(post);
                                   loadComments(post._id);
                                 }}
+                                onMouseEnter={() => prefetchComments(post._id)}
+                                onFocus={() => prefetchComments(post._id)}
                                 className={`flex items-center gap-1.5 text-sm font-semibold select-none group focus:outline-none ${readOnly ? "cursor-default" : "cursor-pointer"}`}
                                 aria-label={`View comments (${post.commentsCount} comments)`}
                               >
@@ -2794,6 +3186,18 @@ export default function Feed({
                                 </span>
                               </button>
 
+                              {/* Quote repost trigger */}
+                              <button
+                                onClick={() =>
+                                  !readOnly && handleQuoteRepost(post._id)
+                                }
+                                title="Quote Repost (repost with comment)"
+                                aria-label={`Quote repost post (${post.repostsCount} reposts)`}
+                                className={`flex items-center gap-1.5 text-xs font-semibold select-none group focus:outline-none transition-colors ${readOnly ? "cursor-default text-zinc-500" : "cursor-pointer text-zinc-500 hover:text-zinc-300"}`}
+                              >
+                                Quote
+                              </button>
+
                               {/* Save trigger */}
                               <button
                                 onClick={() =>
@@ -2848,19 +3252,25 @@ export default function Feed({
                                 {post.viewsCount || 0}
                               </span>
 
-                              {/* Share trigger icon */}
-                              <button
-                                onClick={() =>
-                                  !readOnly && handleSharePost(post._id)
+                              {/* Share trigger icon */}												<ShareMenu
+														onForward={() => setForwardPost(post)}
+														onCopyLink={() => copyPostLink(post)}
+														onSaveToCollection={() =>
+															void openSaveToCollection(post)
+														}
+                                triggerContent={
+                                  <Share2
+                                    className="h-3.5 w-3.5"
+                                    aria-hidden="true"
+                                  />
                                 }
-                                className={`flex h-7.5 w-7.5 items-center justify-center rounded-full transition-colors ${readOnly ? "cursor-default text-zinc-500" : "cursor-pointer hover:bg-zinc-800 text-zinc-500 hover:text-white"}`}
-                                aria-label="Share post"
-                              >
-                                <Share2
-                                  className="h-3.5 w-3.5"
-                                  aria-hidden="true"
-                                />
-                              </button>
+                                triggerClassName={`flex h-7.5 w-7.5 items-center justify-center rounded-full transition-colors ${
+                                  readOnly
+                                    ? "cursor-default text-zinc-500"
+                                    : "cursor-pointer hover:bg-zinc-800 text-zinc-500 hover:text-white"
+                                }`}
+                                ariaLabel="Share post"
+                              />
                             </div>
                           </GlassCard>
                         </div>
@@ -2937,9 +3347,11 @@ export default function Feed({
                           <div
                             className={`absolute top-1/2 -translate-y-1/2 flex items-center gap-1 ${swipeOffset > 0 ? "left-2" : "right-2"}`}
                           >
-                            <span className="text-[18px]">
-                              {swipeOffset > 0 ? "❤️" : "🔄"}
-                            </span>
+                            {swipeOffset > 0 ? (
+                              <Heart className="h-5 w-5 text-red-400 fill-red-400/80" />
+                            ) : (
+                              <Repeat2 className="h-5 w-5 text-green-400" />
+                            )}
                             <span
                               className={`text-[10px] font-bold uppercase tracking-wider ${swipeOffset > 0 ? "text-red-400" : "text-green-400"}`}
                             >
@@ -3023,9 +3435,17 @@ export default function Feed({
                             <h3 className="font-sans text-lg md:text-xl font-bold text-zinc-100 tracking-tight leading-snug">
                               {post.title}
                             </h3>
-                            <p className="text-base md:text-lg text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">
-                              {renderFormattedContent(post.content)}
-                            </p>
+                            <TranslateInline
+                              text={post.content}
+                              render={(t) => (
+                                <p className="text-base md:text-lg text-zinc-300 leading-relaxed whitespace-pre-wrap select-text">
+                                  {renderFormattedContent(t)}
+                                </p>
+                              )}
+                            />
+                            {post.content && extractFirstUrl(post.content) && (
+                              <LinkPreviewCard url={extractFirstUrl(post.content)!} />
+                            )}
                           </div>
 
                           {/* Poll attachment */}
@@ -3053,7 +3473,7 @@ export default function Feed({
                                   muted={videoMuted[post._id] ?? true}
                                   playsInline
                                   loop={false}
-                                  onPlay={() => registerViewCount(post._id)}
+                                  onPlay={() => registerPostView(post._id)}
                                   onEnded={() => handleVideoEnded(post._id)}
                                 />
                                 {/* Mute toggle button */}
@@ -3099,7 +3519,7 @@ export default function Feed({
                                 <ImageCarousel
                                   images={post.images}
                                   onImageLoad={() =>
-                                    registerViewCount(post._id)
+                                    registerPostView(post._id)
                                   }
                                   onImageClick={(url) => {
                                     window.dispatchEvent(
@@ -3125,8 +3545,9 @@ export default function Feed({
                               <PinchZoom>
                                 <img
                                   loading="lazy"
+                                  decoding="async"
                                   src={post.image.url}
-                                  alt="attachment media"									  onLoad={() => registerViewCount(post._id)}
+                                  alt="attachment media"									  onLoad={() => registerPostView(post._id)}
 									  className="w-full h-auto max-h-200 transition-transform duration-500 group-hover/image:scale-[1.02]"
 									/>
                               </PinchZoom>
@@ -3232,6 +3653,7 @@ export default function Feed({
                             <button
                               onClick={() => handleQuoteRepost(post._id)}
                               title="Quote Repost (repost with comment)"
+                              aria-label={`Quote repost post (${post.repostsCount} reposts)`}
                               className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-300 select-none group focus:outline-none cursor-pointer transition-colors"
                             >
                               Quote
@@ -3279,12 +3701,15 @@ export default function Feed({
                             </span>
 
                             {/* Share trigger icon */}
-                            <button
-                              onClick={() => handleSharePost(post._id)}
-                              className="flex h-7.5 w-7.5 items-center justify-center rounded-full hover:bg-zinc-800 transition-colors cursor-pointer text-zinc-500 hover:text-white"
-                            >
-                              <Share2 className="h-3.5 w-3.5" />
-                            </button>
+                            <ShareMenu
+                              onForward={() => setForwardPost(post)}
+                              onCopyLink={() => copyPostLink(post)}
+                              triggerContent={
+                                <Share2 className="h-3.5 w-3.5" />
+                              }
+                              triggerClassName="flex h-7.5 w-7.5 items-center justify-center rounded-full hover:bg-zinc-800 transition-colors cursor-pointer text-zinc-500 hover:text-white"
+                              ariaLabel="Share post"
+                            />
                             <ReportButton
                               contentType="post"
                               contentId={post._id}
@@ -3353,13 +3778,32 @@ export default function Feed({
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
-                  </div>
-
-                  {/* Comment Thread Content Container */}
-                  <div className="grow overflow-y-auto space-y-3 pb-4 scrollbar-none">
+                  </div>				  {/* Comment Thread Content Container */}
+				  <div className="grow overflow-y-auto space-y-1.5 pb-4 scrollbar-none">
                     {commentsLoading ? (
-                      <div className="flex justify-center py-12">
-                        <Loader2 className="h-5 w-5 animate-spin text-white" />
+                      <div className="space-y-3 py-1" aria-busy="true">
+                        {[0, 1, 2, 3].map((n) => (
+                          <div
+                            key={n}
+                            className="flex items-start gap-2.5 rounded-2xl border border-white/5 bg-zinc-900/15 px-3 py-2.5"
+                            style={
+                              {
+                                "--shimmer-delay": `${n * 0.08}s`,
+                              } as React.CSSProperties
+                            }
+                          >
+                            <div className="h-5.5 w-5.5 shrink-0 rounded-full shimmer-bg" />
+                            <div className="flex-1 space-y-2 pt-0.5">
+                              <div className="flex items-center gap-2">
+                                <div className="h-2.5 w-24 rounded shimmer-bg" />
+                                <div className="h-2 w-10 rounded shimmer-bg" />
+                              </div>
+                              <div className="h-3 w-full rounded shimmer-bg" />
+                              <div className="h-3 w-2/3 rounded shimmer-bg" />
+                              <div className="h-2.5 w-32 rounded shimmer-bg" />
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     ) : comments.length === 0 ? (
                       <div className="py-16 text-center text-xs text-zinc-500">
@@ -3381,8 +3825,29 @@ export default function Feed({
                           }}
                           getRelativeDate={getRelativeDate}
                           renderFormattedContent={renderFormattedContent}
+                          postSlug={selectedPost?.slug}
                         />
                       ))
+                    )}
+                    {/* Load-more pagination: server returns nextCursor/hasMore,
+                        so busy threads can be scrolled through completely. */}
+                    {!commentsLoading &&
+                      !commentsLoadingMore &&
+                      commentHasMore && (
+                        <div className="flex justify-center pt-2">
+                          <button
+                            onClick={loadMoreComments}
+                            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-[11px] font-semibold text-zinc-300 hover:bg-white/10 hover:text-white transition-all cursor-pointer"
+                          >
+                            <ChevronDown className="h-3.5 w-3.5" />
+                            Load more comments
+                          </button>
+                        </div>
+                      )}
+                    {commentsLoadingMore && (
+                      <div className="flex justify-center pt-2 pb-1">
+                        <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
+                      </div>
                     )}
                   </div>
 
@@ -3404,34 +3869,49 @@ export default function Feed({
                             <X className="h-3 w-3" />
                           </button>
                         </div>
-                      )}
-                      <div className="flex items-center gap-3">
-                        <div className="relative flex-1">
-                          <input
-                            type="text"
-                            required
-                            maxLength={1000}
-                            spellCheck={false}
-                            placeholder="Write a comment..."
-                            value={newCommentText}
-                            onChange={(e) => {
-                              setNewCommentText(e.target.value);
-                              clearFieldError("comment");
-                            }}
-                            className="w-full rounded-full border border-white/5 bg-zinc-900/40 px-4 py-2.5 text-[12px] md:text-sm leading-normal text-white placeholder-zinc-550 outline-none focus:border-white/10 focus:bg-zinc-900/60 transition-all pr-14 shadow-inner"
-                          />
-                          <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
-                            <CharCounter
-                              current={newCommentText.length}
-                              max={1000}
-                            />
-                          </div>
-                        </div>
-                        <ValidationMessage message={fieldErrors.comment} />
-                        <button
+                      )}					      {/* "Comment cannot be empty" etc. — shown just above the input */}
+					      {fieldErrors.comment && (
+					        <div className="mb-1.5">
+					          <ValidationMessage message={fieldErrors.comment} />
+					        </div>
+					      )}
+					      <div className="flex items-end gap-3">
+					        <div className="relative flex-1">
+					          <textarea
+					            ref={commentRef}
+					            rows={1}
+					            wrap="soft"
+					            required
+					            maxLength={1000}
+					            spellCheck={false}
+					            placeholder="Write a comment..."
+					            value={newCommentText}
+					            onChange={(e) => {
+					              setNewCommentText(e.target.value);
+					              clearFieldError("comment");
+					            }}
+					            onKeyDown={(e) => {
+					              // WhatsApp-style: Enter sends, Shift+Enter inserts a
+					              // real line break that is preserved in the comment.
+					              if (e.key === "Enter" && !e.shiftKey) {
+					                if (!newCommentText.trim()) return;
+					                e.preventDefault();
+					                e.currentTarget.form?.requestSubmit();
+					              }
+					            }}
+					            className="w-full !rounded-2xl border border-zinc-800 bg-zinc-950/40 text-[12px] md:text-sm placeholder:text-[12px] md:placeholder:text-sm text-slate-100 placeholder-zinc-500 outline-none focus:border-white focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-zinc-700 px-4 py-2.5 pr-16 resize-none max-h-[120px] overflow-y-auto leading-relaxed [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+					          />
+					          <div className="absolute right-3.5 top-2.5">
+					            <CharCounter
+					              current={newCommentText.length}
+					              max={1000}
+					            />
+					          </div>
+					        </div>
+					        <button
                           type="submit"
-                          disabled={submittingComment}
-                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-black hover:bg-zinc-150 disabled:opacity-50 hover:scale-105 active:scale-95 transition-all cursor-pointer shadow-md"
+                          disabled={submittingComment || !newCommentText.trim()}
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-black hover:bg-zinc-150 disabled:opacity-50 disabled:hover:scale-100 disabled:active:scale-100 hover:scale-105 active:scale-95 transition-all cursor-pointer shadow-md"
                         >
                           <Send className="h-4 w-4" />
                         </button>
@@ -3488,7 +3968,108 @@ export default function Feed({
           onClose={() => setQuoteRepostPost(null)}
           onSubmit={handleSubmitQuoteRepost}
         />
-      )}
-    </>
+      )}		{/* Forward post modal */}
+		<ForwardModal
+			open={!!forwardPost}
+			onClose={() => setForwardPost(null)}
+			title="Forward post"
+			subtitle={forwardPost?.title || forwardPost?.content?.slice(0, 60)}
+			myUserId={user?._id}
+			onForward={handleForwardPost}
+		/>
+
+		{/* Save to collection modal */}
+		{collectionPost &&
+			createPortal(
+				<div
+					className="fixed inset-0 z-[400] flex items-center justify-center bg-black/75 p-4"
+					onClick={() => setCollectionPost(null)}>
+					<div
+						className="flex w-full max-w-sm flex-col overflow-hidden rounded-3xl border border-white/10 bg-zinc-950 shadow-2xl"
+						onClick={(e) => e.stopPropagation()}>
+						<div className="flex items-center justify-between border-b border-white/5 px-5 py-4">
+							<div>
+								<h3 className="text-sm font-bold text-white">
+									Save to collection
+								</h3>
+								<p className="mt-0.5 text-[11px] text-zinc-500">
+									{collectionPost.title ||
+										collectionPost.content?.slice(0, 60)}
+								</p>
+							</div>
+							<button
+								onClick={() => setCollectionPost(null)}
+								className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-white transition-all cursor-pointer">
+								<X className="h-4 w-4" />
+							</button>
+						</div>
+						<div className="max-h-64 overflow-y-auto p-3">
+							{loadingCollections ? (
+								<div className="flex items-center justify-center py-8">
+									<Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
+								</div>
+							) : myCollections.length === 0 ? (
+								<div className="px-2 py-6 text-center">
+									<FolderOpen className="mx-auto h-7 w-7 text-zinc-600 mb-2" />
+									<p className="text-xs text-zinc-500">
+										No collections yet — create one below.
+									</p>
+								</div>
+							) : (
+								<div className="space-y-1">
+									{myCollections.map((c) => (
+										<button
+											key={c._id}
+											onClick={() =>
+												void handleAddToCollection(c._id)
+											}
+											className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-all cursor-pointer">
+											<FolderOpen className="h-4 w-4 shrink-0 text-zinc-500" />
+											<span className="min-w-0 flex-1 truncate">
+												{c.name}
+											</span>
+											<span className="text-[10px] text-zinc-500">
+												{(c.posts || []).length}
+											</span>
+										</button>
+									))}
+								</div>
+							)}
+						</div>
+						<div className="border-t border-white/5 p-3">
+							<div className="flex items-center gap-2">
+								<input
+									value={newCollName}
+									onChange={(e) => setNewCollName(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.key === "Enter")
+											void handleCreateAndAddCollection();
+									}}
+									placeholder="New collection name..."
+									maxLength={100}
+									className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-white/40 transition-colors"
+								/>
+								<button
+									onClick={() =>
+										void handleCreateAndAddCollection()
+									}
+									disabled={
+										!newCollName.trim() || creatingColl
+									}
+									className="flex shrink-0 items-center gap-1 rounded-full bg-white px-3.5 py-2 text-[10px] font-bold text-black hover:bg-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer">
+									{creatingColl ? (
+										<Loader2 className="h-3.5 w-3.5 animate-spin" />
+									) : (
+										<Plus className="h-3.5 w-3.5" />
+									)}
+									Create
+								</button>
+							</div>
+						</div>
+					</div>
+				</div>,
+				document.body,
+			)}
+	</>
   );
 }

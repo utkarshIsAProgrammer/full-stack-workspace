@@ -6,6 +6,7 @@ import {
   getUserFlags,
   toggleUserMute,
   toggleUserBan,
+  getAdminStats,
 } from "../controllers/admin.controllers";
 import { protect } from "../middlewares/auth.middleware";
 import { generalLimiter } from "../middlewares/ratelimit.middleware";
@@ -16,6 +17,7 @@ const router = express.Router();
 router.get("/flags/mine", protect, generalLimiter, getUserFlags);
 
 // Admin routes (protected by isAdmin check in controller)
+router.get("/stats", protect, generalLimiter, getAdminStats);
 router.get("/flags", protect, generalLimiter, getFeatureFlags);
 router.post("/flags", protect, generalLimiter, createFeatureFlag);
 router.put("/flags/:flagId", protect, generalLimiter, updateFeatureFlag);

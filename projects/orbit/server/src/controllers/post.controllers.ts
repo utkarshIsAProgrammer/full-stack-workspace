@@ -916,6 +916,90 @@ export const sharePost = async (req: Request<Params>, res: Response) => {
   }
 };
 
+// forward a post to another user — notifies the recipient in-app
+// (notification center + badge) and via device push.
+export const forwardPost = async (req: Request<Params>, res: Response) => {
+  const { postId } = req.params;
+  const senderId = req.user?._id;
+  const { recipientId } = req.body || {};
+
+  try {
+    if (!senderId) throw new UnauthorizedError("Unauthorized!");
+
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
+      throw new BadRequestError("Invalid post ID!");
+    }
+
+    if (!recipientId || !mongoose.Types.ObjectId.isValid(recipientId)) {
+      throw new BadRequestError("Invalid recipient!");
+    }
+
+    if (senderId.toString() === recipientId) {
+      throw new BadRequestError("Cannot forward a post to yourself!");
+    }
+
+    // closeFriends posts can only be forwarded by the author / their close friends
+    const { allowed } = await canInteractWithPost(postId, senderId.toString());
+    if (!allowed) {
+      throw new NotFoundError("Post not found!");
+    }
+
+    const post = await Post.findById(postId).select("_id author slug visibility").lean();
+    if (!post) {
+      throw new NotFoundError("Post not found!");
+    }
+
+    const recipient = await User.findById(recipientId).select("_id").lean();
+    if (!recipient) {
+      throw new BadRequestError("Recipient not found!");
+    }
+
+    // count the forward as a share
+    const updated = await Post.findByIdAndUpdate(
+      postId,
+      { $inc: { sharesCount: 1 } },
+      { returnDocument: "after" },
+    ).select("sharesCount");
+
+    if (updated) emitPostShare(postId, updated.sharesCount);
+    await deleteCache(`post:${postId}`);
+
+    // Log interaction for feed ranking
+    if (senderId.toString() !== post.author.toString()) {
+      logInteraction(senderId.toString(), post.author.toString(), postId, "share", []);
+    }
+
+    // The RECIPIENT must be able to view the post too — forwarding a
+    // closeFriends post to an outsider would create a dead-end notification
+    // pointing at content they can never open.
+    const recipientCanView = await canViewCloseFriendsPost(post, recipientId);
+
+    // Notify the recipient (skipped when they are mutually blocked with
+    // the post author — otherwise they'd get a dead-end notification).
+    if (
+      recipientCanView &&
+      !(await areMutuallyBlocked(recipientId, post.author.toString()))
+    ) {
+      await createNotification({
+        recipient: recipientId,
+        sender: senderId.toString(),
+        type: "post_share",
+        post: postId,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Post forwarded successfully!",
+      shares: updated?.sharesCount,
+    });
+  } catch (err: any) {
+    if (err.statusCode && err.statusCode < 500) throw err;
+    logger.error(`Error in forwardPost controller!`, { error: err?.message });
+    throw new AppError("Internal server error!");
+  }
+};
+
 // get post by slug
 export const getPostBySlug = async (req: Request<{ slug: string }>, res: Response) => {
   const { slug } = req.params;
@@ -1137,14 +1221,9 @@ export const viewsCount = async (req: Request<Params>, res: Response) => {
       throw new NotFoundError("Post not found!");
     }
 
-    // ignore self views
-    if (currentUser && post.author.toString() === currentUser.toString()) {
-      return res.status(200).json({
-        success: true,
-        message: "Own post view ignored!",
-        views: post.viewsCount,
-      });
-    }
+    // Note: the author's own view counts too — every screen the post is
+    // displayed on for 3+ seconds registers a view (feed, profile, saves,
+    // reposts, trending, share, etc.), so the author sees a real, live count.
 
     // increment views
     const updatedPost = await Post.findByIdAndUpdate(

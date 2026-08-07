@@ -2,6 +2,11 @@ import type { Request, Response, NextFunction } from "express";
 import { FeatureFlag } from "../models/featureFlag.model";
 import { User } from "../models/user.model";
 import Report from "../models/report.model";
+import Post from "../models/post.model";
+import Comment from "../models/comment.model";
+import Glimpse from "../models/glimpse.model";
+import { Community } from "../models/community.model";
+import { ModerationItem } from "../models/moderationItem.model";
 import {
   BadRequestError,
   NotFoundError,
@@ -11,7 +16,71 @@ import {
 } from "../utilities/errors";
 import { logger } from "../utilities/logger";
 import { deleteCache } from "../configs/cache";
-import { disconnectUserSockets } from "../configs/socket";
+import { clearMemUserCache } from "../middlewares/auth.middleware";
+import {
+  disconnectUserSockets,
+  getOnlineUsersCount,
+} from "../configs/socket";
+
+/**
+ * GET /api/admin/stats — platform overview metrics (admin only).
+ */
+export const getAdminStats = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const user = req.user as any;
+    if (!user?.isAdmin) return next(new ForbiddenError("Admin access required!"));
+
+    const [
+      totalUsers,
+      totalPosts,
+      totalComments,
+      totalGlances,
+      totalCommunities,
+      pendingReports,
+      pendingModeration,
+      mutedUsers,
+      bannedUsers,
+    ] = await Promise.all([
+      User.countDocuments(),
+      Post.countDocuments({ status: { $ne: "draft" } }),
+      Comment.countDocuments(),
+      Glimpse.countDocuments(),
+      Community.countDocuments(),
+      Report.countDocuments({ status: "pending" }),
+      ModerationItem.countDocuments({ status: "pending" }),
+      User.countDocuments({ isMuted: true }),
+      User.countDocuments({ isBanned: true }),
+    ]);
+
+    // Authoritative "online now" count from in-memory socket presence.
+    // (updatedAt is bumped by logins/profile edits, so a DB-based "active
+    // in 24h" query would overcount — it always equalled totalUsers.)
+    const onlineUsers = getOnlineUsersCount();
+
+    return res.status(200).json({
+      success: true,
+      stats: {
+        totalUsers,
+        totalPosts,
+        totalComments,
+        totalGlances,
+        totalCommunities,
+        pendingReports,
+        pendingModeration,
+        activeUsers: onlineUsers,
+        mutedUsers,
+        bannedUsers,
+      },
+    });
+  } catch (err: any) {
+    logger.error("Error getting admin stats", { error: err.message });
+    return next(new AppError("Internal server error!"));
+  }
+};
 
 export const createFeatureFlag = async (
   req: Request,
@@ -142,6 +211,7 @@ export const toggleUserMute = async (
     if (!targetUser) return next(new NotFoundError("User not found!"));
 
     await deleteCache(`auth:user:${userId}`);
+    clearMemUserCache(String(userId));
 
     return res.status(200).json({ success: true, message: muted ? "User muted" : "User unmuted" });
   } catch (err: any) {
@@ -171,6 +241,7 @@ export const toggleUserBan = async (
     if (!targetUser) return next(new NotFoundError("User not found!"));
 
     await deleteCache(`auth:user:${userId}`);
+    clearMemUserCache(String(userId));
 
     if (banned && typeof userId === "string") {
       disconnectUserSockets(userId);

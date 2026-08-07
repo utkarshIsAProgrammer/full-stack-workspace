@@ -16,6 +16,7 @@ import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenE
 import { toggleSaveSchema, updateSaveFolderSchema } from "../schemas/interaction.schema";
 import { addUserStatusToPosts } from "../utilities/postStatus";
 import { logInteraction } from "../services/affinityService";
+import { awardXP } from "../services/xpService";
 
 type Params = {
   postId: string;
@@ -142,6 +143,9 @@ export const toggleSavePost = async (req: Request<Params>, res: Response) => {
       await clearSavesCache(userId.toString());
       await clearFeedCache();
 
+      // Award XP for saving a post (fire-and-forget)
+      awardXP(userId.toString(), "SAVE_POST").catch(() => {});
+
       return res.status(201).json({
         success: true,
         message: "Post saved!",
@@ -205,7 +209,7 @@ export const getSavedPosts = async (req: Request, res: Response) => {
       .select("post folder createdAt")
       .populate({
         path: "post",		select:
-			"title slug image images author savesCount repostsCount likesCount commentsCount createdAt viewsCount sharesCount visibility",
+			"content title slug image images video author savesCount repostsCount likesCount commentsCount createdAt viewsCount sharesCount visibility",
         populate: [
           {
             path: "author",

@@ -152,30 +152,33 @@ button {
 	scrollbar-width: none;
 }
 
-/* ─── Thin visible scrollbar for textareas ────────────────────── */
-/* Long composer text can overflow at its max height; show a slim
-   scrollbar there so typed text is never invisibly clipped. */
-textarea::-webkit-scrollbar {
-	display: block;
-	width: 6px;
-}
-
-textarea::-webkit-scrollbar-track {
-	background: transparent;
-}
-
-textarea::-webkit-scrollbar-thumb {
-	background: rgba(255, 255, 255, 0.14);
-	border-radius: 999px;
-}
-
-textarea::-webkit-scrollbar-thumb:hover {
-	background: rgba(255, 255, 255, 0.25);
-}
+/* ─── Auto-growing textareas (WhatsApp-style) ────────────────── */
+/* Every multi-line input auto-grows with its content (via the
+   useAutoGrow hook) up to a max height, then scrolls internally.
+   The scrollbar stays fully hidden so the rounded corners are never
+   squared off and the box always looks clean. */	textarea::-webkit-scrollbar {
+		display: none;
+	}
 
 textarea {
-	scrollbar-width: thin;
-	scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+	scrollbar-width: none;
+	scrollbar-color: transparent transparent;
+}
+
+/* Pinned-message jump highlight — soft gold glow that fades out gracefully
+   and always hugs the bubble's own rounded corners (applied to the bubble). */
+@keyframes msgPinnedGlow {
+	0% {
+		box-shadow: 0 0 0 2px rgba(255, 224, 130, 0.85),
+			0 0 18px 4px rgba(255, 224, 130, 0.35);
+	}
+	100% {
+		box-shadow: 0 0 0 2px rgba(255, 224, 130, 0),
+			0 0 24px 6px rgba(255, 224, 130, 0);
+	}
+}
+.msg-pinned-highlight {
+	animation: msgPinnedGlow 2s ease-out forwards;
 }
 
 html {
@@ -580,6 +583,52 @@ select {
 .card-hover-lift:hover {
 	transform: translateY(-2px);
 	box-shadow: var(--shadow-lg);
+}
+
+/* ─── Premium polish & stability ───────────────────────────────── */
+/* Kill the "pop-in" flash when images finish loading (layout shift /
+   blink). Images fade in over a quarter second; slow networks show a
+   neutral placeholder instead of a white gap. */
+img {
+	background-color: #131316;
+}
+@keyframes orbit-img-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+img {
+	animation: orbit-img-in 0.28s ease both;
+}
+
+/* Gold focus ring for keyboard users (accessibility) — matches the
+   app's gold accent on selections. Outline follows the element's own
+   border-radius, so rounded buttons keep their shape. */
+:focus-visible {
+	outline: 2px solid rgba(212, 175, 55, 0.75);
+	outline-offset: 2px;
+}
+
+/* Gold text selection — premium accent consistency. */
+::selection {
+	background: rgba(212, 175, 55, 0.32);
+	color: #fff;
+}
+
+/* Remove the grey flash on tap for touch devices. */
+* {
+	-webkit-tap-highlight-color: transparent;
+}
+
+/* Smooth in-page scrolling (anchor links / swipes) — disabled for
+   users who prefer reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+	html {
+		scroll-behavior: smooth;
+	}
 }
 
 /* ─── Respect reduced motion preferences ───────────────────────── */

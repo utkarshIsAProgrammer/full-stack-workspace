@@ -14,7 +14,7 @@ import { io } from "socket.io-client";
 import {
   UserPlus,
   Check,
-  Users,
+  Heart,
   ArrowRight,
   ArrowLeft,
   ShoppingBag,
@@ -146,7 +146,10 @@ export default function App() {
   // in the background (stale-while-revalidate). Persisted in effects below.
   const [badgeCount, setBadgeCount] = useState(() => {
     if (typeof window === "undefined") return 0;
-    const saved = parseInt(localStorage.getItem("orbit_notif_badge") || "0", 10);
+    const saved = parseInt(
+      localStorage.getItem("orbit_notif_badge") || "0",
+      10,
+    );
     return Number.isFinite(saved) && saved > 0 ? saved : 0;
   });
   const [chatBadgeCount, setChatBadgeCount] = useState(() => {
@@ -253,7 +256,6 @@ export default function App() {
   const [hasActiveConversation, setHasActiveConversation] = useState(false);
   const [hasCommunityChatOpen, setHasCommunityChatOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
-  const [, setSettingsEditProfileOpen] = useState(false);
   // Swipe-back gesture for mobile navigation
   useSwipeBack({
     onSwipeBack: () => {
@@ -282,6 +284,7 @@ export default function App() {
       setBadgeCount(0);
       setChatBadgeCount(0);
       setConversations([]);
+      setRequestedFollows({});
       conversationsFetchedRef.current = false;
       // Release any active call media/peer resources on session expiry
       teardownActiveCall();
@@ -479,13 +482,17 @@ export default function App() {
   useEffect(() => {
     try {
       localStorage.setItem("orbit_notif_badge", String(badgeCount));
-    } catch { /* storage unavailable — non-critical */ }
+    } catch {
+      /* storage unavailable — non-critical */
+    }
   }, [badgeCount]);
 
   useEffect(() => {
     try {
       localStorage.setItem("orbit_chat_badge", String(chatBadgeCount));
-    } catch { /* storage unavailable — non-critical */ }
+    } catch {
+      /* storage unavailable — non-critical */
+    }
   }, [chatBadgeCount]);
 
   // Deep Link States
@@ -706,8 +713,19 @@ export default function App() {
     }
   };
 
-  // Toggle follow
-  const onToggleFollow = async (userId: string) => {
+  // Follow requests sent to PRIVATE accounts (pending owner approval).
+  // Kept separate from followingStates so buttons can show "Requested"
+  // instead of lying with a "Following" state the server never accepted.
+  const [requestedFollows, setRequestedFollows] = useState<
+    Record<string, boolean>
+  >({});
+
+  // Toggle follow. Resolves with { requested: true } when the target is a
+  // private account and a follow REQUEST was sent instead of a follow, so
+  // callers (Profile) can roll back their optimistic local state.
+  const onToggleFollow = async (
+    userId: string,
+  ): Promise<void | { requested: boolean }> => {
     const isCurrentlyFollowing = !!followingStates[userId];
 
     // 1. Optimistic Update: Toggle state immediately
@@ -732,11 +750,40 @@ export default function App() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        // PRIVATE account → the server created a follow REQUEST, not a
+        // follow. Undo the optimistic follow + followingCount and mark the
+        // user as "requested" so the button shows that state.
+        if (data.isPrivate) {
+          setFollowingStates((prev) => ({
+            ...prev,
+            [userId]: false,
+          }));
+          setRequestedFollows((prev) => ({ ...prev, [userId]: true }));
+          setUser((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  followingCount: Math.max(0, (prev.followingCount || 0) - 1),
+                }
+              : null,
+          );
+          window.dispatchEvent(
+            new CustomEvent("showToast", {
+              detail: {
+                message: data.message || "Follow request sent",
+                type: "success",
+              },
+            }),
+          );
+          return { requested: true };
+        }
+
         // 2. Synchronize with backend response
         setFollowingStates((prev) => ({
           ...prev,
           [userId]: data.following,
         }));
+        setRequestedFollows((prev) => ({ ...prev, [userId]: false }));
         setUser((prev) =>
           prev
             ? {
@@ -1103,7 +1150,11 @@ export default function App() {
     const showNativeNotif = (title: string, body: string) => {
       if (!("Notification" in window)) return;
       if (Notification.permission === "granted") {
-        new Notification(title, { body, icon: "/icon-192.png", badge: "/icon-192.png" });
+        new Notification(title, {
+          body,
+          icon: "/icon-192.png",
+          badge: "/icon-192.png",
+        });
       }
     };
 
@@ -1240,13 +1291,10 @@ export default function App() {
       window.dispatchEvent(new CustomEvent("glimpsesRefresh"));
       window.dispatchEvent(new CustomEvent("notificationsRefresh"));
     };
-    socket.on(
-      "user:blocked",
-      ({ targetUserId }: { targetUserId: string }) => {
-        logger.info("Received user:blocked event", { targetUserId });
-        void handleBlockStateChange();
-      },
-    );
+    socket.on("user:blocked", ({ targetUserId }: { targetUserId: string }) => {
+      logger.info("Received user:blocked event", { targetUserId });
+      void handleBlockStateChange();
+    });
     socket.on(
       "user:unblocked",
       ({ targetUserId }: { targetUserId: string }) => {
@@ -1468,15 +1516,12 @@ export default function App() {
     // When anyone votes, broadcast the updated (count-only) poll so every
     // viewer sees the bars move instantly. Each viewer keeps their own
     // myVote locally — the event only carries aggregate counts.
-    socket.on(
-      "poll:updated",
-      (data: { postId: string; poll: any }) => {
-        logger.info("Received poll:updated event", data);
-        window.dispatchEvent(
-          new CustomEvent("postPollUpdated", { detail: data }),
-        );
-      },
-    );
+    socket.on("poll:updated", (data: { postId: string; poll: any }) => {
+      logger.info("Received poll:updated event", data);
+      window.dispatchEvent(
+        new CustomEvent("postPollUpdated", { detail: data }),
+      );
+    });
 
     // ── Realtime comment reply sync ──
     // When someone replies to a comment, the post's commentsCount goes up too
@@ -1621,6 +1666,16 @@ export default function App() {
           detail: { postId: data.postId, userId: data.userId },
         }),
       );
+    });
+
+    // ── Realtime own-profile updates ──
+    // When the user edits their profile (including the privacy/private-account
+    // toggle in Settings) from any device, update the global user state so
+    // Settings + Profile reflect it instantly without a reload.
+    socket.on("user:updated", (updatedUser: Partial<User>) => {
+      logger.info("Received user:updated event", updatedUser);
+      if (!updatedUser || updatedUser._id !== userId) return;
+      setUser((prev) => (prev ? { ...prev, ...updatedUser } : prev));
     });
 
     // ── WebRTC Call Signaling ────────────────────────────────────────
@@ -2418,15 +2473,22 @@ export default function App() {
     },
     [callState?.type],
   );
-
   const handleLogout = useCallback(async () => {
+    // The server-side logout (cookie clear) is best-effort: it may fail when the
+    // session is already torn down (e.g. after account deletion clears the
+    // cookies, or an expired token). Local cleanup must ALWAYS run so the UI
+    // never gets stuck logged-in.
     try {
       await apiFetch("/api/auth/logout", { method: "POST" });
+    } catch (e) {
+      logger.error(e);
+    } finally {
       setUser(null);
       setTab("home");
       setBadgeCount(0);
       setChatBadgeCount(0);
       setConversations([]);
+      setRequestedFollows({});
       conversationsFetchedRef.current = false;
       // Release any active call media/peer resources on logout
       teardownActiveCall();
@@ -2441,11 +2503,11 @@ export default function App() {
       try {
         localStorage.removeItem("orbit_notif_badge");
         localStorage.removeItem("orbit_chat_badge");
-      } catch { /* non-critical */ }
+      } catch {
+        /* non-critical */
+      }
       stopCacheRefreshTimer();
       clearAllCaches();
-    } catch (e) {
-      logger.error(e);
     }
   }, []);
 
@@ -2540,6 +2602,19 @@ export default function App() {
       navigateToTab("explore");
     } else if (first === "settings") {
       navigateToTab("settings");
+    } else if (first === "invite" && second) {
+      // /invite/<code> — a shared invite link. Open the Invites tab and
+      // pre-fill the code so the visitor can redeem it in one tap.
+      const code = decodeURIComponent(second);
+      navigateToTab("settings");
+      // sessionStorage survives lazy tab mounting; the event covers the
+      // already-mounted case. InvitesTab consumes whichever arrives first.
+      try {
+        sessionStorage.setItem("orbit_pending_invite", code);
+      } catch { /* private mode */ }
+      window.dispatchEvent(
+        new CustomEvent("orbit:redeem-invite", { detail: { code } }),
+      );
     }
   }, [navigateToTab]);
 
@@ -2953,6 +3028,7 @@ export default function App() {
                                       onPostSelected={handlePostSelectionBySlug}
                                       user={user}
                                       followingStates={followingStates}
+                                      requestedFollows={requestedFollows}
                                       onToggleFollow={onToggleFollow}
                                     />
                                   </motion.div>
@@ -3061,6 +3137,7 @@ export default function App() {
                                       onPostClick={handlePostSelectionBySlug}
                                       onUserClick={handleUserSelection}
                                       followingStates={followingStates}
+                                      requestedFollows={requestedFollows}
                                       onToggleFollow={onToggleFollow}
                                       onProfileLoaded={handleProfileLoaded}
                                       onBack={
@@ -3107,11 +3184,7 @@ export default function App() {
                                     {" "}
                                     <Settings
                                       user={user}
-                                      onUserUpdate={(u) => setUser(u)}
                                       onLogout={handleLogout}
-                                      onEditProfileOpenChange={
-                                        setSettingsEditProfileOpen
-                                      }
                                     />
                                   </motion.div>
                                 )}
@@ -3379,24 +3452,23 @@ export default function App() {
                                   Coming Soon
                                 </h3>
 
-                                <div className="space-y-4 text-left">
-                                  {/* Communities */}
-                                  <div className="p-3.5 rounded-xl border border-zinc-150/70 dark:border-zinc-800/50 bg-zinc-50/40 dark:bg-zinc-900/10 hover:bg-zinc-50/90 dark:hover:bg-zinc-900/30 transition-all duration-300">
-                                    <div className="flex items-center gap-2.5 mb-1.5">
-                                      <div className="flex h-6.5 w-6.5 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-350 shrink-0">
-                                        <Users className="h-3.5 w-3.5" />
-                                      </div>
-                                      <span className="text-xs font-semibold text-black dark:text-white">
-                                        Communities
-                                      </span>
-                                    </div>
-                                    <p className="text-xs text-zinc-450 dark:text-zinc-400 leading-relaxed pl-1">
-                                      Join and create communities around shared
-                                      interests and topics.
-                                    </p>
-                                  </div>
+                                <div className="space-y-4 text-left">										{/* Post Reactions */}
+										<div className="p-3.5 rounded-xl border border-zinc-150/70 dark:border-zinc-800/50 bg-zinc-50/40 dark:bg-zinc-900/10 hover:bg-zinc-50/90 dark:hover:bg-zinc-900/30 transition-all duration-300">
+											<div className="flex items-center gap-2.5 mb-1.5">
+												<div className="flex h-6.5 w-6.5 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-350 shrink-0">
+													<Heart className="h-3.5 w-3.5" />
+												</div>
+												<span className="text-xs font-semibold text-black dark:text-white">
+													Post Reactions
+												</span>
+											</div>
+											<p className="text-xs text-zinc-450 dark:text-zinc-400 leading-relaxed pl-1">
+												Express yourself with more than a like —
+												react to posts with emojis.
+											</p>
+										</div>
 
-                                  {/* Marketplace */}
+										{/* Marketplace */}
                                   <div className="p-3.5 rounded-xl border border-zinc-150/70 dark:border-zinc-800/50 bg-zinc-50/40 dark:bg-zinc-900/10 hover:bg-zinc-50/90 dark:hover:bg-zinc-900/30 transition-all duration-300">
                                     <div className="flex items-center gap-2.5 mb-1.5">
                                       <div className="flex h-6.5 w-6.5 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-350 shrink-0">

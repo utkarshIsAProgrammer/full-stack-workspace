@@ -109,8 +109,10 @@ router.post("/login", authLimiter, login);
  *     responses:
  *       200:
  *         description: Logged out successfully
- */
-router.post("/logout", protect, logout);
+ */	// Logout is idempotent and must always succeed — even when the session is
+	// already expired, cookies were cleared (e.g. after account deletion), or the
+	// user no longer exists. It only clears cookies, so it doesn't need `protect`.
+	router.post("/logout", logout);
 
 /**
  * @openapi

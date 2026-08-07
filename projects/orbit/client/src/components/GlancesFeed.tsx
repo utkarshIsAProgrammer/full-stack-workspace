@@ -6,6 +6,7 @@ import { apiFetch } from "../utils/api";
 import { evictCachedResponse, getCachedResponse } from "../utils/apiCache";
 import { useCacheRefresh } from "../hooks/useCacheRefresh";
 import { logger } from "../utils/logger";
+import { optimizeImageUrl } from "../utils/imageUrls";
 import GlanceViewer from "./GlanceViewer";
 import GlanceEditor from "./GlanceEditor";
 
@@ -305,7 +306,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
     return (
       <div className="flex items-center gap-3 py-3 overflow-x-auto scrollbar-none">
         {[1, 2, 3].map((n) => (
-          <div key={n} className="flex flex-col items-center gap-1 shrink-0">			<div className="h-14 w-14 rounded-full bg-zinc-900 animate-pulse ring-1 ring-zinc-800 sm:h-20 sm:w-20" />
+          <div key={n} className="flex flex-col items-center gap-1 shrink-0">			<div className="h-14 w-14 rounded-2xl bg-zinc-900 animate-pulse ring-1 ring-zinc-800 sm:h-20 sm:w-20 sm:rounded-3xl" />
             <div className="h-2 w-10 bg-zinc-900 animate-pulse rounded" />
           </div>
         ))}
@@ -327,7 +328,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
 				<button
 					onClick={() => fileInputRef.current?.click()}
 					disabled={isCreating}
-					className="relative h-14 w-14 rounded-full border-2 border-zinc-600 transition-all cursor-pointer hover:border-white/50 disabled:opacity-60 sm:h-20 sm:w-20"
+					className="relative h-14 w-14 rounded-2xl border-2 border-zinc-600 transition-all cursor-pointer hover:border-white/50 disabled:opacity-60 sm:h-20 sm:w-20 sm:rounded-3xl"
 					title="Add a glance"
 				>
 					{/* The user's own profile picture fills the add button — like
@@ -335,12 +336,12 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
 					    place to add a new glance. */}
 					{user.profilePic?.url ? (
 						<img
-							src={user.profilePic.url}
+							src={optimizeImageUrl(user.profilePic.url, 128)}
 							alt={user.fullName}
-							className="h-full w-full rounded-full object-cover"
+							className="h-full w-full rounded-2xl object-cover sm:rounded-3xl"
 						/>
 					) : (
-						<div className="flex h-full w-full items-center justify-center rounded-full bg-zinc-900/70">
+						<div className="flex h-full w-full items-center justify-center rounded-2xl bg-zinc-900/70 sm:rounded-3xl">
 							<Plus className="h-5 w-5 text-zinc-400" />
 						</div>
 					)}
@@ -352,7 +353,7 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
 					)}
 					{/* Uploading spinner overlay — covers the picture so progress is visible */}
 					{isCreating && (
-						<span className="absolute inset-0 z-10 flex items-center justify-center rounded-full bg-black/60">
+						<span className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-black/60 sm:rounded-3xl">
 							<Loader2 className="h-5 w-5 animate-spin text-white sm:h-6 sm:w-6" />
 						</span>
 					)}
@@ -391,9 +392,9 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
                         (g) => g._id === firstHighlight._id
                       );
                       if (idx >= 0) handleOpenViewer(idx);
-                    }}					className="relative h-14 w-14 rounded-full transition-all bg-gradient-to-br from-amber-400 via-yellow-300 to-orange-400 hover:scale-105 active:scale-95 sm:h-20 sm:w-20"
+                    }}					className="relative h-14 w-14 rounded-2xl transition-all bg-gradient-to-br from-amber-400 via-yellow-300 to-orange-400 hover:scale-105 active:scale-95 sm:h-20 sm:w-20 sm:rounded-3xl"
 				  >
-					<div className="relative h-full w-full rounded-full border-2 border-zinc-950 bg-zinc-900 flex items-center justify-center">
+					<div className="relative h-full w-full rounded-2xl border-2 border-zinc-950 bg-zinc-900 flex items-center justify-center sm:rounded-3xl">
                       <span className="text-lg">⭐</span>
                     </div>
                   </div>
@@ -433,17 +434,17 @@ export default function GlancesFeed({ user }: GlancesFeedProps) {
                       }}
                       className="flex flex-col items-center gap-1 shrink-0 group cursor-pointer"
                     >
-                      <div						className={`relative h-14 w-14 rounded-full p-[2.5px] transition-all sm:h-20 sm:w-20 ${
+                      <div						className={`relative h-14 w-14 rounded-2xl p-[2.5px] transition-all sm:h-20 sm:w-20 sm:rounded-3xl ${
                           authorG.some((g) => g.visibility === "closeFriends")
                             ? "bg-gradient-to-br from-emerald-500/60 via-green-400/50 to-teal-500/60"
                             : allViewed
                               ? "bg-zinc-700"
                               : "bg-gradient-to-br from-violet-400 via-fuchsia-300 to-sky-400"
                         }`}
-                      >						<div className="relative h-full w-full rounded-full overflow-hidden bg-zinc-900">
+                      >						<div className="relative h-full w-full rounded-2xl overflow-hidden bg-zinc-900 sm:rounded-3xl">
                         {author.profilePic?.url ? (
                         <img
-                          src={author.profilePic.url}
+                          src={optimizeImageUrl(author.profilePic.url, 128)}
                           alt={author.fullName}
                           className="relative h-full w-full object-cover"
                         />

@@ -37,6 +37,14 @@ export const getNotificationText = (type: NotificationType, senderName?: string)
       return `${name} invited you to collaborate on their post!`;
     case "invite_accepted":
       return `${name} accepted your collaboration invite!`;
+    case "profile_share":
+      return `${name} shared a profile with you!`;
+    case "post_share":
+      return `${name} shared a post with you!`;
+    case "glimpse_share":
+      return `${name} shared a glance with you!`;
+    case "comment_share":
+      return `${name} shared a comment with you!`;
     default:
       return `${name} interacted with you!`;
   }
@@ -99,6 +107,14 @@ export const getFloatingToastText = (type: NotificationType): string => {
       return "invited you to collaborate!";
     case "invite_accepted":
       return "accepted your collab invite!";
+    case "profile_share":
+      return "shared a profile with you!";
+    case "post_share":
+      return "shared a post with you!";
+    case "glimpse_share":
+      return "shared a glance with you!";
+    case "comment_share":
+      return "shared a comment with you!";
     default:
       return "interacted with you!";
   }

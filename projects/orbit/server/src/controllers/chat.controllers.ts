@@ -15,12 +15,17 @@ import {
 	AppError,
 } from "../utilities/errors";
 import { logger } from "../utilities/logger";
-import { createNotification } from "../utilities/notification";
-import { sendPushToUser } from "../services/pushService";
+import {
+	createNotification,
+	shouldNotifyCategory,
+} from "../utilities/notification";
+import { sendPushToUser, attachmentPushLabel } from "../services/pushService";
 import { getCache, setCache, clearChatCache } from "../configs/cache";
+import { getMemCache, setMemCache } from "../utilities/chatCache";
 import { sanitizePlainText } from "../configs/sanitize";
 import cloudinary from "../configs/cloudinary";
 import { imagekit } from "../configs/imagekit";
+import { clearSearchCacheForTarget } from "../utilities/searchCache";
 import {
 	isRecipientActiveInConversation,
 	getUserPresenceStatus,
@@ -126,6 +131,14 @@ export const getOrCreateConversation = async (
 			});
 			await conversation.save();
 			created = true;
+
+			// A brand-new conversation must appear in both users' conversation
+			// lists immediately — evict the cached lists (8s mem TTL would
+			// otherwise hide it).
+			await clearChatCache(conversation._id.toString(), [
+				currentUserId.toString(),
+				recipientId.toString(),
+			]);
 		}
 
 		// Populate participants info
@@ -206,15 +219,23 @@ export const getConversations = async (
 	req: Request,
 	res: Response,
 	next: NextFunction,
-) => {
-	const currentUserId = req.user?._id;
+) => {		const currentUserId = req.user?._id;
 
-	try {
-		if (!currentUserId) {
-			return next(new UnauthorizedError("Unauthorized!"));
-		}
+		try {
+			if (!currentUserId) {
+				return next(new UnauthorizedError("Unauthorized!"));
+			}
 
-		const conversations = await Conversation.find({
+			// Fast in-memory layer in front of Redis/Atlas — presence included in
+			// the payload may be up to 8s stale, which socket events keep fresh
+			// live anyway; the win is a ~1ms repeat load instead of ~1s.
+			const conversationsCacheKey = `chat:conversations:${currentUserId.toString()}`;
+			const memCachedConversations = getMemCache(conversationsCacheKey);
+			if (memCachedConversations) {
+				return res.status(200).json(memCachedConversations);
+			}
+
+			const conversations = await Conversation.find({
 			participants: currentUserId,
 		})
 			.populate("participants", "username fullName profilePic")
@@ -284,15 +305,39 @@ export const getConversations = async (
 			};
 		});
 
+		// Attach the per-user muted flag so the chat list can show a muted
+		// indicator without an extra round-trip per conversation.
+		let mutedConvIds = new Set<string>();
+		try {
+			const mutedDocs = await User.findById(currentUserId)
+				.select("mutedConversations")
+				.lean();
+			(mutedDocs?.mutedConversations || []).forEach((m: any) =>
+				mutedConvIds.add(m.conversation.toString()),
+			);
+		} catch (muteErr: any) {
+			logger.error("Muted-conversation fetch error in getConversations", {
+				error: muteErr.message,
+			});
+		}
+		const conversationsWithMute = conversationsWithPresence.map((c: any) => ({
+			...c,
+			muted: mutedConvIds.has(c._id.toString()),
+		}));
+
 		const responseData = {
 			success: true,
-			message: conversationsWithPresence.length
+			message: conversationsWithMute.length
 				? "Conversations fetched successfully!"
 				: "No conversations yet!",
-			conversations: conversationsWithPresence,
+			conversations: conversationsWithMute,
 		};
 
 		// cache conversations per user (30s TTL — chat changes frequently via socket)
+		// Fast in-memory layer — the conversation list is re-fetched constantly
+		// (tab switches, socket-triggered refresh, app opens) and each miss
+		// costs a shared-Atlas query + a presence MGET round-trip.
+		setMemCache(`chat:conversations:${currentUserId.toString()}`, responseData, 8);
 		try {
 			await setCache(`chat:conversations:${currentUserId.toString()}`, responseData, 30);
 		} catch (err: any) {
@@ -302,6 +347,155 @@ export const getConversations = async (
 		return res.status(200).json(responseData);
 	} catch (err: any) {
 		logger.error("Error in getConversations controller", {
+			error: err.message,
+		});
+		return next(
+			err instanceof AppError
+				? err
+				: new AppError("Internal server error!"),
+		);
+	}
+};
+
+/**
+ * Mute notifications for a direct-message conversation (any participant).
+ * POST /api/chats/conversations/:conversationId/mute
+ */
+export const muteConversation = async (
+	req: Request<{ conversationId: string }>,
+	res: Response,
+	next: NextFunction,
+) => {
+	try {
+		const { conversationId } = req.params;
+		const currentUserId = req.user?._id;
+		const userId = currentUserId?.toString();
+
+		const conversation = await Conversation.findById(conversationId);
+		if (!conversation) {
+			return next(new NotFoundError("Conversation not found."));
+		}
+		if (!conversation.participants.some((p) => p.toString() === userId)) {
+			return next(
+				new ForbiddenError("You can only mute your own conversations."),
+			);
+		}
+
+		const user = await User.findById(userId);
+		if (!user) {
+			return next(new UnauthorizedError("User not found."));
+		}
+
+		const alreadyMuted = user.mutedConversations?.some(
+			(m) => m.conversation?.toString() === conversationId,
+		);
+		if (!alreadyMuted) {
+			user.mutedConversations.push({
+				conversation: conversationId as any,
+				mutedAt: new Date(),
+			});
+			await user.save();
+		}
+
+		// Refresh the cached conversations list so the muted flag shows instantly
+		const muteParticipants: string[] = [];
+		for (const p of conversation.participants) {
+			if (p) muteParticipants.push(p.toString());
+		}
+		await clearChatCache(conversationId, muteParticipants);
+
+		return res.status(200).json({
+			success: true,
+			message: "Chat muted. You won't get notifications from this chat.",
+			muted: true,
+		});
+	} catch (err: any) {
+		logger.error("Error in muteConversation controller", {
+			error: err.message,
+		});
+		return next(
+			err instanceof AppError
+				? err
+				: new AppError("Internal server error!"),
+		);
+	}
+};
+
+/**
+ * Unmute notifications for a direct-message conversation (any participant).
+ * POST /api/chats/conversations/:conversationId/unmute
+ */
+export const unmuteConversation = async (
+	req: Request<{ conversationId: string }>,
+	res: Response,
+	next: NextFunction,
+) => {		try {
+			const { conversationId } = req.params;
+			const currentUserId = req.user?._id;
+			const userId = currentUserId?.toString() ?? "";
+
+			const user = await User.findById(userId);
+			if (!user) {
+				return next(new UnauthorizedError("User not found."));
+			}
+
+			const conv = await Conversation.findById(conversationId);
+			const participantIds: string[] = [userId];
+		if (conv) {
+			for (const p of conv.participants) {
+				if (p) participantIds.push(p.toString());
+			}
+		}
+
+		user.mutedConversations = user.mutedConversations.filter(
+			(m) => m.conversation?.toString() !== conversationId,
+		) as any;
+		await user.save();
+
+		await clearChatCache(conversationId, participantIds);
+
+		return res.status(200).json({
+			success: true,
+			message: "Chat unmuted. You'll get notifications again.",
+			muted: false,
+		});
+	} catch (err: any) {
+		logger.error("Error in unmuteConversation controller", {
+			error: err.message,
+		});
+		return next(
+			err instanceof AppError
+				? err
+				: new AppError("Internal server error!"),
+		);
+	}
+};
+
+/**
+ * Get whether the current user muted a conversation.
+ * GET /api/chats/conversations/:conversationId/muted
+ */
+export const getConversationMutedStatus = async (
+	req: Request<{ conversationId: string }>,
+	res: Response,
+	next: NextFunction,
+) => {
+	try {
+		const { conversationId } = req.params;
+		const currentUserId = req.user?._id;
+		const userId = currentUserId?.toString();
+
+		const user = await User.findById(userId)
+			.select("mutedConversations")
+			.lean();
+		const muted =
+			user?.mutedConversations?.some(
+				(m) => m.conversation?.toString() === conversationId,
+			) ?? false;
+
+		return res.status(200).json({ success: true, muted });
+	} catch (err: any) {
+		logger.error("Error in getConversationMutedStatus controller", {
 			error: err.message,
 		});
 		return next(
@@ -356,6 +550,12 @@ export const getMessages = async (
 
 		// cache key
 		const cacheKey = `chat:messages:${conversationId}:${cursor || "first"}:${limit}`;
+
+		// Fast in-memory layer in front of the Redis round-trip — the message
+		// history is re-fetched on every conversation open / pagination.
+		const memCachedMessages = getMemCache(cacheKey);
+		if (memCachedMessages) return res.status(200).json(memCachedMessages);
+
 		try {
 			const cached = await getCache(cacheKey);
 			if (cached) return res.status(200).json(cached);
@@ -402,7 +602,8 @@ export const getMessages = async (
 			hasMore,
 		};
 
-		// cache messages per conversation (30s TTL)
+		// cache messages per conversation — in-memory (10s) + Redis (30s)
+		setMemCache(cacheKey, responseData, 10);
 		try {
 			await setCache(cacheKey, responseData, 30);
 		} catch (err: any) {
@@ -609,6 +810,10 @@ export const sendMessage = async (
 
 		await message.save();
 
+		// New message content changes what search would return for this
+		// conversation — drop the cached results so the next search is fresh.
+		clearSearchCacheForTarget(`chat:${conversationId}`);
+
 		// Update conversation properties
 		// lastAction is reset to null — a fresh message supersedes any stale
 		// "reacted" preview in the conversations list.
@@ -637,7 +842,13 @@ export const sendMessage = async (
 						? senderField._id.toString()
 						: senderField.toString();
 
-					if (originalSenderId !== currentUserId.toString()) {
+					if (
+						originalSenderId !== currentUserId.toString() &&
+						(await shouldNotifyCategory(
+							originalSenderId,
+							"message_reply",
+						))
+					) {
 						await createNotification({
 							recipient: originalSenderId,
 							sender: currentUserId.toString(),
@@ -694,10 +905,21 @@ export const sendMessage = async (
 				conversation: populatedConversation,
 			});
 
+			// Muted chats: suppress the in-app bell notification AND the push, but
+			// still deliver the message itself + the chat-tab unread badge.
+			const mutedByRecipient = await User.findOne({
+				_id: recipientId,
+				"mutedConversations.conversation": conversationId,
+			})
+				.select("_id")
+				.lean();
+			const isChatMuted = !!mutedByRecipient;
+
 			// Create an in-app notification so the notifications bell badge reflects
 			// new messages too (previously only the messages-icon badge updated via
 			// emitChatNotification). Dedupe per sender while unread to avoid flooding.
-			try {
+			if (!isChatMuted) {
+				try {
 				// Determine message type from attachments for the notification display
 				let messageType: "text" | "photo" | "video" | "voice_note" | "file" | "gif" | "sticker" = "text";
 				if (attachments.length > 0) {
@@ -726,7 +948,6 @@ export const sendMessage = async (
 							recipient: recipientId,
 							sender: currentUserId,
 							type: "message",
-							messageType,
 						},
 					},
 					{ upsert: true, returnDocument: "after" },
@@ -737,23 +958,29 @@ export const sendMessage = async (
 				if (populatedNotif) {
 					getIO().to(`user:${recipientId}`).emit("notification", populatedNotif);
 				}
-			} catch (notifErr) {
-				logger.error("Failed to create chat message notification", {
-					error: (notifErr as Error).message,
-					recipientId,
-				});
+				} catch (notifErr) {
+					logger.error("Failed to create chat message notification", {
+						error: (notifErr as Error).message,
+						recipientId,
+					});
+				}
 			}
 
 			// Send a real on-device push notification for the new message
-			try {
+			if (
+				!isChatMuted &&
+				(await shouldNotifyCategory(recipientId, "message"))
+			) {
+				try {
 				const senderInfo = (populatedMessage as any)?.sender || {};
 				const senderName =
 					senderInfo?.fullName || senderInfo?.username || "Someone";
-				const messageText =
-					(populatedMessage as any)?.text?.slice(0, 120) ||
-					((populatedMessage as any)?.attachments?.length
-						? "📎 Attachment"
-						: "New message");
+				// Plain-text, type-specific body ("Photo", "Voice note", "Video",
+				// "File") — no emoji in push bodies.
+				const messageText = attachmentPushLabel(
+					(populatedMessage as any)?.attachments,
+					(populatedMessage as any)?.text,
+				);
 				sendPushToUser(recipientId, {
 					title: senderName,
 					body: messageText,
@@ -767,10 +994,11 @@ export const sendMessage = async (
 						unreadCount: recipientUnreadCount || 0,
 					},
 				});
-			} catch (pushErr) {
-				logger.warn("Failed to send chat push notification", {
-					error: (pushErr as Error).message,
-				});
+				} catch (pushErr) {
+					logger.warn("Failed to send chat push notification", {
+						error: (pushErr as Error).message,
+					});
+				}
 			}
 		}
 
@@ -1364,13 +1592,22 @@ export const pinMessage = async (
 		conversation.pinnedMessages.push(message._id);
 		await conversation.save();
 
-		// Fetch populated pinned messages
+		// Fetch populated pinned messages, ordered by pin time (the
+		// pinnedMessages array records pin order — newest pin is LAST in the
+		// array, so it must be FIRST in the banner).
 		const pinnedMessages = await Message.find({
 			_id: { $in: conversation.pinnedMessages },
 		})
 			.populate("sender", "username fullName profilePic")
-			.sort({ createdAt: -1 })
 			.lean();
+		const pinOrder = (conversation.pinnedMessages || []).map((p) =>
+			p.toString(),
+		);
+		pinnedMessages.sort(
+			(a, b) =>
+				pinOrder.indexOf(b._id.toString()) -
+				pinOrder.indexOf(a._id.toString()),
+		);
 
 		// Clear chat cache
 		await clearChatCache(message.conversation.toString(), convParticipants);
@@ -1386,6 +1623,7 @@ export const pinMessage = async (
 		return res.status(200).json({
 			success: true,
 			message: "Message pinned!",
+			conversationId: message.conversation.toString(),
 			pinnedMessages,
 		});
 	} catch (err: any) {
@@ -1441,12 +1679,23 @@ export const unpinMessage = async (
 		await conversation.save();
 
 		// Fetch remaining pinned messages
-		const pinnedMessages = conversation.pinnedMessages.length > 0
-			? await Message.find({ _id: { $in: conversation.pinnedMessages } })
-				.populate("sender", "username fullName profilePic")
-				.sort({ createdAt: -1 })
-				.lean()
-			: [];
+		// Order by pin time — newest pin is LAST in the array, FIRST in the banner.
+		const pinnedMessages =
+			conversation.pinnedMessages.length > 0
+				? await Message.find({
+						_id: { $in: conversation.pinnedMessages },
+					})
+						.populate("sender", "username fullName profilePic")
+						.lean()
+				: [];
+		const pinOrder = (conversation.pinnedMessages || []).map((p) =>
+			p.toString(),
+		);
+		pinnedMessages.sort(
+			(a, b) =>
+				pinOrder.indexOf(b._id.toString()) -
+				pinOrder.indexOf(a._id.toString()),
+		);
 
 		// Clear chat cache
 		await clearChatCache(conversation._id.toString(), convParticipants);
@@ -1462,6 +1711,7 @@ export const unpinMessage = async (
 		return res.status(200).json({
 			success: true,
 			message: "Message unpinned!",
+			conversationId: conversation._id.toString(),
 			pinnedMessages,
 		});
 	} catch (err: any) {
@@ -1510,12 +1760,18 @@ export const getPinnedMessages = async (
 			});
 		}
 
+		// Order by pin time — newest pin is LAST in the array, FIRST in the banner.
 		const pinnedMessages = await Message.find({
 			_id: { $in: pinnedMsgIds },
 		})
 			.populate("sender", "username fullName profilePic")
-			.sort({ createdAt: -1 })
 			.lean();
+		const pinOrder = (pinnedMsgIds || []).map((p) => p.toString());
+		pinnedMessages.sort(
+			(a, b) =>
+				pinOrder.indexOf(b._id.toString()) -
+				pinOrder.indexOf(a._id.toString()),
+		);
 
 		return res.status(200).json({
 			success: true,

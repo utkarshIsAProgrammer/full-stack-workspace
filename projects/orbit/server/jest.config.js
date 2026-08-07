@@ -8,7 +8,14 @@ module.exports = {
     "**/*.test.ts",
     "**/*.spec.ts",
   ],
-  testPathIgnorePatterns: ["/node_modules/", "/dist/", "__tests__/setup\.ts", "__tests__/teardown\.ts", "__tests__/setupAfterEnv\.ts"],
+  testPathIgnorePatterns: [
+    "/node_modules/",
+    "/dist/",
+    "__tests__/setup\.ts",
+    "__tests__/teardown\.ts",
+    "__tests__/setupAfterEnv\.ts",
+    "__tests__/helpers/",
+  ],
   transform: {
     "^.+\\.ts$": [
       "ts-jest",
@@ -17,7 +24,23 @@ module.exports = {
         useESM: false,
       },
     ],
+    // sanitize-html ships htmlparser2 v12 — an ESM-only package — so transform
+    // its module graph down to CommonJS (see transformIgnorePatterns below).
+    "^.+\\.js$": [
+      "ts-jest",
+      {
+        tsconfig: "tsconfig.json",
+        useESM: false,
+        allowJs: true,
+        diagnostics: false,
+      },
+    ],
   },
+  // Only ESM-only deps (sanitize-html + its parser family) are transformed;
+  // everything else in node_modules is left untouched for speed.
+  transformIgnorePatterns: [
+    "node_modules/(?!sanitize-html|htmlparser2|domhandler|domutils|dom-serializer|entities|domelementtype|css-select|nth-check)",
+  ],
   moduleFileExtensions: ["ts", "js", "json"],
   // Global setup/teardown for MongoDB memory server
   globalSetup: "<rootDir>/src/__tests__/setup.ts",

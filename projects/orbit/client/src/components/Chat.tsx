@@ -20,11 +20,16 @@ import {
 	Square,
 	Play,
 	Pause,
+	Pin,
 	Phone,
 	Video,
 	ChevronDown,
 	MoreVertical,
 	ShieldAlert,
+	Shield,
+	ShieldOff,
+	Bell,
+	BellOff,
 } from "lucide-react";
 import ImageCropModal from "./ImageCropModal";
 import { Socket } from "socket.io-client";
@@ -39,14 +44,17 @@ import UserAvatar from "./UserAvatar";
 import ChatGallery from "./ChatGallery";
 import Skeleton from "./Skeleton";
 import { apiFetch } from "../utils/api";
+import { evictCachedResponse } from "../utils/apiCache";
 import { logger } from "../utils/logger";
 import { downscaleImageFile } from "../utils/imageCompression";
+import { optimizeImageUrl } from "../utils/imageUrls";
 import ValidationMessage from "./ValidationMessage";
 import TypingIndicator from "./TypingIndicator";
 import MessageBubble from "./MessageBubble";
+import EmojiReactionMenu from "./EmojiReactionMenu";
 import ConfirmDialog from "./ConfirmDialog";
 import ConversationListItem from "./ConversationListItem";
-import { validateChatMessage, extractEmoji } from "../utils/validation";
+import { validateChatMessage } from "../utils/validation";
 
 interface ChatProps {
 	user: UserType;
@@ -76,9 +84,14 @@ export default function Chat({
 	// True when the open conversation's partner has a mutual block
 	// relationship (either direction) — disables the composer entirely.
 	const [blockedPartner, setBlockedPartner] = useState(false);
+	// True when WE have blocked the partner (blockedPartner is any-direction).
+	const [iBlockedPartner, setIBlockedPartner] = useState(false);
+	const [blockToggling, setBlockToggling] = useState(false);
 	// Ref for the WhatsApp-style auto-growing composer textarea
 	const composerRef = useRef<HTMLTextAreaElement>(null);
 	const [messages, setMessages] = useState<Message[]>([]);
+	const [pinnedMessages, setPinnedMessages] = useState<Message[]>([]);
+	const [showPinnedPanel, setShowPinnedPanel] = useState(false);
 	const [loadingConvs] = useState(false);
 	const [loadingMsgs, setLoadingMsgs] = useState(false);
 	const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -98,7 +111,20 @@ export default function Chat({
 	const [searchQuery, setSearchQuery] = useState("");
 	const [searchResults, setSearchResults] = useState<UserType[]>([]);
 	const [searching, setSearching] = useState(false);
+	// Debounce + monotonic seq for user search — without this every keystroke
+	// fires a network request (hitting the server rate limiter fast) and
+	// out-of-order responses can overwrite newer results with stale ones.
+	const userSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const userSearchSeqRef = useRef(0);
 	const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+
+	// Clear the debounce timer on unmount so a pending search can't fire a
+	// setState / wasted network request after the component is gone.
+	useEffect(() => {
+		return () => {
+			if (userSearchTimerRef.current) clearTimeout(userSearchTimerRef.current);
+		};
+	}, []);
 
 	// Message search within conversation state
 	const [showMessageSearch, setShowMessageSearch] = useState(false);
@@ -106,6 +132,10 @@ export default function Chat({
 	const [messageSearchResults, setMessageSearchResults] = useState<Message[]>([]);
 	const [searchingMessages, setSearchingMessages] = useState(false);
 	const messageSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Monotonic counter so only the LATEST search query's response is applied
+	// — prevents out-of-order responses from older keystrokes overwriting newer
+	// results when the free-tier backend answers slowly.
+	const messageSearchSeqRef = useRef(0);
 
 	// Drag-and-drop state
 	const [isDragActive, setIsDragActive] = useState(false);
@@ -165,6 +195,15 @@ export default function Chat({
 	// Delete conversation confirmation state
 	const [deleteConvConfirmId, setDeleteConvConfirmId] = useState<string | null>(null);
 
+	// Conversation list context menu (mute / delete) — opened via long-press
+	// on mobile or right-click on desktop.
+	const [convMenu, setConvMenu] = useState<{
+		conv: Conversation;
+		x: number;
+		y: number;
+	} | null>(null);
+	const convMenuOpenedAtRef = useRef(0);
+
 	// Context menu state
 	const [contextMenu, setContextMenu] = useState<{
 		message: Message;
@@ -176,8 +215,6 @@ export default function Chat({
 	const contextMenuRef = useRef<HTMLDivElement>(null);
 
 	// Emoji picker state
-	const [showEmojiPicker, setShowEmojiPicker] = useState<string | null>(null);
-	const [customEmoji, setCustomEmoji] = useState("");
 
 	// Forward modal state
 	const [forwardModal, setForwardModal] = useState<{
@@ -282,6 +319,9 @@ export default function Chat({
 	useEffect(() => {
 		if (!selectedConv) {
 			setMessages([]);
+			setPinnedMessages([]);
+			setBlockedPartner(false);
+			setIBlockedPartner(false);
 			setPartnerTyping(false);
 			return;
 		}
@@ -289,7 +329,8 @@ export default function Chat({
 		const fetchMessages = async () => {
 			setLoadingMsgs(true);
 			setMessagesCursor(null);
-			setMessagesHasMore(false);				try {
+			setMessagesHasMore(false);
+			try {
 					// Bypass cache when opening a conversation — messages from other
 					// users only update state while the conversation is open, so a
 					// cache-first read could miss messages sent while it was closed.
@@ -313,11 +354,27 @@ export default function Chat({
 
 		fetchMessages();
 
+		// Fetch pinned messages for this conversation (mirrors community pins)
+		apiFetch(
+			`/api/chats/conversations/${selectedConv._id}/pinned-messages`,
+			{ bypassCache: true },
+		)
+			.then((res) => res.json())
+			.then((data) => {
+				if (data?.success) {
+					setPinnedMessages(data.pinnedMessages || []);
+				}
+			})
+			.catch(() => {
+				/* non-critical — pins refresh on open */
+			});
+
 		// Blocked users must not exist for each other — if this conversation's
 		// partner shares a block relationship (either direction), disable the
 		// composer and surface a notice. The server also hard-rejects sends,
 		// so this is UX plus a second layer of protection.
 		setBlockedPartner(false);
+		setIBlockedPartner(false);
 		const partnerForBlockCheck = selectedConv.participants?.find(
 			(p: any) => p && p._id !== user._id,
 		);
@@ -329,6 +386,7 @@ export default function Chat({
 						setBlockedPartner(
 							!!(data.iBlocked || data.blockedByThem),
 						);
+						setIBlockedPartner(!!data.iBlocked);
 					}
 				})
 				.catch(() => {
@@ -376,6 +434,9 @@ export default function Chat({
 		const handleClick = () => {
 			if (Date.now() - contextMenuOpenedAtRef.current > 300) {
 				setContextMenu(null);
+			}
+			if (Date.now() - convMenuOpenedAtRef.current > 300) {
+				setConvMenu(null);
 			}
 		};
 		window.addEventListener("click", handleClick);
@@ -633,6 +694,49 @@ export default function Chat({
 				}),
 			);
 		});
+
+		// Listen for message pin / unpin events (server emits to conversation + personal rooms)
+		s.on(
+			"message:pin",
+			(payload: { messageId: string; pinnedMessages?: Message[] }) => {
+				logger.info("Chat: Received message:pin event", {
+					messageId: payload.messageId,
+				});
+				if (payload.pinnedMessages) {
+					setPinnedMessages(payload.pinnedMessages);
+				} else {
+					// Fall back to a refetch so the banner always reflects the server
+					const currentConv = selectedConvRef.current;
+					if (currentConv) {
+						apiFetch(
+							`/api/chats/conversations/${currentConv._id}/pinned-messages`,
+							{ bypassCache: true },
+						)
+							.then((res) => res.json())
+							.then((data) => {
+								if (data?.success) setPinnedMessages(data.pinnedMessages || []);
+							})
+							.catch(() => {});
+					}
+				}
+			},
+		);
+
+		s.on(
+			"message:unpin",
+			(payload: { messageId: string; pinnedMessages?: Message[] }) => {
+				logger.info("Chat: Received message:unpin event", {
+					messageId: payload.messageId,
+				});
+				if (payload.pinnedMessages) {
+					setPinnedMessages(payload.pinnedMessages);
+				} else {
+					setPinnedMessages((prev) =>
+						prev.filter((m) => m._id !== payload.messageId),
+					);
+				}
+			},
+		);
 
 		// Listen for message reactions
 		s.on(
@@ -900,6 +1004,8 @@ export default function Chat({
 			s.off("message:edit");
 			s.off("message:delete");
 			s.off("message:delete-for-me");
+			s.off("message:pin");
+			s.off("message:unpin");
 			s.off("message:reaction");
 			s.off("conversation:delete");
 			s.off("conversation:clear");
@@ -1044,12 +1150,15 @@ export default function Chat({
 		}, 2000);
 	};
 
-	// User search to start a new chat
+	// User search to start a new chat — debounced (300ms) with a monotonic
+	// seq guard so only the latest query's response is applied.
 	const handleUserSearch = async (val: string) => {
+		const seq = userSearchSeqRef.current;
 		setSearchQuery(val);
 		if (!val.trim()) {
 			setSearchResults([]);
 			setShowSearchDropdown(false);
+			setSearching(false);
 			return;
 		}
 
@@ -1060,6 +1169,8 @@ export default function Chat({
 				`/api/search/users?q=${encodeURIComponent(val)}`,
 			);
 			const data = await res.json();
+			// Drop responses from superseded keystrokes — only the latest wins.
+			if (seq !== userSearchSeqRef.current) return;
 			if (res.ok && data.success) {
 				// Exclude current user
 				setSearchResults(
@@ -1067,11 +1178,17 @@ export default function Chat({
 						(u: UserType) => u._id !== user._id,
 					),
 				);
+			} else {
+				setSearchResults([]);
 			}
 		} catch (_e) {
+			if (seq !== userSearchSeqRef.current) return;
 			logger.error(_e);
+			setSearchResults([]);
 		} finally {
-			setSearching(false);
+			if (seq === userSearchSeqRef.current) {
+				setSearching(false);
+			}
 		}
 	};
 
@@ -1990,13 +2107,65 @@ export default function Chat({
 		}
 	};
 
-	// Delete conversation — prompt confirmation first
-	const handleDeleteConversation = (
-		conversationId: string,
-		e: React.MouseEvent,
+	// Open the conversation context menu (long-press on mobile, right-click on
+	// desktop). Clamped to the viewport so it never renders off-screen.
+	const openConvMenu = (
+		e: { clientX: number; clientY: number },
+		conv: Conversation,
 	) => {
-		e.stopPropagation();
-		setDeleteConvConfirmId(conversationId);
+		convMenuOpenedAtRef.current = Date.now();
+		const MENU_W = 200;
+		const MENU_H = 132;
+		const x = Math.max(8, Math.min(e.clientX, window.innerWidth - MENU_W - 8));
+		const y = Math.max(8, Math.min(e.clientY, window.innerHeight - MENU_H - 8));
+		setConvMenu({ conv, x, y });
+	};
+
+	// Toggle mute for a conversation — optimistic flip, reconciled with server.
+	const handleToggleConvMute = async (conv: Conversation) => {
+		const next = !conv.muted;
+		// Update BOTH the list and the currently-open conversation so the
+		// header three-dot menu shows the correct Mute/Unmute state right away.
+		const apply = (muted: boolean) => {
+			setConversations((prev) =>
+				prev.map((c) => (c._id === conv._id ? { ...c, muted } : c)),
+			);
+			setSelectedConv((cur) =>
+				cur && cur._id === conv._id ? { ...cur, muted } : cur,
+			);
+		};
+		apply(next);
+		setConvMenu(null);
+		const revert = () => apply(!next);
+		try {
+			const res = await apiFetch(
+				`/api/chats/conversations/${conv._id}/${next ? "mute" : "unmute"}`,
+				{ method: "POST" },
+			);
+			const data = await res.json();
+			if (!(res.ok && data.success)) {
+				revert();
+				window.dispatchEvent(
+					new CustomEvent("showToast", {
+						detail: {
+							message: data?.message || "Couldn't update mute setting.",
+							type: "error",
+						},
+					}),
+				);
+			}
+		} catch (err: any) {
+			logger.error("Failed to toggle conversation mute", err);
+			revert();
+			window.dispatchEvent(
+				new CustomEvent("showToast", {
+					detail: {
+						message: "Couldn't update mute setting. Try again.",
+						type: "error",
+					},
+				}),
+			);
+		}
 	};
 
 	// Actually delete conversation after user confirms
@@ -2033,6 +2202,63 @@ export default function Chat({
 		e.stopPropagation();
 		if (!selectedConv) return;
 		setShowClearConfirm(true);
+	};
+
+	// Block / Unblock the conversation partner (only 1:1 user chat)
+	const handleToggleBlock = async (e: React.MouseEvent) => {
+		e.stopPropagation();
+		if (!selectedConv) return;
+		const partnerForBlock = selectedConv.participants?.find(
+			(p: any) => p && p._id !== user._id,
+		);
+		if (!partnerForBlock?._id) return;
+
+		const willBlock = !iBlockedPartner;
+		const partnerName =
+			partnerForBlock.fullName ||
+			partnerForBlock.username ||
+			"This user";
+		setBlockToggling(true);
+		setShowChatMenu(false);
+		try {
+			const res = await apiFetch(`/api/blocks/${partnerForBlock._id}`, {
+				method: willBlock ? "POST" : "DELETE",
+			});
+			const data = await res.json();
+			if (res.ok && data.success) {
+				setIBlockedPartner(willBlock);
+				// A block deletes the 1:1 conversation server-side.
+				if (willBlock) {
+					setBlockedPartner(true);
+					setMessages([]);
+					// Drop the conversations list from cache so the deleted
+					// conversation can't resurrect (socket event handles live UI).
+					evictCachedResponse("/api/chats/conversations");
+					window.dispatchEvent(
+						new CustomEvent("showToast", {
+							detail: {
+								message: `${partnerName} has been blocked.`,
+								type: "success",
+							},
+						}),
+					);
+				} else {
+					setBlockedPartner(false);
+					window.dispatchEvent(
+						new CustomEvent("showToast", {
+							detail: {
+								message: `${partnerName} has been unblocked.`,
+								type: "success",
+							},
+						}),
+					);
+				}
+			}
+		} catch (err) {
+			logger.error("Failed to toggle block", err);
+		} finally {
+			setBlockToggling(false);
+		}
 	};
 
 	// Clear chat history confirmation
@@ -2170,6 +2396,112 @@ export default function Chat({
 		setContextMenu(null);
 	};
 
+	// ─── Pin / Unpin handlers ───────────────────────────────────────
+	// Drop any optimistic markers before storing an authoritative server list.
+	const stripOptimistic = (list: Message[]) =>
+		list.map((m) => {
+			if ((m as any)._optimistic) {
+				const { _optimistic, ...rest } = m as any;
+				return rest as Message;
+			}
+			return m;
+		});
+
+	// Apply a server-returned pinned list only if the user is still on the
+	// conversation it belongs to (avoids cross-conversation clobbering).
+	const applyPinnedFromServer = (
+		conversationId: string | undefined,
+		list: Message[] | undefined,
+	) => {
+		if (
+			list &&
+			conversationId &&
+			selectedConvRef.current?._id === conversationId
+		) {
+			setPinnedMessages(stripOptimistic(list));
+		}
+	};
+
+	// Roll back any optimistic pin entries (network failure / server rejection).
+	const rollbackOptimisticPins = () =>
+		setPinnedMessages((prev) =>
+			prev.filter((m) => !(m as any)._optimistic),
+		);
+
+	const handlePinMessage = async (messageId: string) => {
+		// Optimistic pin — the banner updates instantly so the action feels
+		// immediate; the server response + socket event reconcile afterwards.
+		setPinnedMessages((prev) => {
+			if (prev.some((m) => m._id === messageId)) return prev;
+			const msg = messages.find((m) => m._id === messageId);
+			if (!msg) return prev;
+			// Mirror the server: max 5 pins, oldest dropped at the limit.
+			const next = [
+				{ ...msg, _optimistic: true } as Message,
+				...prev.filter((m) => !(m as any)._optimistic),
+			];
+			return next.slice(0, 5);
+		});
+		try {
+			const res = await apiFetch(`/api/chats/messages/${messageId}/pin`, {
+				method: "POST",
+			});
+			const data = await res.json();
+			if (res.ok && data?.success) {
+				applyPinnedFromServer(data.conversationId, data.pinnedMessages);
+			} else {
+				// Server rejected the pin (e.g. 500) — don't leave a phantom pin.
+				rollbackOptimisticPins();
+			}
+		} catch (err) {
+			logger.error("Failed to pin message", err);
+			rollbackOptimisticPins();
+		}
+		setContextMenu(null);
+	};
+
+	const handleUnpinMessage = async (messageId: string) => {
+		// Optimistic unpin — remove instantly, reconcile with the server list.
+		setPinnedMessages((prev) => prev.filter((m) => m._id !== messageId));
+		try {
+			const res = await apiFetch(`/api/chats/messages/${messageId}/unpin`, {
+				method: "POST",
+			});
+			const data = await res.json();
+			if (res.ok && data?.success) {
+				applyPinnedFromServer(data?.conversationId, data?.pinnedMessages);
+			} else {
+				// Server rejected the unpin — refetch the authoritative list so the
+				// message does not silently reappear as a "phantom" pin.
+				const currentConv = selectedConvRef.current;
+				if (currentConv) {
+					apiFetch(
+						`/api/chats/conversations/${currentConv._id}/pinned-messages`,
+						{ bypassCache: true },
+					)
+						.then((r) => r.json())
+						.then((d) => {
+							if (d?.success) setPinnedMessages(d.pinnedMessages || []);
+						})
+						.catch(() => {});
+				}
+			}
+		} catch (err) {
+			logger.error("Failed to unpin message", err);
+		}
+		setContextMenu(null);
+	};
+
+	// Unpin directly from the "View all pinned" panel.
+	const handleUnpinFromPanel = async (messageId: string) => {
+		await handleUnpinMessage(messageId);
+		setShowPinnedPanel(false);
+	};
+
+	// Check if a message is currently pinned
+	const isMessagePinned = (messageId: string) =>
+		pinnedMessages.some((m) => m._id === messageId);
+
 	// Handle forward selection toggles
 	const handleToggleForwardSelection = (targetConversationId: string) => {
 		setSelectedForwardConvIds((prev) => {
@@ -2271,6 +2603,7 @@ export default function Chat({
 	// Attachments handlers
 	// Message search within conversation
 	const handleMessageSearch = useCallback(async (query: string) => {
+		const seq = messageSearchSeqRef.current;
 		if (!query.trim() || !selectedConv) {
 			setMessageSearchResults([]);
 			return;
@@ -2279,16 +2612,21 @@ export default function Chat({
 		try {
 			const res = await apiFetch(`/api/chats/conversations/${selectedConv._id}/search?q=${encodeURIComponent(query)}`);
 			const data = await res.json();
+			// Drop responses from superseded keystrokes — only the latest query wins.
+			if (seq !== messageSearchSeqRef.current) return;
 			if (res.ok && data.success) {
 				setMessageSearchResults(data.messages || []);
 			} else {
 				setMessageSearchResults([]);
 			}
 		} catch (_e) {
+			if (seq !== messageSearchSeqRef.current) return;
 			logger.error(_e);
 			setMessageSearchResults([]);
 		} finally {
-			setSearchingMessages(false);
+			if (seq === messageSearchSeqRef.current) {
+				setSearchingMessages(false);
+			}
 		}
 	}, [selectedConv]);
 
@@ -2465,12 +2803,28 @@ export default function Chat({
 										<Search className="h-4 w-4" />
 									</span>
 									<input
-										type="text"
-										placeholder="Search usernames..."
-										value={searchQuery}
-										onChange={(e) =>
-											handleUserSearch(e.target.value)
-										}
+										type="text"												placeholder="Search usernames..."
+												value={searchQuery}
+												onChange={(e) => {
+													const val = e.target.value;
+													setSearchQuery(val);
+													// Invalidate any in-flight response from the previous query.
+													userSearchSeqRef.current++;
+													if (userSearchTimerRef.current) clearTimeout(userSearchTimerRef.current);
+													if (!val.trim()) {
+														setSearchResults([]);
+														setSearching(false);
+														setShowSearchDropdown(false);
+														return;
+													}
+													// Debounce so fast typing issues ONE request instead of one per
+													// keystroke (the server search limiter is 40 req/min).
+													setSearching(true);
+													setShowSearchDropdown(true);
+													userSearchTimerRef.current = setTimeout(() => {
+														handleUserSearch(val);
+													}, 300);
+												}}
 										className="w-full rounded-full border border-zinc-800 bg-zinc-950/50 py-2 pl-10 pr-4 text-[12px] md:text-sm font-bold text-white placeholder-zinc-550 focus:outline-none focus:border-white focus:bg-zinc-900 transition-all"
 									/>
 								</div>
@@ -2573,7 +2927,7 @@ export default function Chat({
 											conv={conv}
 											user={user}
 											onSelect={() => setSelectedConv(conv)}
-											onDelete={(e) => handleDeleteConversation(conv._id, e)}
+											onOpenMenu={(e) => openConvMenu(e, conv)}
 											formatMessageTime={formatMessageTime}
 										/>
 									))
@@ -2654,12 +3008,6 @@ export default function Chat({
 										title="Video Call">
 									<Video className="h-3.5 w-3.5" />
 									</button>
-									<button
-										onClick={() => setShowMessageSearch((prev) => !prev)}
-										className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200/10 hover:border-white/30 bg-white/5 hover:bg-white/15 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-sm"
-										title="Search messages">
-										<Search className="h-3.5 w-3.5" />
-									</button>
 									<div className="relative" ref={chatMenuRef}>
 										<button
 											onClick={(e) => {
@@ -2680,24 +3028,78 @@ export default function Chat({
 														transition={{ duration: 0.12 }}
 														className="absolute right-0 top-9 z-[90] w-48 overflow-hidden rounded-xl border border-zinc-700/50 bg-zinc-900/95 backdrop-blur-xl shadow-2xl">
 														<button
-															onClick={() => {
-																setShowChatMenu(false);
-																setShowMessageSearch((prev) => !prev);
-															}}
-															className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-semibold text-zinc-200 hover:bg-white/10 transition-colors cursor-pointer text-left">
-															<Search className="h-3.5 w-3.5 text-zinc-400" />
-															Search messages
-														</button>
-														<button
-															onClick={(e) => {
-																setShowChatMenu(false);
-																handleClearChat(e);
-															}}
-															className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-semibold text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer text-left">
-															<Trash2 className="h-3.5 w-3.5" />
-															Clear chat history
-														</button>
-													</motion.div>
+															onClick={() => {															setShowChatMenu(false);
+															setShowMessageSearch((prev) => !prev);
+															// Drop any in-flight search response when opening/closing.
+															messageSearchSeqRef.current++;
+															setMessageSearchQuery("");
+															setMessageSearchResults([]);
+														}}
+														className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-semibold text-zinc-200 hover:bg-white/10 transition-colors cursor-pointer text-left">																<Search className="h-3.5 w-3.5 text-zinc-400" />
+																Search messages
+																</button>
+																{/* Mute / Unmute — same toggle as the conversation-list menu */}
+																<button
+																	onClick={() => {
+																		setShowChatMenu(false);
+																		handleToggleConvMute(selectedConv);
+																	}}
+																	className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-semibold transition-colors cursor-pointer text-left ${
+																		selectedConv?.muted
+																			? "text-amber-300 hover:bg-amber-500/10"
+																			: "text-zinc-200 hover:bg-white/10"
+																	}`}
+																>
+																	{selectedConv?.muted ? (
+																		<>
+																			<BellOff className="h-3.5 w-3.5 text-amber-300" />
+																			Unmute notifications
+																		</>
+																	) : (
+																		<>
+																			<Bell className="h-3.5 w-3.5 text-zinc-400" />
+																			Mute notifications
+																		</>
+																	)}
+																</button>
+																<button
+																	onClick={(e) => {
+																		setShowChatMenu(false);
+																		handleClearChat(e);
+																	}}
+																className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-semibold text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer text-left">
+																<Trash2 className="h-3.5 w-3.5" />
+																Clear chat history
+															</button>
+															{/* Block / Unblock — only meaningful in 1:1 user chats */}
+															{blockToggling ? (
+																<div className="flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-semibold text-zinc-400">
+																	<Loader2 className="h-3.5 w-3.5 animate-spin" />
+																	Updating…
+																</div>
+															) : (
+																<button
+																	onClick={handleToggleBlock}
+																	className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs font-semibold transition-colors cursor-pointer text-left ${
+																		iBlockedPartner
+																			? "text-red-300 hover:bg-red-500/10"
+																			: "text-zinc-300 hover:bg-zinc-800"
+																	}`}
+																>
+																	{iBlockedPartner ? (
+																		<>
+																			<ShieldOff className="h-3.5 w-3.5" />
+																			Unblock
+																		</>
+																	) : (
+																		<>
+																			<Shield className="h-3.5 w-3.5" />
+																			Block
+																		</>
+																	)}
+																</button>
+															)}
+														</motion.div>
 												</>
 											)}
 										</AnimatePresence>
@@ -2707,19 +3109,45 @@ export default function Chat({
 
 							{/* Message search bar */}
 							{showMessageSearch && (
-								<div className="px-3 py-2 border-b border-zinc-800/30 shrink-0">
+								<div className="px-3 py-2 border-b border-zinc-800/30 shrink-0 bg-zinc-950/60">
 									<div className="relative">
+										<button
+											type="button"
+											onClick={() => {
+												setShowMessageSearch(false);
+												// Drop any in-flight search response when the bar closes.
+												messageSearchSeqRef.current++;
+												setMessageSearchQuery("");
+												setMessageSearchResults([]);
+											}}
+											className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex h-5 w-5 items-center justify-center rounded-full text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+											title="Close search"
+										>
+											<X className="h-3 w-3" />
+										</button>
 										<input
 											type="text"
 											placeholder="Search messages..."
-											value={messageSearchQuery}
-											onChange={(e) => {
-												setMessageSearchQuery(e.target.value);
-												if (messageSearchTimerRef.current) clearTimeout(messageSearchTimerRef.current);
-												messageSearchTimerRef.current = setTimeout(() => {
-													handleMessageSearch(e.target.value);
-												}, 300);
-											}}
+											value={messageSearchQuery}												onChange={(e) => {
+													const val = e.target.value;
+													setMessageSearchQuery(val);
+													// Invalidate any in-flight response from the previous query.
+													messageSearchSeqRef.current++;
+													if (messageSearchTimerRef.current) clearTimeout(messageSearchTimerRef.current);
+													if (!val.trim()) {
+														setMessageSearchResults([]);
+														setSearchingMessages(false);
+														return;
+													}
+													// Clear stale results and show the searching state right
+													// away so the previous query's matches never linger and
+													// "No messages found" doesn't flash during the debounce.
+													setMessageSearchResults([]);
+													setSearchingMessages(true);
+													messageSearchTimerRef.current = setTimeout(() => {
+														handleMessageSearch(val);
+													}, 300);
+												}}
 											onKeyDown={(e) => {
 												if (e.key === "Escape") {
 													setShowMessageSearch(false);
@@ -2727,11 +3155,11 @@ export default function Chat({
 													setMessageSearchResults([]);
 												}
 											}}
-											className="w-full rounded-full border border-zinc-800 bg-zinc-950/40 text-xs placeholder:text-xs text-slate-100 placeholder-zinc-500 outline-none focus:border-white focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-white/20 px-3 py-2"
+											className="w-full rounded-full border border-zinc-800 bg-zinc-950/40 text-xs placeholder:text-xs text-slate-100 placeholder-zinc-500 outline-none focus:border-white focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-white/20 px-3 py-2 pr-8"
 											autoFocus
 										/>
 										{searchingMessages && (
-											<span className="absolute right-3 top-1/2 -translate-y-1/2">
+											<span className="absolute right-8 top-1/2 -translate-y-1/2">
 												<Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />
 											</span>
 										)}
@@ -2757,11 +3185,179 @@ export default function Chat({
 										<p className="mt-2 text-[10px] text-zinc-500 text-center">No messages found</p>
 									)}
 								</div>
-							)}
+							)}									{/* Pinned messages banner — WhatsApp-style slim bar */}
+									{pinnedMessages.length > 0 && (
+										<div												className="shrink-0 border-b border-zinc-700/30 bg-zinc-950/60 px-3 py-1.5 flex items-center gap-2">
+											<button
+												type="button"
+												title="View all pinned messages"
+												onClick={() => setShowPinnedPanel(true)}
+												className="flex items-center justify-center h-6 w-6 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-all cursor-pointer"
+											>
+												<Pin className="h-3 w-3" />
+											</button>
+											<div className="flex-1 min-w-0 flex gap-1.5 overflow-x-auto scrollbar-thin">
+												{pinnedMessages.map((pinned) => (
+													<button
+														key={pinned._id}
+														type="button"
+														title="Jump to message"
+														onClick={() => {
+															// Highlight only the bubble itself (not the outer row, which
+															// spans the avatar column + 85% width) so the outline always
+															// matches the message size, then fade it out gently.
+															const row = document.getElementById(
+																`msg-${pinned._id}`,
+															);
+															const el = row?.querySelector(
+																'[data-msg-bubble="true"]',
+															);
+															if (row && el) {
+																row.scrollIntoView({
+																	behavior: "smooth",
+																	block: "center",
+																});
+																el.classList.add(
+																	"msg-pinned-highlight",
+																);
+																setTimeout(() => {
+																	el.classList.remove(
+																		"msg-pinned-highlight",
+																	);
+																}, 2000);
+															} else {
+																window.dispatchEvent(
+																	new CustomEvent("showToast", {
+																		detail: {
+																			message:
+																				"Pinned message not loaded yet — scroll up to find it.",
+																			type: "error",
+																		},
+																	}),
+																);
+															}
+														}}
+														className="shrink-0 max-w-[220px] flex items-center gap-1.5 rounded-md bg-zinc-950/80 border border-zinc-700/40 px-2 py-1 hover:bg-zinc-900/90 hover:border-zinc-600/50 transition-colors cursor-pointer text-left"
+												>
+													<span className="h-3.5 w-3.5 rounded-full bg-zinc-700 shrink-0 flex items-center justify-center overflow-hidden text-[7px] font-bold text-zinc-200">
+														{pinned.sender?.profilePic?.url ? (
+															<img
+																src={optimizeImageUrl(pinned.sender.profilePic.url)}
+																alt={pinned.sender.fullName}
+																className="h-full w-full object-cover"
+															/>
+														) : (
+															pinned.sender?.fullName?.charAt(0) ||
+															"?"
+														)}
+													</span>
+													<span className="flex-1 min-w-0 text-[9px] leading-tight text-zinc-300 truncate">
+														<span className="font-semibold text-white">
+															{pinned.sender?.fullName}:{" "}
+														</span>
+														{pinned.text ||
+															(pinned.attachments?.length
+																	? "Attachment"
+																	: "")}
+													</span>
+													</button>
+												))}
+											</div>
+											{pinnedMessages.length > 1 && (
+												<span className="shrink-0 text-[9px] font-semibold text-zinc-400">
+													{pinnedMessages.length}
+												</span>
+											)}
+										</div>
+									)}
 
-							<div
-								ref={messagesContainerRef}
-								className="flex-1 overflow-y-auto p-1.5 space-y-2.5 min-h-0 relative md:p-3">
+									{/* View all pinned messages panel */}
+									{showPinnedPanel && createPortal(
+										<motion.div
+											initial={{ opacity: 0 }}
+											animate={{ opacity: 1 }}
+											exit={{ opacity: 0 }}
+											className="fixed inset-0 z-[400] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4"
+											onClick={() => setShowPinnedPanel(false)}
+										>
+											<motion.div
+												initial={{ y: 40, scale: 0.97, opacity: 0 }}
+												animate={{ y: 0, scale: 1, opacity: 1 }}
+												exit={{ y: 40, scale: 0.97, opacity: 0 }}
+												transition={{ type: "spring", stiffness: 380, damping: 30 }}
+												onClick={(e) => e.stopPropagation()}
+												className="w-full sm:max-w-md max-h-[75vh] rounded-t-3xl sm:rounded-3xl border border-zinc-800 bg-zinc-950/95 backdrop-blur-xl shadow-2xl flex flex-col overflow-hidden"
+											>
+												<div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/70 shrink-0">
+													<div className="flex items-center gap-2">
+														<Pin className="h-4 w-4 text-amber-200/90" />
+														<h3 className="text-sm font-bold text-white">
+															Pinned messages
+														</h3>
+													</div>
+													<button
+															onClick={() => setShowPinnedPanel(false)}
+															className="h-8 w-8 rounded-full flex items-center justify-center hover:bg-zinc-800 transition-colors cursor-pointer"
+															title="Close"
+														>
+															<X className="h-4 w-4 text-zinc-400" />
+														</button>
+												</div>
+												<div className="flex-1 overflow-y-auto p-2 space-y-1">
+													{pinnedMessages.length === 0 ? (
+														<p className="text-xs text-zinc-500 text-center py-8">
+															No pinned messages
+														</p>
+													) : (
+														pinnedMessages.map((pinned) => (
+															<div
+																key={pinned._id}
+																className="flex items-center gap-3 rounded-xl px-3 py-2 hover:bg-zinc-900/70 transition-colors group"
+															>
+																<span className="h-8 w-8 rounded-full bg-zinc-800 border border-zinc-700 shrink-0 flex items-center justify-center overflow-hidden text-[9px] font-bold text-zinc-300">
+																	{pinned.sender?.profilePic?.url ? (
+																		<img
+																			src={optimizeImageUrl(pinned.sender.profilePic.url)}
+																			alt={pinned.sender.fullName}
+																			className="h-full w-full object-cover"
+																		/>
+																	) : (
+																		pinned.sender?.fullName?.charAt(0) || "?"
+																	)}
+																</span>
+																<div className="flex-1 min-w-0">
+																	<p className="text-[11px] font-bold text-white truncate">
+																		{pinned.sender?.fullName}
+																	</p>
+																	<p className="text-[11px] text-zinc-400 truncate">
+																		{pinned.text ||
+																			(pinned.attachments?.length
+																					? "Attachment"
+																					: "")}
+																	</p>
+																</div>
+																<button
+																	onClick={() =>
+																		handleUnpinFromPanel(pinned._id)
+																	}
+																	className="shrink-0 rounded-full border border-zinc-700 px-3 py-1.5 text-[10px] font-bold text-zinc-300 hover:text-white hover:border-red-400/60 hover:bg-red-500/10 transition-all cursor-pointer"
+																	title="Unpin message"
+																>
+																	Unpin
+																</button>
+															</div>
+														))
+													)}
+												</div>
+											</motion.div>
+										</motion.div>
+										,
+										document.body,
+									)}
+
+									<div
+										ref={messagesContainerRef}
+										className="flex-1 overflow-y-auto p-1.5 space-y-2.5 min-h-0 relative md:p-3">
 								{loadingMsgs ? (
 									<div className="space-y-4 p-2">
 										{/* First batch loading — show 4 message bubble skeletons */}
@@ -2884,8 +3480,10 @@ export default function Chat({
 													}
 												onRetrySend={
 													handleRetrySend
-												}
-												hideReactionCount
+												}												hideReactionCount
+												isPinned={pinnedMessages.some(
+													(p) => p._id === msg._id,
+												)}
 											/>
 											);
 										})}
@@ -2961,7 +3559,7 @@ export default function Chat({
 								}`}>
 								{replyToMessage &&
 									!replyToMessage.isDeleted && (
-										<div className="flex items-start gap-2.5 mb-3 bg-zinc-900/60 p-3 rounded-2xl border border-zinc-800/60 max-w-md">
+										<div className="flex items-start gap-2.5 mb-3 bg-zinc-950/60 p-3 rounded-2xl border border-zinc-800/60 max-w-md">
 											<div className="w-0.5 h-full min-h-[2.5rem] rounded-full bg-white/40 shrink-0" />
 											<div className="flex-1 min-w-0 text-left">
 												<p className="text-[11px] font-black text-zinc-300 uppercase tracking-wider leading-tight">
@@ -3138,31 +3736,28 @@ export default function Chat({
 										</div>
 									)}
 										<div className="grow relative flex items-end">
-											{/* Media Send Icon inside left corner */}												<div className="absolute left-1.5 top-1/2 -translate-y-1/2 z-20 flex items-center gap-1">
-												<div className="w-8 h-8 flex items-center justify-center relative">
-												<input
-													type="file"
-													accept="*/*"
-													multiple
-													disabled={
-														attachments.length >= 5
-													}
-													onChange={handleFileChange}
-													title="Select attachments (multiple allowed)"
-													className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed z-30"
-												/>
-												<button
-													type="button"
-													className="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white transition-colors cursor-pointer pointer-events-none">
-													<ImageIcon className="h-4 w-4" />
-												</button>
-
-											</div>
-
-											</div>
-
-											<textarea
-												ref={composerRef}
+											<div className="relative w-full">
+												{/* Media icon — inside the input box, vertically centered */}
+												<div className="absolute left-2 inset-y-0 z-10 flex items-center">
+													<input
+														type="file"
+														accept="*/*"
+														multiple
+														disabled={
+															attachments.length >= 5
+														}
+														onChange={handleFileChange}
+														title="Select attachments (multiple allowed)"
+														className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed z-30"
+													/>
+													<button
+														type="button"
+														className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-800/60 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors cursor-pointer pointer-events-none">
+														<ImageIcon className="h-4.5 w-4.5" />
+													</button>
+												</div>
+												<textarea
+													ref={composerRef}
 												rows={1}
 												wrap="soft"
 												placeholder="Type a message..."
@@ -3185,12 +3780,13 @@ export default function Chat({
 														e.currentTarget.form?.requestSubmit();
 													}
 												}}
-												className={`w-full !rounded-2xl border border-zinc-800 bg-zinc-950/40 text-[12px] md:text-sm placeholder:text-[12px] md:placeholder:text-sm text-slate-100 placeholder-zinc-500 outline-none focus:border-white focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-zinc-700 pl-10.5 resize-none max-h-[120px] overflow-y-auto leading-relaxed ${
+												className={`w-full !rounded-2xl border border-zinc-800 bg-zinc-950/40 text-[12px] md:text-sm placeholder:text-[12px] md:placeholder:text-sm text-slate-100 placeholder-zinc-500 outline-none focus:border-white focus:bg-zinc-900/80 transition-all focus:ring-1 focus:ring-zinc-700 pl-[52px] resize-none max-h-[120px] overflow-y-auto leading-relaxed ${
 													isKeyboardOpen
 														? "py-2 pr-3"
 														: "py-2.5 pr-10"
 												}`}
 											/>
+											</div>
 											<ValidationMessage
 												message={fieldErrors.message}
 											/>
@@ -3308,33 +3904,54 @@ export default function Chat({
 							className="fixed z-[310] bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden py-1 min-w-[180px]"
 							style={{ left: contextMenu.x, top: contextMenu.y }}
 						>
-							{/* Reactions row */}
+
+							{/* Quick-reaction pill — same options as the emoji menu; reacts
+							    straight from the long-press menu. Hidden for deleted msgs. */}
 							{!contextMenu.message.isDeleted && (
-								<div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/50 gap-0.5">
-									{["👍", "❤️", "😂", "😮", "😢", "😠"].map((emoji) => (
-										<button
-											key={emoji}
-											onClick={() => {
-												handleReaction(contextMenu.message, emoji);
-												setContextMenu(null);
-											}}
-											className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-zinc-800 text-sm transition-all cursor-pointer hover:scale-110 active:scale-95"
-										>
-											{emoji}
-										</button>
-									))}
+								<div className="border-b border-zinc-800 px-1 py-1">
+									<EmojiReactionMenu
+										inline
+										onReact={(emoji) => {
+											handleReaction(contextMenu.message, emoji);
+											setContextMenu(null);
+										}}
+										ariaLabel="React to this message"
+										title="React"
+									/>
 								</div>
-							)}
-							<button
-								onClick={() => {
-									handleReplyMessage(contextMenu.message);
-									setContextMenu(null);
-								}}
-								className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
-							>
-								<CornerDownLeft className="h-3.5 w-3.5" />
-								Reply
-							</button>
+							)}									<button
+										onClick={() => {
+											handleReplyMessage(contextMenu.message);
+											setContextMenu(null);
+										}}
+										className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+									>
+										<CornerDownLeft className="h-3.5 w-3.5" />
+										Reply
+									</button>
+									{/* Pin / Unpin — available for all non-deleted messages */}
+									{!contextMenu.message.isDeleted &&
+										(isMessagePinned(contextMenu.message._id) ? (
+											<button
+												onClick={() => {
+													handleUnpinMessage(contextMenu.message._id);
+												}}
+												className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+											>
+												<Pin className="h-3.5 w-3.5" />
+												Unpin
+											</button>
+										) : (
+											<button
+												onClick={() => {
+													handlePinMessage(contextMenu.message._id);
+												}}
+												className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+											>
+												<Pin className="h-3.5 w-3.5" />
+												Pin
+											</button>
+										))}
 							<button
 								onClick={() => {
 									handleCopyMessage(contextMenu.message);
@@ -3404,119 +4021,57 @@ export default function Chat({
 						</motion.div>
 					</>
 				</>
-			)}			{/* Native Emoji Picker (opens device emoji keyboard) */}
-			<AnimatePresence>
-				{showEmojiPicker && (
+			)}
+
+			{/* Conversation context menu — long-press / right-click on a chat row */}
+			{convMenu && (
+				<>
 					<motion.div
 						initial={{ opacity: 0 }}
 						animate={{ opacity: 1 }}
 						exit={{ opacity: 0 }}
-						className="fixed inset-0 z-[300] bg-black/50 flex items-end sm:items-center justify-center p-4"
-						onClick={() => {
-							setShowEmojiPicker(null);
-							setCustomEmoji("");
-						}}>
-						<motion.div
-							initial={{ scale: 0.9, y: 20 }}
-							animate={{ scale: 1, y: 0 }}
-							exit={{ scale: 0.9, y: 20 }}
-							onClick={(e) => e.stopPropagation()}
-							className="bg-zinc-900/95 backdrop-blur-xl border border-zinc-800 rounded-2xl p-3 w-full max-w-xs shadow-2xl">
-							<div className="flex items-center justify-between mb-2">
-								<h4 className="text-label-sm font-semibold text-zinc-200">
-									Pick an Emoji
-								</h4>
-								<button
-									onClick={() => {
-										setShowEmojiPicker(null);
-										setCustomEmoji("");
-									}}>
-									<X className="h-3 w-3 text-zinc-500 hover:text-white" />
-								</button>
-							</div>
-
-							{/* Hidden input that triggers native emoji keyboard on mobile */}
-							<input
-								type="text"
-								// inputMode={"emoji" as any} is valid HTML but React types don't include it yet
-								inputMode={"emoji" as any}
-								value={customEmoji}
-								onChange={(e) => {
-									const val = e.target.value;
-									setCustomEmoji(val);
-									// If user typed/pasted an emoji, use it immediately
-									if (val.trim()) {
-										const msg = messages.find(
-											(m) => m._id === showEmojiPicker,
-										);
-										if (msg) {
-											const emoji = extractEmoji(val);
-											if (emoji) {
-												handleReaction(msg, emoji);
-												setShowEmojiPicker(null);
-												setCustomEmoji("");
-											}
-										}
-									}
-								}}
-								className="w-full rounded-full border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs md:text-[13px] text-white outline-none focus:border-white text-center"
-								autoFocus
-								autoComplete="off"
-								placeholder="Tap for emoji"
-							/>
-
-							{/* Quick emoji grid for desktop users */}
-							<div className="mt-2">
-								<p className="text-[8px] font-bold uppercase tracking-wider text-zinc-500 mb-1.5 text-center">
-									Or pick one
-								</p>
-								<div className="flex flex-wrap gap-1 justify-center">
-									{[
-										"👍",
-										"❤️",
-										"😂",
-										"😮",
-										"😢",
-										"😠",
-										"🎉",
-										"🔥",
-										"💀",
-										"🙏",
-										"✨",
-										"🥳",
-										"💯",
-										"🏆",
-										"👏",
-										"💪",
-										"🤝",
-										"😍",
-										"🥺",
-										"🤔",
-									].map((emoji) => (
-										<button
-											key={emoji}
-											onClick={() => {
-												const msg = messages.find(
-													(m) =>
-														m._id ===
-														showEmojiPicker,
-												);
-												if (msg) {
-													handleReaction(msg, emoji);
-													setShowEmojiPicker(null);
-													setCustomEmoji("");
-												}
-											}}
-											className="w-7 h-7 rounded-lg flex items-center justify-center text-base hover:bg-zinc-800 transition-all hover:scale-110 cursor-pointer">
-											{emoji}
-										</button>
-									))}
-								</div>
-							</div>
-						</motion.div>
+						className="fixed inset-0 z-[300]"
+						onClick={() => setConvMenu(null)}
+					/>
+					<motion.div
+						initial={{ opacity: 0, scale: 0.95 }}
+						animate={{ opacity: 1, scale: 1 }}
+						exit={{ opacity: 0, scale: 0.95 }}
+						className="fixed z-[310] bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden py-1 min-w-[200px]"
+						style={{ left: convMenu.x, top: convMenu.y }}
+						onClick={(e) => e.stopPropagation()}
+					>
+						{convMenu.conv.muted ? (
+							<button
+								onClick={() => handleToggleConvMute(convMenu.conv)}
+								className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+							>
+								<BellOff className="h-3.5 w-3.5" />
+								Unmute chat
+							</button>
+						) : (
+							<button
+								onClick={() => handleToggleConvMute(convMenu.conv)}
+								className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors cursor-pointer"
+							>
+								<Bell className="h-3.5 w-3.5" />
+								Mute chat
+							</button>
+						)}
+						<button
+							onClick={() => {
+								const conversationId = convMenu.conv._id;
+								setConvMenu(null);
+								setDeleteConvConfirmId(conversationId);
+							}}
+							className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-red-400 hover:bg-zinc-800 transition-colors cursor-pointer"
+						>
+							<Trash2 className="h-3.5 w-3.5" />
+							Delete chat
+						</button>
 					</motion.div>
-				)}
-			</AnimatePresence>
+				</>
+			)}
 
 			{/* Forward Message Modal */}
 						{forwardModal && createPortal(

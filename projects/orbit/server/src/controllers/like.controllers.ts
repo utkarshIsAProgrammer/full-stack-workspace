@@ -19,7 +19,7 @@ import { logger } from "../utilities/logger";
 import { AppError, BadRequestError, NotFoundError, UnauthorizedError, ForbiddenError } from "../utilities/errors";
 import { canInteractWithPost } from "../utilities/postVisibility";
 import { toggleLikeSchema, toggleCommentLikeSchema } from "../schemas/interaction.schema";
-import { clearFeedCache } from "../configs/cache";
+import { clearFeedCache, clearCommentsCache } from "../configs/cache";
 import { logInteraction } from "../services/affinityService";
 import { awardXP } from "../services/xpService";
 import { progressMission } from "../services/dailyMissionService";
@@ -121,6 +121,12 @@ export const togglePostLikes = async (req: Request<Params>, res: Response) => {
       // Award XP and progress mission (fire-and-forget)
       awardXP(author.toString(), "LIKE").catch(() => {});
       progressMission(author.toString(), "like").catch(() => {});
+
+      // Award the post author XP for receiving a like (fire-and-forget,
+      // skip self-likes)
+      if (post.author.toString() !== author.toString()) {
+        awardXP(post.author.toString(), "RECEIVE_LIKE").catch(() => {});
+      }
 
       return res.status(201).json({
         success: true,
@@ -235,16 +241,18 @@ export const toggleCommentLikes = async (
           post: comment.post.toString(),
           comment: commentId,
         });
-      }
+      }		// Emit socket event
+		if (updatedComment) {
+			emitCommentLike(commentId, author.toString(), updatedComment.likesCount);
+		}
 
-      // Emit socket event
-      if (updatedComment) {
-        emitCommentLike(commentId, author.toString(), updatedComment.likesCount);
-      }
+		// Comments lists are Redis-cached — invalidate so the new likesCount
+		// shows up on refresh instead of the stale cached value.
+		await clearCommentsCache(comment.post.toString());
 
-      return res.status(201).json({
-        success: true,
-        message: "Comment liked successfully!",
+		return res.status(201).json({
+			success: true,
+			message: "Comment liked successfully!",
         liked: true,
         likesCount: updatedComment?.likesCount,
         comment: updatedComment,
@@ -265,16 +273,18 @@ export const toggleCommentLikes = async (
       commentId,
       { $inc: { likesCount: -1 } },
       { returnDocument: 'after' },
-    );
+    );		// Emit socket event
+		if (updatedComment) {
+			emitCommentUnlike(commentId, author.toString(), updatedComment.likesCount);
+		}
 
-    // Emit socket event
-    if (updatedComment) {
-      emitCommentUnlike(commentId, author.toString(), updatedComment.likesCount);
-    }
+		// Invalidate the cached comments lists so the decremented likesCount
+		// is reflected on refresh too.
+		await clearCommentsCache(comment.post.toString());
 
-    return res.status(200).json({
-      success: true,
-      message: "Comment disliked successfully!",
+		return res.status(200).json({
+			success: true,
+			message: "Comment disliked successfully!",
       liked: false,
       likesCount: updatedComment?.likesCount,
       comment: updatedComment,

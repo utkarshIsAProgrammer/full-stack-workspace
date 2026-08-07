@@ -3,6 +3,7 @@ import {
   getAll,
   deleteAccount,
   shareProfile,
+  forwardProfile,
   viewsCount,
   updateProfile,
   getUserByUsername,
@@ -46,6 +47,7 @@ router.get("/:userId/posts", optionalAuth, cacheMiddleware({ ttl: 60 }), getUser
 router.get("/:userId/pinned", optionalAuth, cacheMiddleware({ ttl: 300 }), getPinnedPosts);
 router.delete("/delete-account", protect, deleteAccount);
 router.post("/:userId/share", protect, interactionLimiter, shareProfile);
+router.post("/:userId/forward", protect, interactionLimiter, forwardProfile);
 router.post("/:userId/pin", protect, pinPost);
 router.post("/:userId/unpin", protect, unpinPost);
 

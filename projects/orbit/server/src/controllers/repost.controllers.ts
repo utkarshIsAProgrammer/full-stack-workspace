@@ -55,7 +55,7 @@ export const getRepostedPosts = async (req: Request, res: Response) => {
       .limit(limit + 1)
       .populate({
         path: "post",		select:
-			"title slug image author savesCount repostsCount likesCount commentsCount createdAt viewsCount sharesCount visibility",
+			"content title slug image images video author savesCount repostsCount likesCount commentsCount createdAt viewsCount sharesCount visibility",
         populate: [
           {
             path: "author",

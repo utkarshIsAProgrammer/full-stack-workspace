@@ -82,6 +82,37 @@ export async function sendPushToUser(
 }
 
 /**
+ * Plain-text label for a chat/community message with no text body.
+ * Matches the in-app convention ("Photo", "Voice note", "Video", "File")
+ * and deliberately avoids emoji characters in push bodies.
+ */
+export function attachmentPushLabel(
+  attachments?: Array<{ type?: string }> | null,
+  text?: string | null,
+): string {
+  if (text && text.trim()) return text.trim().slice(0, 120);
+  const type = attachments?.[0]?.type;
+  switch (type) {
+    case "voice_note":
+      return "Voice note";
+    case "image":
+      return "Photo";
+    case "video":
+      return "Video";
+    case "gif":
+      return "GIF";
+    case "sticker":
+      return "Sticker";
+    case "meme":
+      return "Meme";
+    case "file":
+      return "File";
+    default:
+      return "New message";
+  }
+}
+
+/**
  * Build a notification payload from an in-app notification document.
  */
 export function buildPushPayload(
@@ -116,6 +147,10 @@ export function buildPushPayload(
     daily_reward: { title: "Daily Reward", body: "Your daily reward is ready!" },
     streak_reminder: { title: "Streak Reminder", body: "Don't lose your streak!" },
     invite_accepted: { title: senderName, body: "accepted your invitation" },
+    profile_share: { title: senderName, body: "shared a profile with you" },
+    post_share: { title: senderName, body: "shared a post with you" },
+    glimpse_share: { title: senderName, body: "shared a glance with you" },
+    comment_share: { title: senderName, body: "shared a comment with you" },
   };
 
   const config = typeConfig[notification.type] || {
